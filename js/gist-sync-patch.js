@@ -21,6 +21,16 @@
   ]);
   const OLD_REPO_MARK = 'raw.githubusercontent.com/liangzai4322/things-control-data/';
   const oldFetch = window.fetch.bind(window);
+  const SECRET_VALUE_PATTERNS = [
+    /ghp_[A-Za-z0-9]{36}/g,
+    /github_pat_[A-Za-z0-9_]+/g,
+    /gho_[A-Za-z0-9]{36}/g,
+    /ghu_[A-Za-z0-9]{36}/g,
+    /ghs_[A-Za-z0-9]{36}/g,
+    /ghr_[A-Za-z0-9]{36}/g,
+    /sk-[A-Za-z0-9_-]{20,}/g,
+    /https:\/\/flomoapp\.com\/iwh\/[^\s"']+/g,
+  ];
 
   function readData() {
     try {
@@ -38,6 +48,10 @@
   function cleanToken(value = '') {
     const token = String(value).trim().replace(/^\[|\]$/g, '');
     return token.startsWith('$2a$') ? '' : token;
+  }
+
+  function scrubSecrets(value = '') {
+    return SECRET_VALUE_PATTERNS.reduce((text, pattern) => text.replace(pattern, ''), String(value));
   }
 
   function getHeader(headers, name) {
@@ -155,7 +169,7 @@
         Authorization: `Bearer ${clean}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ files: { [filename]: { content } } }),
+      body: JSON.stringify({ files: { [filename]: { content: scrubSecrets(content) } } }),
     });
     if (response.status === 401 || response.status === 403) {
       rememberBadToken(clean, response.status);

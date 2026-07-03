@@ -369,14 +369,52 @@ export function setSettings(patch) {
   });
 }
 
+const SECRET_VALUE_PATTERNS = [
+  /ghp_[A-Za-z0-9]{36}/g,
+  /github_pat_[A-Za-z0-9_]+/g,
+  /gho_[A-Za-z0-9]{36}/g,
+  /ghu_[A-Za-z0-9]{36}/g,
+  /ghs_[A-Za-z0-9]{36}/g,
+  /ghr_[A-Za-z0-9]{36}/g,
+  /sk-[A-Za-z0-9_-]{20,}/g,
+  /https:\/\/flomoapp\.com\/iwh\/[^\s"']+/g,
+];
+
+function scrubSecretString(value = '') {
+  return SECRET_VALUE_PATTERNS.reduce((text, pattern) => text.replace(pattern, ''), String(value));
+}
+
+function scrubSecretValues(value) {
+  if (typeof value === 'string') return scrubSecretString(value);
+  if (Array.isArray(value)) return value.map(scrubSecretValues);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, scrubSecretValues(item)])
+    );
+  }
+  return value;
+}
+
+function sanitizeDataForExternal(data) {
+  const sanitized = scrubSecretValues(structuredClone(data));
+  sanitized.settings = {
+    ...sanitized.settings,
+    deepseekApiKey: '',
+    cloudToken: '',
+    githubToken: '',
+    flomoWebhook: '',
+  };
+  return sanitized;
+}
+
 export function exportData() {
   const backup = {
-    ...getData(),
+    ...sanitizeDataForExternal(getData()),
     __pointsCache: (() => {
       const raw = localStorage.getItem('taskbox_points_cache');
       if (!raw) return null;
       try {
-        return JSON.parse(raw);
+        return scrubSecretValues(JSON.parse(raw));
       } catch {
         return null;
       }
@@ -653,6 +691,7 @@ const LOCAL_ONLY_SETTING_KEYS = [
   'deepseekApiKey',
   'cloudToken',
   'githubToken',
+  'flomoWebhook',
 ];
 
 function preserveLocalOnlySettings(nextSettings = {}, localSettings = {}) {
@@ -666,6 +705,7 @@ function preserveLocalOnlySettings(nextSettings = {}, localSettings = {}) {
 export async function pushDataToCloud(options = {}) {
   const { force = false } = options;
   const data = getData();
+  const payload = sanitizeDataForExternal(data);
   const { cloudEnabled, cloudEndpoint, cloudToken, githubToken } = data.settings;
 
   const endpoint = resolveCloudEndpoint(cloudEndpoint, { forRead: false });
@@ -674,18 +714,18 @@ export async function pushDataToCloud(options = {}) {
 
   const parsedGist = parseGistRawUrl(endpoint);
   if (parsedGist) {
-    return updateGistJson(parsedGist, githubToken || cloudToken, data);
+    return updateGistJson(parsedGist, githubToken || cloudToken, payload);
   }
 
   const parsedGitHub = parseGitHubRawUrl(endpoint);
   if (parsedGitHub) {
-    return updateGitHubRepoJson(parsedGitHub, githubToken || cloudToken, data);
+    return updateGitHubRepoJson(parsedGitHub, githubToken || cloudToken, payload);
   }
 
   await fetch(endpoint, {
     method: 'PUT',
     headers: buildCloudHeaders(endpoint, cloudToken, true),
-    body: JSON.stringify(data),
+    body: JSON.stringify(payload),
   });
 
   return true;

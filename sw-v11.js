@@ -1,4 +1,4 @@
-const CACHE_NAME = 'taskbox-v12-liangzai-gist-sync';
+const CACHE_NAME = 'taskbox-v13-secret-scrub';
 const CACHE_FILES = [
   './',
   './index.html',
