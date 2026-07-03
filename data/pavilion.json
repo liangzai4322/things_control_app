@@ -1,0 +1,2344 @@
+{
+    "treasure_vault": [
+        {
+            "level": 1,
+            "level_name": "混沌至宝·封印层",
+            "level_description": "三角全满。不可复制，不可替代，只有真正配得上的人才能开启。每一件都应该让你在兑换那一刻感到：我等这一天很久了。解锁后30天内必须完成，否则封印重锁。",
+            "items": [
+                {
+                    "id": "L1_001",
+                    "title": "放弃控制的旅行",
+                    "types": [
+                        "沉浸型",
+                        "突破型"
+                    ],
+                    "narrative_line": "闯入陌生世界线·终点",
+                    "triangle": {
+                        "money": 5,
+                        "time": 5,
+                        "energy": 5
+                    },
+                    "description": "选一个你从未去过的国家，只买好机票，不做任何攻略，只带一个背包出发。落地之后的一切——住哪、去哪、吃什么——全部随机决定。至少7天。不是旅游，是你和陌生世界关系的最高宣言。"
+                },
+                {
+                    "id": "L1_002",
+                    "title": "用30天写完一件你一直想写的东西",
+                    "types": [
+                        "向内型",
+                        "创造型"
+                    ],
+                    "narrative_line": "向内凝视线·终点",
+                    "triangle": {
+                        "money": 1,
+                        "time": 5,
+                        "energy": 5
+                    },
+                    "description": "一段自传、一部短篇故事、或一封写给10年后自己的信。不需要写得好，只需要写完。这是整个珍宝阁里唯一一件不费钱、不费体力，但极难完成的奖励——因为它需要你真正面对自己。"
+                },
+                {
+                    "id": "L1_003",
+                    "title": "独自完成一座真正有难度的山",
+                    "types": [
+                        "突破型",
+                        "消费型"
+                    ],
+                    "narrative_line": "身体边界线·终点",
+                    "triangle": {
+                        "money": 3,
+                        "time": 5,
+                        "energy": 5
+                    },
+                    "description": "不是景区缆车，是全程步行。华山全程徒步、鳌太纵走，或任何一座你曾经觉得'我可能做不到'的山。独自出发，独自登顶。登顶那一刻，你会知道这条线走完了。"
+                },
+                {
+                    "id": "L1_004",
+                    "title": "为一个重要的人策划一次专属旅行",
+                    "types": [
+                        "关系型"
+                    ],
+                    "narrative_line": "关系深度线·终点",
+                    "triangle": {
+                        "money": 5,
+                        "time": 5,
+                        "energy": 5
+                    },
+                    "description": "目的地、行程、惊喜节点全部由你设计，对方只需出现。全程把你的心思放进这件事里。这件事的难度不在于钱，在于你愿意为另一个人真正用心。"
+                },
+                {
+                    "id": "L1_005",
+                    "title": "独自72小时孤岛",
+                    "types": [
+                        "沉浸型",
+                        "突破型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 2,
+                        "time": 5,
+                        "energy": 5
+                    },
+                    "description": "找一个完全陌生的地方——山里、海边、或某个叫不出名字的小县城。独自待满72小时，不联系任何人，只带一本空白本子。这是你给自己内心的一次终极会面。"
+                },
+                {
+                    "id": "L1_006",
+                    "title": "史诗级极限体验",
+                    "types": [
+                        "突破型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 4,
+                        "time": 3,
+                        "energy": 5
+                    },
+                    "description": "蹦极、跳伞、高空跳水——选一个你内心真正有恐惧感的，独自前往，独自完成。奖励的不是那几秒，是你在跳之前那一刻的自己。"
+                }
+            ]
+        },
+        {
+            "level": 2,
+            "level_name": "神品库",
+            "level_description": "钱与时间双满，精力中等。体验极强，且会留下痕迹——一段记忆、一项技能、或一段关系的加深。",
+            "items": [
+                {
+                    "id": "L2_001",
+                    "title": "完成潜水OW考证",
+                    "types": [
+                        "突破型",
+                        "沉浸型"
+                    ],
+                    "narrative_line": "身体边界线",
+                    "triangle": {
+                        "money": 4,
+                        "time": 4,
+                        "energy": 3
+                    },
+                    "description": "不是泳池体验，是在真正的开放水域下潜，第一次在海底安静地看着珊瑚和鱼，感受那种失重的沉默。"
+                },
+                {
+                    "id": "L2_002",
+                    "title": "独住一晚，写下此刻真实的自己",
+                    "types": [
+                        "沉浸型",
+                        "向内型"
+                    ],
+                    "narrative_line": "向内凝视线",
+                    "triangle": {
+                        "money": 4,
+                        "time": 3,
+                        "energy": 2
+                    },
+                    "description": "预订一家你真正喜欢的精品酒店，独自住一晚，不带工作，手机调成勿扰。用这一晚写下你此刻真实的状态——你在怕什么，你在期待什么，你想成为什么样的人。"
+                },
+                {
+                    "id": "L2_003",
+                    "title": "报名一门陌生技能的集训课",
+                    "types": [
+                        "创造型",
+                        "沉浸型"
+                    ],
+                    "narrative_line": "闯入陌生世界线",
+                    "triangle": {
+                        "money": 4,
+                        "time": 4,
+                        "energy": 3
+                    },
+                    "description": "不是单次体验，是真正入门的5~7天集训。拳击、陶艺、调酒、木工任选。在一个你什么都不会的领域里，从零开始待够一周。"
+                },
+                {
+                    "id": "L2_004",
+                    "title": "约一个你敬佩但不熟的人吃饭",
+                    "types": [
+                        "关系型",
+                        "突破型"
+                    ],
+                    "narrative_line": "关系深度线",
+                    "triangle": {
+                        "money": 3,
+                        "time": 3,
+                        "energy": 3
+                    },
+                    "description": "主动发起，饭局由你来设计，话题由你来引导。这件事的难度在于你要先迈出那一步。"
+                },
+                {
+                    "id": "L2_005",
+                    "title": "主题沉浸日",
+                    "types": [
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 3,
+                        "time": 5,
+                        "energy": 3
+                    },
+                    "description": "为自己策划一个完整的'主题日'——今天只和某一个你感兴趣的领域有关，只去相关的地方，只读相关的内容，只听相关的音乐。深度进入一个世界整整一天。"
+                },
+                {
+                    "id": "L2_006",
+                    "title": "跨城赴约",
+                    "types": [
+                        "消费型",
+                        "关系型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 4,
+                        "time": 4,
+                        "energy": 2
+                    },
+                    "description": "乘高铁或飞机去另一个城市，只为一件事——一顿饭、一场演出、或者见一个人。当天或次日返回。目的只有一个，过程纯粹。"
+                },
+                {
+                    "id": "L2_007",
+                    "title": "你真正喜欢的那场演出",
+                    "types": [
+                        "消费型",
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 4,
+                        "time": 3,
+                        "energy": 2
+                    },
+                    "description": "不是随便哪个演唱会，是那个你一直说'如果他/她来我一定去'的人。买票，去，站在人群里，让那个瞬间真实发生。"
+                },
+                {
+                    "id": "L2_008",
+                    "title": "那件你一直舍不得买的东西",
+                    "types": [
+                        "消费型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 4,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不是冲动消费，是那件你已经看了很久、反复打开又关掉购物车的东西。它不一定贵，但你一直觉得'我还不值得'现在你值得了。"
+                },
+                {
+                    "id": "L2_009",
+                    "title": "一次顶级的身体疗愈",
+                    "types": [
+                        "消费型",
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 4,
+                        "time": 3,
+                        "energy": 1
+                    },
+                    "description": "找一家真正专业的SPA或整体护理机构，做一次完整的全身护理，3小时以上。感受你的身体被认真对待是什么感觉。"
+                },
+                {
+                    "id": "L2_010",
+                    "title": "一次真正的雪山滑雪",
+                    "types": [
+                        "突破型",
+                        "消费型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 5,
+                        "time": 4,
+                        "energy": 3
+                    },
+                    "description": "去真正的雪山，不是室内雪场。至少2~3天，从不会到能滑下一条完整的道。第一次站在雪坡顶上往下看的那一刻，是属于你的。"
+                }
+            ]
+        },
+        {
+            "level": 3,
+            "level_name": "圣品堂",
+            "level_description": "钱满，时间与精力中等。体验强，且有一定的社交突破门槛——不是一个人坐着就能完成的奖励。",
+            "items": [
+                {
+                    "id": "L3_001",
+                    "title": "独自完成一次真正的城市周边徒步",
+                    "types": [
+                        "突破型",
+                        "沉浸型"
+                    ],
+                    "narrative_line": "身体边界线",
+                    "triangle": {
+                        "money": 2,
+                        "time": 3,
+                        "energy": 3
+                    },
+                    "description": "非景区路线，至少半天，全程靠腿。途中不听音乐，只听自己的呼吸和脚步。"
+                },
+                {
+                    "id": "L3_002",
+                    "title": "报名一次线下冥想或瑜伽工作坊",
+                    "types": [
+                        "沉浸型",
+                        "向内型"
+                    ],
+                    "narrative_line": "向内凝视线",
+                    "triangle": {
+                        "money": 3,
+                        "time": 3,
+                        "energy": 2
+                    },
+                    "description": "不是在家跟着视频做，是线下的半天或全天工作坊。在一个真实的空间里，认真和自己的身体与思绪待在一起。"
+                },
+                {
+                    "id": "L3_003",
+                    "title": "闯入一个你完全不认识任何人的聚会",
+                    "types": [
+                        "突破型",
+                        "关系型"
+                    ],
+                    "narrative_line": "闯入陌生世界线",
+                    "triangle": {
+                        "money": 1,
+                        "time": 2,
+                        "energy": 3
+                    },
+                    "description": "找一个你完全不认识任何人的线下活动，主动出现，主动开口，认识至少3个新朋友并交换联系方式。"
+                },
+                {
+                    "id": "L3_004",
+                    "title": "给一个重要的人写一封真正的手写长信",
+                    "types": [
+                        "关系型",
+                        "创造型"
+                    ],
+                    "narrative_line": "关系深度线",
+                    "triangle": {
+                        "money": 1,
+                        "time": 2,
+                        "energy": 3
+                    },
+                    "description": "不是微信，是信纸装信封那种。写你从没当面说过的话，亲手交给他/她，或者邮寄出去。"
+                },
+                {
+                    "id": "L3_005",
+                    "title": "去一家你一直觉得太贵的餐厅",
+                    "types": [
+                        "消费型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 4,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "不是随便一家好餐厅，是那家你路过过、看过菜单、然后默默关掉的那家。这次订位，进去，好好吃。"
+                },
+                {
+                    "id": "L3_006",
+                    "title": "深度逛一座博物馆或美术馆",
+                    "types": [
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 2,
+                        "time": 3,
+                        "energy": 2
+                    },
+                    "description": "不是走马观花，是选一个你真正感兴趣的主题展，提前做一点功课，然后花整整半天真正看进去。"
+                },
+                {
+                    "id": "L3_007",
+                    "title": "看一场你完全不了解的演出类型",
+                    "types": [
+                        "沉浸型",
+                        "突破型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 3,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "从没看过交响乐就去看交响乐，从没看过话剧就去看话剧。不做攻略，带着空白的期待进去。"
+                },
+                {
+                    "id": "L3_008",
+                    "title": "约一个你们很久没见的朋友",
+                    "types": [
+                        "关系型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 2,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "不是随便约饭，是那个你们一直说'改天'但一直没约成的人。这次你来主动，把时间和地方都定下来。"
+                },
+                {
+                    "id": "L3_009",
+                    "title": "一次真正的温泉，泡够3小时",
+                    "types": [
+                        "消费型",
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 3,
+                        "time": 3,
+                        "energy": 1
+                    },
+                    "description": "找一家真正好的温泉，不赶时间，不看手机，泡够3小时以上。带一本书或什么都不带。"
+                },
+                {
+                    "id": "L3_010",
+                    "title": "亲手做一顿你从没做过的菜",
+                    "types": [
+                        "创造型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 2,
+                        "time": 2,
+                        "energy": 2
+                    },
+                    "description": "不是随便炒个菜，是选一道你一直觉得'太难了'的菜，买食材，认真做，然后吃掉它。"
+                },
+                {
+                    "id": "L3_011",
+                    "title": "一次高质量的沉浸式体验",
+                    "types": [
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 3,
+                        "time": 2,
+                        "energy": 2
+                    },
+                    "description": "高品质剧本杀、沉浸式戏剧、或密室逃脱。选一个真正有故事深度的，认真投入进去。"
+                },
+                {
+                    "id": "L3_012",
+                    "title": "彻底的数字断联日",
+                    "types": [
+                        "沉浸型",
+                        "突破型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 4,
+                        "energy": 2
+                    },
+                    "description": "这一次更彻底——不只是关通知，是真正离开城市，去一个没有WiFi信号的地方待一整天。"
+                },
+                {
+                    "id": "L3_013",
+                    "title": "买一件真正意义上的好工具",
+                    "types": [
+                        "消费型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 3,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "一支好钢笔、一副好耳机、一把好刀——不是装饰品，是一件你会真正用到、每次用都感到愉悦的东西。"
+                },
+                {
+                    "id": "L3_014",
+                    "title": "去一次你从没去过的运动体验课",
+                    "types": [
+                        "突破型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 2,
+                        "time": 2,
+                        "energy": 3
+                    },
+                    "description": "攀岩、拳击、桨板、冲浪——选一个你一直好奇但从没踏进去的运动，报一次单次体验课，认真去感受。"
+                },
+                {
+                    "id": "L3_015",
+                    "title": "给自己做一次专业的形象咨询",
+                    "types": [
+                        "消费型",
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 3,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "找一个真正专业的人，帮你分析你的穿搭风格或整体形象。不是为了好看，是为了更清楚地看见自己。"
+                },
+                {
+                    "id": "L3_016",
+                    "title": "买一套你真正喜欢的书，配一个好下午",
+                    "types": [
+                        "消费型",
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 2,
+                        "time": 3,
+                        "energy": 1
+                    },
+                    "description": "那套你一直想读但一直没买的书。买回来，泡一杯好茶，用一整个下午开始读第一本。"
+                }
+            ]
+        },
+        {
+            "level": 4,
+            "level_name": "天品台",
+            "level_description": "三角满足其一，体验中强。四条叙事线的入口全部在这里。有轻度门槛，但只要你愿意，今天就可以出发。",
+            "items": [
+                {
+                    "id": "L4_001",
+                    "title": "报名一次从没尝试过的运动体验课",
+                    "types": [
+                        "突破型"
+                    ],
+                    "narrative_line": "身体边界线·入口",
+                    "triangle": {
+                        "money": 2,
+                        "time": 2,
+                        "energy": 2
+                    },
+                    "description": "攀岩、拳击、桨板任选，认真完成，感受身体在陌生运动里的反应。这是身体边界线的第一步。"
+                },
+                {
+                    "id": "L4_002",
+                    "title": "完整的数字断联日",
+                    "types": [
+                        "沉浸型",
+                        "向内型"
+                    ],
+                    "narrative_line": "向内凝视线·入口",
+                    "triangle": {
+                        "money": 1,
+                        "time": 3,
+                        "energy": 1
+                    },
+                    "description": "关掉所有通知，不看社交媒体，只活在线下世界整整一天。这是你和自己内心关系的第一次真正接触。"
+                },
+                {
+                    "id": "L4_003",
+                    "title": "去一家完全不认识菜名的异国料理餐厅",
+                    "types": [
+                        "突破型",
+                        "消费型"
+                    ],
+                    "narrative_line": "闯入陌生世界线·入口",
+                    "triangle": {
+                        "money": 2,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "点菜时不看翻译，全靠指或让服务员推荐。吃到什么算什么。这是你主动放弃熟悉感的第一次练习。"
+                },
+                {
+                    "id": "L4_004",
+                    "title": "约久未见的朋友，只聊天不谈正事",
+                    "types": [
+                        "关系型"
+                    ],
+                    "narrative_line": "关系深度线·入口",
+                    "triangle": {
+                        "money": 2,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "明确说好：今天不谈工作，不谈目标。就是吃饭聊天，聊那些没意义但有温度的东西。把时间定下来，不拖。"
+                },
+                {
+                    "id": "L4_005",
+                    "title": "一个人去看一场电影",
+                    "types": [
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "不是和别人约着去，是你一个人，选一部你真正想看的，买票，进去，散场后在外面站一会儿。"
+                },
+                {
+                    "id": "L4_006",
+                    "title": "去一家没去过的独立书店",
+                    "types": [
+                        "消费型",
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 2,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不是连锁书店，是藏在某条街上的独立小书店。进去逛，随心买走一本当场被吸引的书。"
+                },
+                {
+                    "id": "L4_007",
+                    "title": "点一次你一直觉得太贵的外卖或堂食",
+                    "types": [
+                        "消费型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 2,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "那道你每次看到都想点、然后又划走的菜。这次点它。"
+                },
+                {
+                    "id": "L4_008",
+                    "title": "给自己做一顿认真的早餐",
+                    "types": [
+                        "创造型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 2
+                    },
+                    "description": "提前买好食材，早起，认真做一顿你真正喜欢吃的早餐，好好坐下来吃完。"
+                },
+                {
+                    "id": "L4_009",
+                    "title": "去一次没去过的菜市场，凭感觉做一顿饭",
+                    "types": [
+                        "创造型",
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 2,
+                        "energy": 2
+                    },
+                    "description": "买食材，不看菜谱，回来随心做一顿。"
+                },
+                {
+                    "id": "L4_010",
+                    "title": "买一瓶你没喝过的好酒或特调饮品",
+                    "types": [
+                        "消费型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 2,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "那种你一直好奇'这是什么味道'的东西。买回来，配一个好傍晚，慢慢喝。"
+                },
+                {
+                    "id": "L4_011",
+                    "title": "去一次你没去过的图书馆",
+                    "types": [
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "选一个角落坐下来，随手拿一本书翻翻，待够2小时。"
+                },
+                {
+                    "id": "L4_012",
+                    "title": "找一部收藏了很久的电影，关灯看完",
+                    "types": [
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "不是随便找部电影，是那部你收藏了很久一直没看的。关灯，一个人，看完。"
+                },
+                {
+                    "id": "L4_013",
+                    "title": "买一张你喜欢的艺术家的海报或版画",
+                    "types": [
+                        "消费型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 2,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "那种你看到会停下来的作品。买回来，找个地方挂上去。"
+                },
+                {
+                    "id": "L4_014",
+                    "title": "一次城市骑行",
+                    "types": [
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 2,
+                        "energy": 2
+                    },
+                    "description": "找一条你没骑过的路线，骑过去，看看路的尽头是什么。"
+                },
+                {
+                    "id": "L4_015",
+                    "title": "买一件你加购物车很久的小物件",
+                    "types": [
+                        "消费型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 2,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "价格不贵但一直没下单的那个。买了。"
+                },
+                {
+                    "id": "L4_016",
+                    "title": "去一次地图上看到过但从没去过的地方",
+                    "types": [
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "不需要理由，就是去看看。"
+                },
+                {
+                    "id": "L4_017",
+                    "title": "报名一次免费的线下分享会或读书会",
+                    "types": [
+                        "突破型",
+                        "关系型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "找一个你感兴趣的主题，报名，去，认真听，和旁边的陌生人说一句话。"
+                },
+                {
+                    "id": "L4_018",
+                    "title": "给自己买一次好的护肤品或洗护产品",
+                    "types": [
+                        "消费型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 2,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "那个你查了很久、觉得'好像挺好但有点贵'的那个。买它。"
+                },
+                {
+                    "id": "L4_019",
+                    "title": "找朋友玩一整晚桌游",
+                    "types": [
+                        "关系型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 2,
+                        "time": 3,
+                        "energy": 1
+                    },
+                    "description": "买一套你一直好奇的桌游，两三个人，玩一整晚。"
+                },
+                {
+                    "id": "L4_020",
+                    "title": "去一次二手书店或旧货市场",
+                    "types": [
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "不带目的，随缘淘一件东西。只要它让你停下来看了超过10秒。"
+                }
+            ]
+        },
+        {
+            "level": 5,
+            "level_name": "地品殿",
+            "level_description": "对应噬神楼顶层试炼。你完成了一件需要脑力和胆量的事，这里的奖励配得上那个代价。每一件都需要你提前规划、主动出击，带着仪式感完成，然后在某个时刻留下一句记录。情绪基调：出走感——离开当下的轨道，主动去找一个新的体验，带着一个小仪式回来。",
+            "items": [
+                {
+                    "id": "L5_001",
+                    "title": "去买一杯棒打鲜橙，走到你今天最想去的地方喝完",
+                    "types": [
+                        "消费型",
+                        "仪式感型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "不是外卖，是你走过去买，然后走到今天最想去的那个地方——可以是某个街角、某个公园长椅、某个你喜欢的楼梯口。把这杯喝完，然后在备忘录里写一句今天的心情。就一句，不用多。"
+                },
+                {
+                    "id": "L5_002",
+                    "title": "去一家你没去过的甜点店，点店里最贵的那一份",
+                    "types": [
+                        "消费型",
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 3,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "不是最便宜的，是最贵的。坐下来，认真吃完，感受一下为什么它值这个价。"
+                },
+                {
+                    "id": "L5_003",
+                    "title": "专门去买一个好榴莲，回来认真吃一顿",
+                    "types": [
+                        "消费型",
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 2,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "不是顺手买，是专门去挑，让摊主帮你选一个最好的。回来，不赶时间，把它吃完。"
+                },
+                {
+                    "id": "L5_004",
+                    "title": "去一家你没去过的餐厅，一个人坐下来好好吃一顿",
+                    "types": [
+                        "消费型",
+                        "突破型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 3,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "不是外卖，不是随便找个地方，是你一个人走进去，坐下来，点你真正想吃的，慢慢吃完。吃完在门口站一会儿再走。"
+                },
+                {
+                    "id": "L5_005",
+                    "title": "去买一杯你没喝过的特调饮品，找一个好地方坐着喝完",
+                    "types": [
+                        "消费型",
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 2,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "不是连锁店，是那种你路过过但没进去的小店。进去，让店员推荐一杯他们最得意的，坐下来喝完。"
+                },
+                {
+                    "id": "L5_006",
+                    "title": "专门出门去看一次日落或日出",
+                    "types": [
+                        "沉浸型",
+                        "仪式感型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 3,
+                        "energy": 2
+                    },
+                    "description": "不是顺路看到，是专门为了这件事出门。找一个你觉得视野最好的地方，等那个光出现，看完，然后回来。"
+                },
+                {
+                    "id": "L5_007",
+                    "title": "去一家你没去过的咖啡馆，坐够1小时，不看手机",
+                    "types": [
+                        "沉浸型",
+                        "突破型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 2,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "点一杯你没点过的东西，坐下来，把手机扣在桌上，就听店里的声音和音乐，待够1小时。"
+                },
+                {
+                    "id": "L5_008",
+                    "title": "去买一个大西瓜，找朋友一起吃掉",
+                    "types": [
+                        "关系型",
+                        "消费型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 2,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "不是一个人吃，是专门约一个你最近想见的人，就为了这个西瓜，坐下来，聊天，把它吃完。"
+                },
+                {
+                    "id": "L5_009",
+                    "title": "去一次你没去过的夜市，专门找一样你没吃过的东西",
+                    "types": [
+                        "沉浸型",
+                        "突破型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 2,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "不是随便逛，是带着任务去——找到一样你完全不认识的食物，买来，吃掉。"
+                },
+                {
+                    "id": "L5_010",
+                    "title": "专门去买一次你最喜欢的早餐，不赶时间吃完",
+                    "types": [
+                        "消费型",
+                        "仪式感型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 2,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "不是外卖，是出门去那家你觉得最好吃的地方，坐下来，把早餐吃完，然后再开始今天。"
+                },
+                {
+                    "id": "L5_011",
+                    "title": "去一家书店，随手买走一本封面让你停下来的书",
+                    "types": [
+                        "消费型",
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 2,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "不看简介，不看评分，只看封面。买了，回家，当天翻开第一页。"
+                },
+                {
+                    "id": "L5_012",
+                    "title": "去一次你没去过的公园，找一个地方坐够30分钟",
+                    "types": [
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "不是散步，是找一个地方坐下来，看看周围的人和树，待够30分钟再走。"
+                },
+                {
+                    "id": "L5_013",
+                    "title": "去买一件你一直想买的小数码配件",
+                    "types": [
+                        "消费型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 3,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不是冲动消费，是那件你已经看了很久的东西。今天去买，买完当天用上。"
+                },
+                {
+                    "id": "L5_014",
+                    "title": "去一次你没去过的茶饮店，点最招牌的那杯",
+                    "types": [
+                        "消费型",
+                        "突破型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "让店员推荐，不自己选。喝完，评价一下值不值，记在备忘录里。"
+                },
+                {
+                    "id": "L5_015",
+                    "title": "专门出门去找一家你没吃过的异国料理，一个人吃完",
+                    "types": [
+                        "消费型",
+                        "突破型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 3,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "不做攻略，就是走出去，找到一家看起来不错的，进去，点你不认识的菜，吃完。"
+                },
+                {
+                    "id": "L5_016",
+                    "title": "去买一个你没吃过的进口水果，认真品尝",
+                    "types": [
+                        "消费型",
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 2,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "专门去超市找，让店员推荐一个最近最好吃的进口水果。买回来，认真吃，感受一下。"
+                },
+                {
+                    "id": "L5_017",
+                    "title": "去一次你没去过的地方看夜景，待够20分钟",
+                    "types": [
+                        "沉浸型",
+                        "仪式感型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 2,
+                        "energy": 2
+                    },
+                    "description": "可以是楼顶、桥上、山顶。去，看，待够20分钟，然后回来。"
+                },
+                {
+                    "id": "L5_018",
+                    "title": "去买一束花，放在你每天能看到的地方",
+                    "types": [
+                        "消费型",
+                        "仪式感型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 2,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "专门为这件事出门，让花店的人帮你搭配一束淡雅的。回来，找一个你每天都能看到的地方，放好。"
+                },
+                {
+                    "id": "L5_019",
+                    "title": "去一次你没去过的独立咖啡馆，和陌生人搭一句话",
+                    "types": [
+                        "突破型",
+                        "关系型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 2,
+                        "time": 2,
+                        "energy": 2
+                    },
+                    "description": "进去，坐下，点东西，然后找一个机会和旁边的陌生人说一句话——可以是问WiFi密码，可以是评价一下这里的音乐。就一句。"
+                },
+                {
+                    "id": "L5_020",
+                    "title": "去一次你没去过的运动场地，跑一条新路线",
+                    "types": [
+                        "突破型",
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 2,
+                        "energy": 3
+                    },
+                    "description": "换一个地方运动，看新的风景，感受一下陌生环境里的身体状态。"
+                },
+                {
+                    "id": "L5_021",
+                    "title": "专门去买一份你一直想试的甜点，配一首薛之谦吃完",
+                    "types": [
+                        "消费型",
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 2,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "点开他的任何一首，等甜点到手，然后在这首歌的时间里把它吃完。"
+                },
+                {
+                    "id": "L5_022",
+                    "title": "去一次二手书店，随缘淘一件东西",
+                    "types": [
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 2,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "不带目的，就是逛。只要有一件东西让你停下来超过10秒，就把它买走。"
+                },
+                {
+                    "id": "L5_023",
+                    "title": "去买一瓶你没喝过的好饮料，找一个好傍晚喝完",
+                    "types": [
+                        "消费型",
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 2,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不是随手买，是那种你看到过几次一直好奇的东西。买回来，等一个好傍晚，慢慢喝。"
+                },
+                {
+                    "id": "L5_024",
+                    "title": "去一次你没去过的便利店，随手买两件没买过的东西",
+                    "types": [
+                        "消费型",
+                        "突破型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不做计划，就是进去逛，拿两件你没买过的东西，结账，走。"
+                },
+                {
+                    "id": "L5_025",
+                    "title": "专门出门走一段你没走过的路，看看路的尽头是什么",
+                    "types": [
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 2,
+                        "energy": 2
+                    },
+                    "description": "不是散步，是带着好奇心走，走到你没走过的地方，看看那里有什么，然后回来。"
+                },
+                {
+                    "id": "L5_026",
+                    "title": "去买一个你没吃过口味的冰淇淋，坐在店外吃完",
+                    "types": [
+                        "消费型",
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不进去坐，就是站在或坐在店外，把它吃完，看看来来往往的人。"
+                }
+            ]
+        },
+        {
+            "level": 6,
+            "level_name": "玄品轩",
+            "level_description": "对应噬神楼中上层试炼。你完成了一件需要脑力或胆量的事，这里的奖励是回到自己的空间，动手做一件事，让它留下痕迹。情绪基调：归巢感——回到自己的领地，把它变得更好一点，完成之后有东西留下来。",
+            "items": [
+                {
+                    "id": "L6_001",
+                    "title": "泡一个认真的澡，放你最喜欢的音乐，泡够30分钟",
+                    "types": [
+                        "沉浸型",
+                        "仪式感型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "不是随便冲澡，是放好水，调好温度，打开薛之谦或任何你今天最想听的，泡够30分钟。出来之后，把今天最想说的一句话写在备忘录里。"
+                },
+                {
+                    "id": "L6_002",
+                    "title": "整理一个你一直没整理的角落，整理完拍一张照",
+                    "types": [
+                        "创造型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 2,
+                        "energy": 2
+                    },
+                    "description": "不是大扫除，是那个你每次看到都想动但一直没动的地方。今天把它弄好，拍一张整理前和整理后的对比照，留着。"
+                },
+                {
+                    "id": "L6_003",
+                    "title": "给自己做一份认真的水果拼盘，配一部你喜欢的电影",
+                    "types": [
+                        "创造型",
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 2,
+                        "time": 3,
+                        "energy": 1
+                    },
+                    "description": "西瓜切好，榴莲剥好，认真摆一摆。然后打开《加勒比海盗》或任何你今天最想看的，慢慢吃，慢慢看。"
+                },
+                {
+                    "id": "L6_004",
+                    "title": "把最近让你停下来的歌整理成一个新歌单，命名它",
+                    "types": [
+                        "创造型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不是随手收藏，是认真想一想最近什么歌让你听了第二遍。把它们放在一起，给这个歌单起一个只有你自己懂的名字。"
+                },
+                {
+                    "id": "L6_005",
+                    "title": "给自己冲一杯好喝的东西，坐在你最喜欢的位置，听完一张完整的专辑",
+                    "types": [
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "可以是薛之谦的任何一张。从第一首听到最后一首，不跳歌，不看手机，把这杯喝完。"
+                },
+                {
+                    "id": "L6_006",
+                    "title": "重温《加勒比海盗》第一部，关灯看",
+                    "types": [
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 3,
+                        "energy": 1
+                    },
+                    "description": "不是刷，是关灯，认真看，让那个熟悉的开场再打你一次。看完在备忘录里写一句你今天最有感触的台词。"
+                },
+                {
+                    "id": "L6_007",
+                    "title": "整理你的手机相册，把有意义的照片放进专门的相册",
+                    "types": [
+                        "创造型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "删掉没用的截图，把那些你看到会停下来的照片，整理进一个你专门建的相册里，给它起一个名字。"
+                },
+                {
+                    "id": "L6_008",
+                    "title": "给自己做一杯认真的自制饮料",
+                    "types": [
+                        "创造型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不是买，是自己做。榨一杯果汁、调一杯冰饮，认真做，认真喝，拍一张照片留着。"
+                },
+                {
+                    "id": "L6_009",
+                    "title": "重温《浴血黑帮》里你最喜欢的那一集",
+                    "types": [
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "不用想太多，就是那集你看过不止一次的。再看一次，看完把你最喜欢的那句台词写下来。"
+                },
+                {
+                    "id": "L6_010",
+                    "title": "整理你的收藏夹或书签，只留下真正有用的",
+                    "types": [
+                        "创造型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "把那些你收藏了但从没打开过的东西清理掉，留下真正有价值的，整理成几个分类。"
+                },
+                {
+                    "id": "L6_011",
+                    "title": "给自己做一顿简单但认真的夜宵，配一首歌吃完",
+                    "types": [
+                        "创造型",
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不是泡面，是认真做一个你喜欢吃的小东西。选一首你今天最想听的歌，在这首歌的时间里，把它吃完。"
+                },
+                {
+                    "id": "L6_012",
+                    "title": "整理你的工作台，清空它，重新只放你需要的东西",
+                    "types": [
+                        "创造型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 2,
+                        "energy": 2
+                    },
+                    "description": "清空，擦干净桌面，然后认真想一想你每天真正需要的东西有哪些，只把它们放回去。拍一张整理后的照片。"
+                },
+                {
+                    "id": "L6_013",
+                    "title": "把你最近的想法或项目灵感写下来，整理成一页纸",
+                    "types": [
+                        "创造型",
+                        "向内型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 2
+                    },
+                    "description": "不是待办清单，是那些散落在脑子里的想法。今天把它们写下来，整理成一页，然后关掉它，今晚不用管。"
+                },
+                {
+                    "id": "L6_014",
+                    "title": "给自己泡一杯好茶，坐在窗边喝完，什么都不想",
+                    "types": [
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不是工作时候顺手泡的那种，是专门为自己泡的。坐在窗边，把这杯喝完，就看窗外。"
+                },
+                {
+                    "id": "L6_015",
+                    "title": "重新布置你桌面或床头的摆设，让它有一点点不同",
+                    "types": [
+                        "创造型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "换个位置，换个感觉。布置完，坐在那里感受一下新的样子，拍一张照片留着。"
+                },
+                {
+                    "id": "L6_016",
+                    "title": "听完一个你感兴趣的播客，把最让你停下来的那句话记下来",
+                    "types": [
+                        "沉浸型",
+                        "向内型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "不是背景音，是认真听完。把那句让你停下来的话，写在备忘录里，加上今天的日期。"
+                },
+                {
+                    "id": "L6_017",
+                    "title": "整理你的衣柜，把不穿的清出来",
+                    "types": [
+                        "创造型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 2,
+                        "energy": 2
+                    },
+                    "description": "不用全部整理，就是把那些你超过半年没穿的拿出来，决定留还是送人。整理完感受一下空间变清爽的感觉。"
+                },
+                {
+                    "id": "L6_018",
+                    "title": "给自己做一个简单的护肤仪式，认真做完每一步",
+                    "types": [
+                        "沉浸型",
+                        "仪式感型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不是随便涂一下，是认真对待自己的皮肤15~20分钟，每一步都慢慢来。"
+                },
+                {
+                    "id": "L6_019",
+                    "title": "用你最好的耳机听完薛之谦的《租购》，把音量调到刚刚好",
+                    "types": [
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不是随便听，是认真感受那首歌在好耳机里的质感，从第一个字听到最后一个字。听完写一句你今天听到的感受。"
+                },
+                {
+                    "id": "L6_020",
+                    "title": "把手机里存了很久的截图清理一遍，只留下真正有意义的",
+                    "types": [
+                        "创造型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "那些你收藏了但从没再看过的截图，今天做一个决定——留还是删。留下来的，整理进专门的相册。"
+                },
+                {
+                    "id": "L6_021",
+                    "title": "给自己冲一个好的淋浴，用你最喜欢的沐浴产品，不赶时间",
+                    "types": [
+                        "沉浸型",
+                        "仪式感型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不赶时间，把每一个步骤都认真做完。出来之后，擦好身体乳，感受一下被认真对待的感觉。"
+                },
+                {
+                    "id": "L6_022",
+                    "title": "整理你最近的项目清单，删掉不重要的，只留下真正想做的",
+                    "types": [
+                        "创造型",
+                        "向内型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 2
+                    },
+                    "description": "把所有你想做但还没做的事情列出来，然后认真筛选，只留下三件你真正想推进的。"
+                },
+                {
+                    "id": "L6_023",
+                    "title": "点一根淡香的蜡烛或香薰，在这个香味里做一件你喜欢的事",
+                    "types": [
+                        "沉浸型",
+                        "仪式感型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "香味要淡，不能太重。在这个香味存在的时间里，做一件你今天最想做的事。"
+                },
+                {
+                    "id": "L6_024",
+                    "title": "看完一篇你收藏了很久的长文章，把有共鸣的句子划出来",
+                    "types": [
+                        "沉浸型",
+                        "向内型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "不是刷，是认真读完。把让你停下来的句子标出来，读完之后写一句你的感受。"
+                },
+                {
+                    "id": "L6_025",
+                    "title": "给自己买一个新的桌面小植物或摆件",
+                    "types": [
+                        "消费型",
+                        "仪式感型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 2,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不需要很贵，就是那种让你每天看到会微微愉悦的东西。买回来，找好位置，放上去。"
+                },
+                {
+                    "id": "L6_026",
+                    "title": "把你最近听的音乐按情绪分类，整理成两三个不同基调的歌单",
+                    "types": [
+                        "创造型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "一个歌单给专注工作时听，一个给放松时听，一个给你需要能量时听。每个歌单起一个只有你自己懂的名字。"
+                },
+                {
+                    "id": "L6_027",
+                    "title": "重新听一遍你最近最喜欢的那首歌，把歌词认真看一遍",
+                    "types": [
+                        "沉浸型",
+                        "向内型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不是当背景音，是认真听每一句歌词在说什么。听完写一句你今天听到的感受。"
+                },
+                {
+                    "id": "L6_028",
+                    "title": "给自己做一份认真的早餐，坐下来不看手机吃完",
+                    "types": [
+                        "创造型",
+                        "仪式感型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 2
+                    },
+                    "description": "提前买好食材，早起，认真做，然后坐下来，把手机扣过去，把这顿早餐认真吃完。"
+                },
+                {
+                    "id": "L6_029",
+                    "title": "整理你的数字桌面，只留下你每天真正用到的东西",
+                    "types": [
+                        "创造型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "清理桌面图标，整理文件夹，让你每次打开电脑看到的界面是清爽的。整理完截一张图留着。"
+                },
+                {
+                    "id": "L6_030",
+                    "title": "给自己一个小时的只听音乐不做任何事的时间",
+                    "types": [
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "不是工作时的背景音，是专门为音乐留出来的一个小时。躺下来，或者坐着，就是听，让音乐带着你走。"
+                }
+            ]
+        },
+        {
+            "level": 7,
+            "level_name": "灵品阁",
+            "level_description": "对应噬神楼中层试炼。你完成了一件需要体力和脑力的事，这里的奖励是此刻、这一秒、这个感觉。极度具体，极度个人化，读到就能直接进入那个状态。情绪基调：当下感——不需要规划，不需要准备，就是现在，就是这个。",
+            "items": [
+                {
+                    "id": "L7_001",
+                    "title": "把《租购》调到你觉得刚刚好的音量，躺下来，从第一个字听到最后一个字",
+                    "types": [
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "什么都不做，就是听。让那首歌从头到尾完整地经过你一次。"
+                },
+                {
+                    "id": "L7_002",
+                    "title": "从冰箱拿出一罐冰镇尖叫，打开，慢慢喝完",
+                    "types": [
+                        "感官型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不是一口气喝完，是慢慢喝，感受每一口的凉和甜。"
+                },
+                {
+                    "id": "L7_003",
+                    "title": "切一块西瓜，站在厨房吃完",
+                    "types": [
+                        "感官型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不用盘子，不用筷子，就是切开，站着，把它吃完。"
+                },
+                {
+                    "id": "L7_004",
+                    "title": "闻一下你现在觉得最好闻的东西",
+                    "types": [
+                        "感官型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "护手霜、香薰、刚洗完的衣服——就是闻，让那个淡淡的香味停留一会儿。"
+                },
+                {
+                    "id": "L7_005",
+                    "title": "把现在最想听的歌调到比平时大一点的音量，听完一遍",
+                    "types": [
+                        "感官型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "就一遍，但要真的比平时大一点，感受那个声音充满空间的感觉。"
+                },
+                {
+                    "id": "L7_006",
+                    "title": "吃一口榴莲，慢慢感受那个味道",
+                    "types": [
+                        "感官型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "就一口，或者一整块，随你。慢慢感受那个复杂的味道。"
+                },
+                {
+                    "id": "L7_007",
+                    "title": "把手机调成静音，放在另一个房间，就这样待5分钟",
+                    "types": [
+                        "感官型",
+                        "向内型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "就5分钟，感受一下没有任何通知打扰的安静。"
+                },
+                {
+                    "id": "L7_008",
+                    "title": "打开《加勒比海盗》主题曲He's a Pirate，闭眼听完",
+                    "types": [
+                        "感官型",
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "就那一首，闭眼，让那个音乐把你带到海上去。"
+                },
+                {
+                    "id": "L7_009",
+                    "title": "伸一个大懒腰，把全身能拉到的地方都拉一遍",
+                    "types": [
+                        "感官型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "站起来，把手举到最高，把身体拉到极限，感受每一块肌肉被拉开的感觉。"
+                },
+                {
+                    "id": "L7_010",
+                    "title": "喝一杯棒打鲜橙（外卖或自制），慢慢喝完",
+                    "types": [
+                        "感官型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不是一口气喝完，是慢慢喝，感受那个橙子的清新和甜。"
+                },
+                {
+                    "id": "L7_011",
+                    "title": "把窗户打开，站在窗边，感受外面的风和声音，待3分钟",
+                    "types": [
+                        "感官型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不需要做任何事，就是站着，感受外面的世界从窗口进来。"
+                },
+                {
+                    "id": "L7_012",
+                    "title": "吃一块你现在最想吃的甜点",
+                    "types": [
+                        "感官型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不是计划，是现在，马上，去拿来，吃掉。"
+                },
+                {
+                    "id": "L7_013",
+                    "title": "闭眼，深呼吸10次，每一次都慢到你能感受到肺部充满",
+                    "types": [
+                        "感官型",
+                        "向内型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不是冥想，就是10次深呼吸，认真感受每一次空气进来和出去。"
+                },
+                {
+                    "id": "L7_014",
+                    "title": "喝一杯冰水，慢到能感受每一口的凉",
+                    "types": [
+                        "感官型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "从冰箱拿出来，慢慢喝完，感受那个凉从喉咙一直到胃。"
+                },
+                {
+                    "id": "L7_015",
+                    "title": "把耳机戴上，什么都不播，感受隔音的那一刻",
+                    "types": [
+                        "感官型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "就是戴着，感受外界声音消失的那一刻，在那个安静里待一会儿。"
+                },
+                {
+                    "id": "L7_016",
+                    "title": "摸一下你觉得最舒服的那件衣服或毯子",
+                    "types": [
+                        "感官型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "就是摸，感受那个触感，让那个柔软停留在手上一会儿。"
+                },
+                {
+                    "id": "L7_017",
+                    "title": "把灯光调暗，在暗一点的光线里待10分钟",
+                    "types": [
+                        "感官型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不需要做任何事，就是感受光线变柔和之后，整个空间的感觉不一样了。"
+                },
+                {
+                    "id": "L7_018",
+                    "title": "喝一口水果冰沙，慢到感受冰和果味同时到来",
+                    "types": [
+                        "感官型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "如果有的话，就是喝一口，让那个冰和甜在嘴里停留一会儿。"
+                },
+                {
+                    "id": "L7_019",
+                    "title": "闭眼，感受此刻房间里所有的声音，待2分钟",
+                    "types": [
+                        "感官型",
+                        "向内型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不是冥想，就是听，听空调声、窗外声、自己的呼吸声，让所有声音都进来。"
+                },
+                {
+                    "id": "L7_020",
+                    "title": "把手放在胸口，感受自己的心跳，待30秒",
+                    "types": [
+                        "感官型",
+                        "向内型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "就是感受，感受那个稳定的跳动，感受自己是活着的。"
+                },
+                {
+                    "id": "L7_021",
+                    "title": "站起来在房间里随便走动2分钟",
+                    "types": [
+                        "感官型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不是散步，就是动起来，让身体从坐着的状态里出来一会儿。"
+                },
+                {
+                    "id": "L7_022",
+                    "title": "喝一杯温水，慢慢喝完，感受那个暖",
+                    "types": [
+                        "感官型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不是冰的，是温的，慢慢喝，感受那个暖从喉咙一直到胃。"
+                },
+                {
+                    "id": "L7_023",
+                    "title": "把现在脑子里最响的那首歌哼出来，哼完",
+                    "types": [
+                        "感官型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不管在哪，就是哼出来，让那首歌从脑子里出来，进入空气里。"
+                },
+                {
+                    "id": "L7_024",
+                    "title": "闻一下刚洗完的衣服或床单的味道",
+                    "types": [
+                        "感官型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "就是闻，那个干净的、淡淡的、让人安心的味道。"
+                },
+                {
+                    "id": "L7_025",
+                    "title": "吃一颗你现在最想吃的糖",
+                    "types": [
+                        "感官型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "就一颗，放进嘴里，让那个甜慢慢化开。"
+                },
+                {
+                    "id": "L7_026",
+                    "title": "把现在最想说的一句话，小声说出来",
+                    "types": [
+                        "感官型",
+                        "向内型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不需要有人听，就是说出来，说完。"
+                },
+                {
+                    "id": "L7_027",
+                    "title": "看窗外1分钟，什么都不想",
+                    "types": [
+                        "感官型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不是发呆，是真的看——看天、看树、看楼、看路上的人，就看1分钟。"
+                },
+                {
+                    "id": "L7_028",
+                    "title": "喝一口你最喜欢的饮料，慢到感受每一口",
+                    "types": [
+                        "感官型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不是一口气喝完，是慢慢喝，让每一口都是完整的体验。"
+                },
+                {
+                    "id": "L7_029",
+                    "title": "把现在的姿势调整到你觉得最舒服的状态",
+                    "types": [
+                        "感官型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不管在哪里，重新调整一下你的坐姿或躺姿，找到今天最舒服的那个位置。"
+                },
+                {
+                    "id": "L7_030",
+                    "title": "闭眼，感受此刻身体的重量压在椅子或床上的感觉，待1分钟",
+                    "types": [
+                        "感官型",
+                        "向内型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不是冥想，就是感受，感受身体的重量，感受自己此刻存在于这个空间里。"
+                }
+            ]
+        },
+        {
+            "level": 8,
+            "level_name": "凡品坊",
+            "level_description": "对应噬神楼底层试炼。你完成了一件以体力为主的事，身体需要被好好对待。这里的每一件都是一个具体的场景——你在哪里、什么姿势、周围什么状态。进入这个场景，然后放下所有。情绪基调：卸甲感——你今天已经付出了，现在可以把所有东西放下来。",
+            "items": [
+                {
+                    "id": "L8_001",
+                    "title": "冥想15分钟，就坐在你现在的位置",
+                    "types": [
+                        "向内型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不需要换地方，不需要任何准备，就是坐下来，闭眼，让思绪自己流动，15分钟。"
+                },
+                {
+                    "id": "L8_002",
+                    "title": "躺在床上，把手机扣过去，盯着天花板，直到你自己想动为止",
+                    "types": [
+                        "向内型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "不是睡觉，不是发呆，就是躺着，看天花板，让身体慢慢沉下去。"
+                },
+                {
+                    "id": "L8_003",
+                    "title": "睡一觉，不设闹钟，睡到自然醒",
+                    "types": [
+                        "向内型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 5,
+                        "energy": 1
+                    },
+                    "description": "今天可以。不需要理由，就是睡到你自己醒来为止。"
+                },
+                {
+                    "id": "L8_004",
+                    "title": "泡脚20分钟，水温刚好烫，什么都不做",
+                    "types": [
+                        "感官型",
+                        "向内型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "调好水温，坐下来，把脚放进去，就这样待够20分钟。可以闭眼，可以什么都不想。"
+                },
+                {
+                    "id": "L8_005",
+                    "title": "冥想30分钟，专注在呼吸上，数到300",
+                    "types": [
+                        "向内型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "比15分钟更深一点。就是数呼吸，数到300，数乱了就重新从1开始。"
+                },
+                {
+                    "id": "L8_006",
+                    "title": "躺着听完薛之谦的一张完整专辑，什么都不做",
+                    "types": [
+                        "向内型",
+                        "沉浸型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "不是背景音，是躺着，闭眼，从第一首听到最后一首。听完了再起来。"
+                },
+                {
+                    "id": "L8_007",
+                    "title": "午睡20分钟，设好闹钟，真正睡过去",
+                    "types": [
+                        "向内型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不是闭眼休息，是真正睡过去。设好20分钟的闹钟，然后放松，让自己睡着。"
+                },
+                {
+                    "id": "L8_008",
+                    "title": "给自己一个不回消息的合法窗口——今晚剩下的时间",
+                    "types": [
+                        "向内型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 3,
+                        "energy": 1
+                    },
+                    "description": "今晚所有的消息可以明天再回。手机放在另一个房间，今晚剩下的时间只属于你。"
+                },
+                {
+                    "id": "L8_009",
+                    "title": "躺在床上，把今天经历的三件事在脑子里慢慢过一遍，然后放下",
+                    "types": [
+                        "向内型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不是复盘，不是分析，就是慢慢回想，让今天的事情在脑子里完整地经过一次，然后告诉自己：今天结束了。"
+                },
+                {
+                    "id": "L8_010",
+                    "title": "冥想20分钟，什么念头来了就看着它走，不跟着它走",
+                    "types": [
+                        "向内型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "如果思绪来了，就看着它，像看着云飘过去一样，不跟着它走。"
+                },
+                {
+                    "id": "L8_011",
+                    "title": "今天的运动可以跳过，身体需要休息",
+                    "types": [
+                        "向内型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不需要愧疚，今天就是可以不动。你已经完成了该完成的，身体需要恢复。"
+                },
+                {
+                    "id": "L8_012",
+                    "title": "给自己一个完整的慢早晨——明天早上所有事情都慢慢来",
+                    "types": [
+                        "向内型",
+                        "仪式感型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "今晚就决定好：明天早上不赶时间，早餐慢慢吃，洗漱慢慢来，不看手机，把早晨还给自己。"
+                },
+                {
+                    "id": "L8_013",
+                    "title": "躺着听雨声或白噪音，待够30分钟",
+                    "types": [
+                        "感官型",
+                        "向内型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "找一个你喜欢的白噪音，躺下来，让那个声音把你包住，待够30分钟。"
+                },
+                {
+                    "id": "L8_014",
+                    "title": "今天可以不社交——所有非必要的联系推到明天",
+                    "types": [
+                        "向内型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 3,
+                        "energy": 1
+                    },
+                    "description": "今天只属于你自己。不需要解释，不需要回应，明天再说。"
+                },
+                {
+                    "id": "L8_015",
+                    "title": "睡前冥想10分钟，让今天的事情慢慢沉下去，然后睡着",
+                    "types": [
+                        "向内型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不是刷手机，是闭眼，让今天的事情慢慢沉下去，感受身体越来越重，然后睡着。"
+                },
+                {
+                    "id": "L8_016",
+                    "title": "今天可以只做一件事，做完就够了",
+                    "types": [
+                        "向内型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "不需要高效，不需要多线程，今天只把一件事做完就够了。其他的明天再说。"
+                },
+                {
+                    "id": "L8_017",
+                    "title": "给自己一个不解释的合法授权——今天做的任何决定不需要向任何人解释",
+                    "types": [
+                        "向内型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "今天做的任何决定，不需要向任何人解释，包括向自己解释。就这样。"
+                },
+                {
+                    "id": "L8_018",
+                    "title": "坐在你最喜欢的位置，什么都不做，待够15分钟",
+                    "types": [
+                        "向内型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 1,
+                        "energy": 1
+                    },
+                    "description": "不是冥想，不是休息，就是坐着，待在那里，感受那个位置和那15分钟只属于你。"
+                },
+                {
+                    "id": "L8_019",
+                    "title": "今天可以早睡1小时",
+                    "types": [
+                        "向内型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 2,
+                        "energy": 1
+                    },
+                    "description": "不需要理由，今天就是可以比平时早睡一个小时。把手机放远，闭眼，让今天提前结束。"
+                },
+                {
+                    "id": "L8_020",
+                    "title": "今天可以什么都不完成",
+                    "types": [
+                        "向内型"
+                    ],
+                    "narrative_line": null,
+                    "triangle": {
+                        "money": 1,
+                        "time": 3,
+                        "energy": 1
+                    },
+                    "description": "不是失败，是休息。今天结束的时候，什么都没做也是可以的。你已经完成了噬神楼的试炼，现在可以放下所有，什么都不是，只是你自己。"
+                }
+            ]
+        }
+    ]
+}

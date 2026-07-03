@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "account": {
+    "title": "任务积分账户",
+    "unit": "分"
+  },
+  "rules": {
+    "defaultTaskPoints": 5,
+    "pointPresets": [
+      { "id": "quick", "label": "临时小任务", "points": 3 },
+      { "id": "normal", "label": "标准任务", "points": 5 },
+      { "id": "important", "label": "重要任务", "points": 10 },
+      { "id": "deep", "label": "高投入任务", "points": 20 }
+    ],
+    "priorityDefaults": {
+      "0": 3,
+      "1": 5,
+      "2": 10,
+      "3": 20
+    },
+    "boxColorDefaults": {
+      "important": 10,
+      "misc": 5,
+      "health": 10,
+      "study": 3,
+      "relax": 0,
+      "reward": 0,
+      "punish": 0
+    },
+    "milestoneBonuses": [
+      {
+        "id": "growth-session",
+        "label": "成长聚会 / 局",
+        "points": 10,
+        "description": "参加一次对成长有帮助的聚会、局或交流。"
+      },
+      {
+        "id": "growth-review",
+        "label": "1k 复盘",
+        "points": 10,
+        "description": "活动结束后完成 1000 字复盘，额外加分。"
+      }
+    ]
+  },
+  "rewards": [
+    {
+      "id": "milk-tea",
+      "title": "奶茶",
+      "description": "想喝的时候先走兑换，不再口头消费。",
+      "cost": 18,
+      "category": "即时满足",
+      "icon": "🥤",
+      "active": true
+    },
+    {
+      "id": "dessert",
+      "title": "甜品",
+      "description": "把临时嘴馋也纳入奖励系统。",
+      "cost": 22,
+      "category": "即时满足",
+      "icon": "🍰",
+      "active": true
+    },
+    {
+      "id": "short-video",
+      "title": "短视频 30 分钟",
+      "description": "短视频也算奖励，先完成任务再兑换。",
+      "cost": 15,
+      "category": "娱乐",
+      "icon": "📱",
+      "active": true
+    },
+    {
+      "id": "game-hour",
+      "title": "游戏 1 小时",
+      "description": "娱乐时间需要被看见，也需要被约束。",
+      "cost": 20,
+      "category": "娱乐",
+      "icon": "🎮",
+      "active": true
+    },
+    {
+      "id": "city-walk",
+      "title": "散步 / 外出放风",
+      "description": "一个短时放松奖励，适合高压后调整状态。",
+      "cost": 12,
+      "category": "放松",
+      "icon": "🚶",
+      "active": true
+    },
+    {
+      "id": "coffee-break",
+      "title": "咖啡店坐一会",
+      "description": "一次轻松的外出奖励。",
+      "cost": 25,
+      "category": "放松",
+      "icon": "☕",
+      "active": true
+    },
+    {
+      "id": "growth-social",
+      "title": "成长型聚会预算",
+      "description": "用于参加一次对成长有帮助的线下交流或局。",
+      "cost": 30,
+      "category": "成长奖励",
+      "icon": "🤝",
+      "active": true
+    },
+    {
+      "id": "casual-spend",
+      "title": "非计划性小消费",
+      "description": "把冲动消费显性化，先兑换再花。",
+      "cost": 25,
+      "category": "消费",
+      "icon": "🛍",
+      "active": true
+    }
+  ],
+  "transactions": [],
+  "meta": {
+    "createdAt": "2026-04-16T00:00:00+08:00",
+    "updatedAt": "2026-04-16T00:00:00+08:00",
+    "sourceLabel": "local-mock",
+    "openingBalanceRecorded": false,
+    "dirty": false
+  }
+}

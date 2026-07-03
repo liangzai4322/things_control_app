@@ -1,0 +1,13 @@
+node_modules/
+tmp/
+
+# Browser profile/cache fragments can contain auth state.
+Local Storage/
+Network/
+Cookies*
+Login Data*
+
+# Local secrets and machine-specific runtime files.
+.env
+.env.*
+*.log

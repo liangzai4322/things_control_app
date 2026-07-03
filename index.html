@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="TaskBox">
+  <meta name="theme-color" content="#F7774D">
+  <title>TaskBox</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="assets/icons/icon-192.svg">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app" class="app-container">
+    <main class="page">
+      <header class="topbar safe-top skeleton-topbar">
+        <div class="skeleton-line w120"></div>
+        <div class="row gap8">
+          <div class="skeleton-dot"></div>
+          <div class="skeleton-dot"></div>
+        </div>
+      </header>
+      <section class="box-grid">
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+      </section>
+    </main>
+  </div>
+
+  <div id="bottom-sheet-root"></div>
+  <div id="toast" class="toast"></div>
+
+  <script src="js/gist-sync-patch.js?v=5"></script>
+  <script type="module">
+    Promise.resolve(window.__taskboxGistPatchReady)
+      .catch(() => {})
+      .then(() => import('./js/app.js'))
+      .then(() => {
+        if (document.readyState !== 'loading') {
+          window.dispatchEvent(new Event('DOMContentLoaded'));
+        }
+      });
+  </script>
+</body>
+</html>

@@ -1,0 +1,816 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>用户痛点全景图</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+      background: #0f0f1a;
+      color: #e0e0f0;
+      min-height: 100vh;
+      padding: 48px 24px;
+    }
+
+    /* ── Header ── */
+    .page-header {
+      text-align: center;
+      margin-bottom: 56px;
+    }
+    .page-header .badge {
+      display: inline-block;
+      background: linear-gradient(135deg, #6c63ff, #48c6ef);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      padding: 4px 14px;
+      border-radius: 20px;
+      margin-bottom: 16px;
+    }
+    .page-header h1 {
+      font-size: clamp(28px, 5vw, 48px);
+      font-weight: 800;
+      background: linear-gradient(135deg, #a78bfa, #60a5fa, #34d399);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      line-height: 1.2;
+      margin-bottom: 12px;
+    }
+    .page-header p {
+      color: #8888aa;
+      font-size: 15px;
+    }
+
+    /* ── Filter Bar ── */
+    .filter-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: center;
+      margin-bottom: 48px;
+    }
+    .filter-btn {
+      padding: 7px 18px;
+      border-radius: 20px;
+      border: 1px solid #2a2a40;
+      background: #16162a;
+      color: #9999bb;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all .2s;
+    }
+    .filter-btn:hover, .filter-btn.active {
+      background: linear-gradient(135deg, #6c63ff, #48c6ef);
+      border-color: transparent;
+      color: #fff;
+    }
+
+    /* ── Grid ── */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 24px;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    /* ── Card ── */
+    .card {
+      background: #16162a;
+      border: 1px solid #2a2a40;
+      border-radius: 20px;
+      padding: 28px 26px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      transition: transform .25s, box-shadow .25s, border-color .25s;
+      position: relative;
+      overflow: hidden;
+    }
+    .card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: var(--accent);
+      border-radius: 20px 20px 0 0;
+    }
+    .card:hover {
+      transform: translateY(-6px);
+      box-shadow: 0 20px 60px rgba(0,0,0,.5);
+      border-color: #3a3a5a;
+    }
+
+    /* accent colours per category */
+    .cat-ai       { --accent: linear-gradient(90deg,#6c63ff,#a78bfa); }
+    .cat-edu      { --accent: linear-gradient(90deg,#f59e0b,#fbbf24); }
+    .cat-biz      { --accent: linear-gradient(90deg,#10b981,#34d399); }
+    .cat-content  { --accent: linear-gradient(90deg,#ef4444,#f87171); }
+    .cat-growth   { --accent: linear-gradient(90deg,#3b82f6,#60a5fa); }
+    .cat-life     { --accent: linear-gradient(90deg,#ec4899,#f472b6); }
+    .cat-ops      { --accent: linear-gradient(90deg,#8b5cf6,#c084fc); }
+
+    /* ── Card top row ── */
+    .card-top {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+    }
+    .icon-wrap {
+      width: 46px; height: 46px;
+      border-radius: 12px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 22px;
+      flex-shrink: 0;
+      background: var(--icon-bg, rgba(108,99,255,.15));
+    }
+    .card-meta { flex: 1; }
+    .card-tag {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      padding: 2px 10px;
+      border-radius: 10px;
+      margin-bottom: 6px;
+      background: var(--tag-bg, rgba(108,99,255,.2));
+      color: var(--tag-color, #a78bfa);
+    }
+    .card-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: #dde0f5;
+      line-height: 1.4;
+    }
+
+    /* ── Divider ── */
+    .divider {
+      height: 1px;
+      background: #2a2a40;
+    }
+
+    /* ── Scene block ── */
+    .block-label {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: #5555aa;
+      margin-bottom: 6px;
+    }
+    .scene-text {
+      font-size: 13.5px;
+      color: #9999cc;
+      line-height: 1.65;
+    }
+
+    /* ── Pain point ── */
+    .pain-box {
+      background: rgba(239,68,68,.07);
+      border: 1px solid rgba(239,68,68,.2);
+      border-radius: 12px;
+      padding: 14px 16px;
+    }
+    .pain-box .block-label { color: #f87171; }
+    .pain-text {
+      font-size: 14px;
+      font-weight: 600;
+      color: #fca5a5;
+      line-height: 1.6;
+    }
+
+    /* ── Counter ── */
+    .counter {
+      text-align: center;
+      color: #5555aa;
+      font-size: 13px;
+      margin-bottom: 20px;
+    }
+    .counter span {
+      font-size: 28px;
+      font-weight: 800;
+      background: linear-gradient(135deg,#a78bfa,#60a5fa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    /* ── Responsive ── */
+    @media (max-width: 600px) {
+      .grid { grid-template-columns: 1fr; }
+      body { padding: 32px 16px; }
+    }
+  </style>
+</head>
+<body>
+
+  <header class="page-header">
+    <div class="badge">Pain Point Atlas</div>
+    <h1>用户痛点全景图</h1>
+    <p>28 类目标人群 · 场景 × 痛点深度解析</p>
+  </header>
+
+  <div class="counter"><span>28</span> 个用户群体</div>
+
+  <div class="filter-bar">
+    <button class="filter-btn active" onclick="filterCards('all')">全部</button>
+    <button class="filter-btn" onclick="filterCards('cat-ai')">🤖 AI / 创作</button>
+    <button class="filter-btn" onclick="filterCards('cat-edu')">📚 教育 / 求职</button>
+    <button class="filter-btn" onclick="filterCards('cat-biz')">💼 企业 / 商业</button>
+    <button class="filter-btn" onclick="filterCards('cat-content')">✍️ 内容 / 版权</button>
+    <button class="filter-btn" onclick="filterCards('cat-growth')">🚀 增长 / 流量</button>
+    <button class="filter-btn" onclick="filterCards('cat-life')">💛 生活 / 情感</button>
+    <button class="filter-btn" onclick="filterCards('cat-ops')">⚙️ 运营 / 团队</button>
+  </div>
+
+  <div class="grid" id="cardGrid">
+
+    <!-- 1 -->
+    <div class="card cat-ai" data-cat="cat-ai">
+      <div class="card-top">
+        <div class="icon-wrap" style="--icon-bg:rgba(108,99,255,.15)">✍️</div>
+        <div class="card-meta">
+          <span class="card-tag" style="--tag-bg:rgba(108,99,255,.2);--tag-color:#a78bfa">AI 创作</span>
+          <div class="card-title">AI写作服务者 / 自由职业者 / 服务型个体户</div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div>
+        <div class="block-label">📍 需求场景</div>
+        <div class="scene-text">从兼职AI写作转全职后，需要突破个人产能上限和获客瓶颈。</div>
+      </div>
+      <div class="pain-box">
+        <div class="block-label">🔥 核心痛点</div>
+        <div class="pain-text">单人服务卡在月入1万～2万，订单、交付、团队和外部反馈都不稳定。</div>
+      </div>
+    </div>
+
+    <!-- 2 -->
+    <div class="card cat-biz" data-cat="cat-biz">
+      <div class="card-top">
+        <div class="icon-wrap" style="--icon-bg:rgba(16,185,129,.15)">🏥</div>
+        <div class="card-meta">
+          <span class="card-tag" style="--tag-bg:rgba(16,185,129,.2);--tag-color:#34d399">B端知识库</span>
+          <div class="card-title">医疗、教育、内容团队等有大量私有资料的B端客户</div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div>
+        <div class="block-label">📍 需求场景</div>
+        <div class="scene-text">给客户搭建本地知识库，让AI基于私有资料生成节目稿、书籍内容、SOP和业务资料。</div>
+      </div>
+      <div class="pain-box">
+        <div class="block-label">🔥 核心痛点</div>
+        <div class="pain-text">普通知识库只能问答，不能按企业风格生成内容，且客户担心资料安全和落地执行。</div>
+      </div>
+    </div>
+
+    <!-- 3 -->
+    <div class="card cat-edu" data-cat="cat-edu">
+      <div class="card-top">
+        <div class="icon-wrap" style="--icon-bg:rgba(245,158,11,.15)">🏫</div>
+        <div class="card-meta">
+          <span class="card-tag" style="--tag-bg:rgba(245,158,11,.2);--tag-color:#fbbf24">教育</span>
+          <div class="card-title">中小学老师 / 教务资料购买者 / 公开课比赛和职称评审人群</div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div>
+        <div class="block-label">📍 需求场景</div>
+        <div class="scene-text">为老师提供AI公开课PPT、教案、逐字稿、数字人视频和定制课件。</div>
+      </div>
+      <div class="pain-box">
+        <div class="block-label">🔥 核心痛点</div>
+        <div class="pain-text">公开课、评优、职称、比赛需要课件和教案，但老师时间紧、AI视频和PPT能力不足。</div>
+      </div>
+    </div>
+
+    <!-- 4 -->
+    <div class="card cat-biz" data-cat="cat-biz">
+      <div class="card-top">
+        <div class="icon-wrap" style="--icon-bg:rgba(16,185,129,.15)">🏢</div>
+        <div class="card-meta">
+          <span class="card-tag" style="--tag-bg:rgba(16,185,129,.2);--tag-color:#34d399">企业AI落地</span>
+          <div class="card-title">AI ToB创业者 / 企业数字化负责人 / 传统企业业务团队</div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div>
+        <div class="block-label">📍 需求场景</div>
+        <div class="scene-text">从真实业务流程里拆场景，把AI做成数字员工和自动化闭环。</div>
+      </div>
+      <div class="pain-box">
+        <div class="block-label">🔥 核心痛点</div>
+        <div class="pain-text">企业不缺AI工具，缺能嵌入业务流程、降本增效、可量化结果的AI落地方案。</div>
+      </div>
+    </div>
+
+    <!-- 5 -->
+    <div class="card cat-growth" data-cat="cat-growth">
+      <div class="card-top">
+        <div class="icon-wrap" style="--icon-bg:rgba(59,130,246,.15)">🚀</div>
+        <div class="card-meta">
+          <span class="card-tag" style="--tag-bg:rgba(59,130,246,.2);--tag-color:#60a5fa">增长放大</span>
+          <div class="card-title">项目已跑通0到1、想放大业务的创业者 / 操盘手</div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div>
+        <div class="block-label">📍 需求场景</div>
+        <div class="scene-text">业务验证完成后需要流量杠杆放大。</div>
+      </div>
+      <div class="pain-box">
+        <div class="block-label">🔥 核心痛点</div>
+        <div class="pain-text">不知道如何规模化放大，误把投流当救命稻草。</div>
+      </div>
+    </div>
+
+    <!-- 6 -->
+    <div class="card cat-life" data-cat="cat-life">
+      <div class="card-top">
+        <div class="icon-wrap" style="--icon-bg:rgba(236,72,153,.15)">🌍</div>
+        <div class="card-meta">
+          <span class="card-tag" style="--tag-bg:rgba(236,72,153,.2);--tag-color:#f472b6">大众普惠</span>
+          <div class="card-title">普通大众（68亿未用过AI的人）</div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div>
+        <div class="block-label">📍 需求场景</div>
+        <div class="scene-text">日常工作和生活中遇到AI工具不会用。</div>
+      </div>
+      <div class="pain-box">
+        <div class="block-label">🔥 核心痛点</div>
+        <div class="pain-text">不懂AI技术，需要有人做翻译者和向导。</div>
+      </div>
+    </div>
+
+    <!-- 7 -->
+    <div class="card cat-content" data-cat="cat-content">
+      <div class="card-top">
+        <div class="icon-wrap" style="--icon-bg:rgba(239,68,68,.15)">📦</div>
+        <div class="card-meta">
+          <span class="card-tag" style="--tag-bg:rgba(239,68,68,.2);--tag-color:#f87171">电商副业</span>
+          <div class="card-title">想做小红书虚拟资料的新手</div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div>
+        <div class="block-label">📍 需求场景</div>
+        <div class="scene-text">裸辞后寻找低成本可快速启动的副业。</div>
+      </div>
+      <div class="pain-box">
+        <div class="block-label">🔥 核心痛点</div>
+        <div class="pain-text">选品出单率低，不知道如何找到真正有需求的产品。</div>
+      </div>
+    </div>
+
+    <!-- 8 -->
+    <div class="card cat-edu" data-cat="cat-edu">
+      <div class="card-top">
+        <div class="icon-wrap" style="--icon-bg:rgba(245,158,11,.15)">💼</div>
+        <div class="card-meta">
+          <span class="card-tag" style="--tag-bg:rgba(245,158,11,.2);--tag-color:#fbbf24">求职</span>
+          <div class="card-title">求职人群（大厂 / 外企 / 体制内求职者）</div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div>
+        <div class="block-label">📍 需求场景</div>
+        <div class="scene-text">招聘季节点性需求爆发。</div>
+      </div>
+      <div class="pain-box">
+        <div class="block-label">🔥 核心痛点</div>
+        <div class="pain-text">需要高质量、及时的求职资料（简历模板 / 面试经验 / 笔试资料）。</div>
+      </div>
+    </div>
+
+    <!-- 9 -->
+    <div class="card cat-biz" data-cat="cat-biz">
+      <div class="card-top">
+        <div class="icon-wrap" style="--icon-bg:rgba(16,185,129,.15)">🏭</div>
+        <div class="card-meta">
+          <span class="card-tag" style="--tag-bg:rgba(16,185,129,.2);--tag-color:#34d399">制造降本</span>
+          <div class="card-title">打印厂 / 制造业小老板</div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div>
+        <div class="block-label">📍 需求场景</div>
+        <div class="scene-text">工厂日常需要大量高清图案，人工贵且质量不稳定。</div>
+      </div>
+      <div class="pain-box">
+        <div class="block-label">🔥 核心痛点</div>
+        <div class="pain-text">美工人力成本高（3人/月1.8万），AI生图代替人工可降低90%成本。</div>
+      </div>
+    </div>
+
+    <!-- 10 -->
+    <div class="card cat-ai" data-cat="cat-ai">
+      <div class="card-top">
+        <div class="icon-wrap" style="--icon-bg:rgba(108,99,255,.15)">🎨</div>
+        <div class="card-meta">
+          <span class="card-tag" style="--tag-bg:rgba(108,99,255,.2);--tag-color:#a78bfa">设计 / 电商</span>
+          <div class="card-title">设计师 / 电商从业者 / 打印厂美工</div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div>
+        <div class="block-label">📍 需求场景</div>
+        <div class="scene-text">高频出图场景，AI出图快且便宜。</div>
+      </div>
+      <div class="pain-box">
+        <div class="block-label">🔥 核心痛点</div>
+        <div class="pain-text">需要快速生成高清素材，对时间敏感（赶稿、赶工期、赶上新）。</div>
+      </div>
+    </div>
+
+    <!-- 11 -->
+    <div class="card cat-growth" data-cat="cat-growth">
+      <div class="card-top">
+        <div class="icon-wrap" style="--icon-bg:rgba(59,130,246,.15)">📉</div>
+        <div class="card-meta">
+          <span class="card-tag" style="--tag-bg:rgba(59,130,246,.2);--tag-color:#60a5fa">流量获客</span>
+          <div class="card-title">传统行业从业者（金融、贷款中介等）</div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div>
+        <div class="block-label">📍 需求场景</div>
+        <div class="scene-text">流量渠道失效，急需低成本获客替代方案。</div>
+      </div>
+      <div class="pain-box">
+        <div class="block-label">🔥 核心痛点</div>
+        <div class="pain-text">传统广告投放成本极高（年费420万），效果却日益下滑。</div>
+      </div>
+    </div>
+
+    <!-- 12 -->
+    <div class="card cat-biz" data-cat="cat-biz">
+      <div class="card-top">
+        <div class="icon-wrap" style="--icon-bg:rgba(16,185,129,.15)">📊</div>
+        <div class="card-meta">
+          <span class="card-tag" style="--tag-bg:rgba(16,185,129,.2);--tag-color:#34d399">企业战略</span>
+          <div class="card-title">中小企业老板 / 管理层</div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div>
+        <div class="block-label">📍 需求场景</div>
+        <div class="scene-text">企业AI认知教育、战略规划。</div>
+      </div>
+      <div class="pain-box">
+        <div class="block-label">🔥 核心痛点</div>
+        <div class="pain-text">知道AI重要但不知从哪开始，培训预算转移到AI但无系统方案。</div>
+      </div>
+    </div>
+
+    <!-- 13 -->
+    <div class="card cat-growth" data-cat="cat-growth">
+      <div class="card-top">
+        <div class="icon-wrap" style="--icon-bg:rgba(59,130,246,.15)">🏪</div>
+        <div class="card-meta">
+          <span class="card-tag" style="--tag-bg:rgba(59,130,246,.2);--tag-color:#60a5fa">本地获客</span>
+          <div class="card-title">本地实体服务老板（美容 / SPA / 教培等）</div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div>
+        <div class="block-label">📍 需求场景</div>
+        <div class="scene-text">门店获客内容创作，需要精准触达有需求但防御心强的顾客。</div>
+      </div>
+      <div class="pain-box">
+        <div class="block-label">🔥 核心痛点</div>
+        <div class="pain-text">流量越来越贵，不知道顾客搜什么、怕什么、为何不进店。</div>
+      </div>
+    </div>
+
+    <!-- 14 -->
+    <div class="card cat-content" data-cat="cat-content">
+      <div class="card-top">
+        <div class="icon-wrap" style="--icon-bg:rgba(239,68,68,.15)">🔒</div>
+        <div class="card-meta">
+          <span class="card-tag" style="--tag-bg:rgba(239,68,68,.2);--tag-color:#f87171">版权保护</span>
+          <div class="card-title">做虚拟资料 / 知识付费的个人创作者</div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div>
+        <div class="block-label">📍 需求场景</div>
+        <div class="scene-text">课程 / 文章被几块钱倒卖，洗稿。</div>
+      </div>
+      <div class="pain-box">
+        <div class="block-label">🔥 核心痛点</div>
+        <div class="pain-text">原创内容被盗版，不知道如何维权，觉得维权成本高且无效。</div>
+      </div>
+    </div>
+
+    <!-- 15 -->
+    <div class="card cat-ai" data-cat="cat-ai">
+      <div class="card-top">
+        <div class="icon-wrap" style="--icon-bg:rgba(108,99,255,.15)">🎬</div>
+        <div class="card-meta">
+          <span class="card-tag" style="--tag-bg:rgba(108,99,255,.2);--tag-color:#a78bfa">AI视频</span>
+          <div class="card-title">被YouTube判定内容同质化的AI视频创作者</div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div>
+        <div class="block-label">📍 需求场景</div>
+        <div class="scene-text">AI视频频道遭平台打压，面临失去变现资格。</div>
+      </div>
+      <div class="pain-box">
+        <div class="block-label">🔥 核心痛点</div>
+        <div class="pain-text">YPP资格被撤销，申诉成功率极低，不知如何自证原创。</div>
+      </div>
+    </div>
+
+    <!-- 16 -->
+    <div class="card cat-biz" data-cat="cat-biz">
+      <div class="card-top">
+        <div class="icon-wrap" style="--icon-bg:rgba(16,185,129,.15)">🧠</div>
+        <div class="card-meta">
+          <span class="card-tag" style="--tag-bg:rgba(16,185,129,.2);--tag-color:#34d399">知识管理</span>
+          <div class="card-title">企业主 / 中小企业</div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div>
+        <div class="block-label">📍 需求场景</div>
+        <div class="scene-text">多SKU产品线、新员工上岗、门店扩张。</div>
+      </div>
+      <div class="pain-box">
+        <div class="block-label">🔥 核心痛点</div>
+        <div class="pain-text">知识碎片化、员工培训成本高、扩张困难。</div>
+      </div>
+    </div>
+
+    <!-- 17 -->
+    <div class="card cat-life" data-cat="cat-life">
+      <div class="card-top">
+        <div class="icon-wrap" style="--icon-bg:rgba(236,72,153,.15)">😓</div>
+        <div class="card-meta">
+          <span class="card-tag" style="--tag-bg:rgba(236,72,153,.2);--tag-color:#f472b6">副业心态</span>
+          <div class="card-title">想做副业但反复横跳的普通上班族</div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div>
+        <div class="block-label">📍 需求场景</div>
+        <div class="scene-text">看了很多副业教程 → 尝试几天就放弃 → 换方向 → 循环。</div>
+      </div>
+      <div class="pain-box">
+        <div class="block-label">🔥 核心痛点</div>
+        <div class="pain-text">总在找完美项目，不理解副业的本质是建系统而非找机会。</div>
+      </div>
+    </div>
+
+    <!-- 18 -->
+    <div class="card cat-ops" data-cat="cat-ops">
+      <div class="card-top">
+        <div class="icon-wrap" style="--icon-bg:rgba(139,92,246,.15)">👥</div>
+        <div class="card-meta">
+          <span class="card-tag" style="--tag-bg:rgba(139,92,246,.2);--tag-color:#c084fc">团队管理</span>
+          <div class="card-title">从个体到10～50人团队的创业者</div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div>
+        <div class="block-label">📍 需求场景</div>
+        <div class="scene-text">团队从3人扩到30人 → 半年亏100万；流量暴涨时招人招不到。</div>
+      </div>
+      <div class="pain-box">
+        <div class="block-label">🔥 核心痛点</div>
+        <div class="pain-text">招人招不对、用人用不好、分钱分不清，三大管理坑反复踩。</div>
+      </div>
+    </div>
+
+    <!-- 19 -->
+    <div class="card cat-ops" data-cat="cat-ops">
+      <div class="card-top">
+        <div class="icon-wrap" style="--icon-bg:rgba(139,92,246,.15)">🌀</div>
+        <div class="card-meta">
+          <span class="card-tag" style="--tag-bg:rgba(139,92,246,.2);--tag-color:#c084fc">精力管理</span>
+          <div class="card-title">同时运营3个以上线上项目的个人创业者</div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div>
+        <div class="block-label">📍 需求场景</div>
+        <div class="scene-text">项目越开越多 → 每个都没做深 → 焦虑感持续累积 → 不知如何分配精力。</div>
+      </div>
+      <div class="pain-box">
+        <div class="block-label">🔥 核心痛点</div>
+        <div class="pain-text">多项目并行导致注意力残留、蔡格尼克效应叠加，精疲力竭却产出极低。</div>
+      </div>
+    </div>
+
+    <!-- 20 -->
+    <div class="card cat-ops" data-cat="cat-ops">
+      <div class="card-top">
+        <div class="icon-wrap" style="--icon-bg:rgba(139,92,246,.15)">🔍</div>
+        <div class="card-meta">
+          <span class="card-tag" style="--tag-bg:rgba(139,92,246,.2);--tag-color:#c084fc">招聘</span>
+          <div class="card-title">从0-1跑通后想扩张至5人以内团队的小工作室主</div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div>
+        <div class="block-label">📍 需求场景</div>
+        <div class="scene-text">业务忙不过来 → 想招人 → 不知道招全职还是兼职 → JD写了没人投 → 招来人不合适。</div>
+      </div>
+      <div class="pain-box">
+        <div class="block-label">🔥 核心痛点</div>
+        <div class="pain-text">不知道何时该招人、招什么岗、如何写JD、怎么筛人，踩招聘坑浪费时间和钱。</div>
+      </div>
+    </div>
+
+    <!-- 21 -->
+    <div class="card cat-growth" data-cat="cat-growth">
+      <div class="card-top">
+        <div class="icon-wrap" style="--icon-bg:rgba(59,130,246,.15)">📱</div>
+        <div class="card-meta">
+          <span class="card-tag" style="--tag-bg:rgba(59,130,246,.2);--tag-color:#60a5fa">小程序推广</span>
+          <div class="card-title">已上线小程序但流量为0的开发者</div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div>
+        <div class="block-label">📍 需求场景</div>
+        <div class="scene-text">小程序上线后靠自然流量等不来用户，不知道如何推广。</div>
+      </div>
+      <div class="pain-box">
+        <div class="block-label">🔥 核心痛点</div>
+        <div class="pain-text">小程序做出来没人用，过不了500人流量主门槛。</div>
+      </div>
+    </div>
+
+    <!-- 22 -->
+    <div class="card cat-growth" data-cat="cat-growth">
+      <div class="card-top">
+        <div class="icon-wrap" style="--icon-bg:rgba(59,130,246,.15)">📰</div>
+        <div class="card-meta">
+          <span class="card-tag" style="--tag-bg:rgba(59,130,246,.2);--tag-color:#60a5fa">公众号转化</span>
+          <div class="card-title">有产品/服务但公众号无法转化的品牌方 / 个人IP</div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div>
+        <div class="block-label">📍 需求场景</div>
+        <div class="scene-text">公众号代运营客户转化率低。</div>
+      </div>
+      <div class="pain-box">
+        <div class="block-label">🔥 核心痛点</div>
+        <div class="pain-text">阅读量有了但私域加人不买单，吸引来的人和想成交的人不是同一批。</div>
+      </div>
+    </div>
+
+    <!-- 23 -->
+    <div class="card cat-life" data-cat="cat-life">
+      <div class="card-top">
+        <div class="icon-wrap" style="--icon-bg:rgba(236,72,153,.15)">💬</div>
+        <div class="card-meta">
+          <span class="card-tag" style="--tag-bg:rgba(236,72,153,.2);--tag-color:#f472b6">情感</span>
+          <div class="card-title">有情感困扰的女性用户</div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div>
+        <div class="block-label">📍 需求场景</div>
+        <div class="scene-text">抖音 / 小红书评论区主动求助，愿意付费咨询。</div>
+      </div>
+      <div class="pain-box">
+        <div class="block-label">🔥 核心痛点</div>
+        <div class="pain-text">情感问题需要专业陪伴与解决方案。</div>
+      </div>
+    </div>
+
+    <!-- 24 -->
+    <div class="card cat-content" data-cat="cat-content">
+      <div class="card-top">
+        <div class="icon-wrap" style="--icon-bg:rgba(239,68,68,.15)">⚠️</div>
+        <div class="card-meta">
+          <span class="card-tag" style="--tag-bg:rgba(239,68,68,.2);--tag-color:#f87171">合规入局</span>
+          <div class="card-title">想做小红书虚拟资料的新人</div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div>
+        <div class="block-label">📍 需求场景</div>
+        <div class="scene-text">3月10日平台清退潮前寻找替代路径。</div>
+      </div>
+      <div class="pain-box">
+        <div class="block-label">🔥 核心痛点</div>
+        <div class="pain-text">新规落地后无资质无法开店，不知如何合规入局。</div>
+      </div>
+    </div>
+
+    <!-- 25 -->
+    <div class="card cat-edu" data-cat="cat-edu">
+      <div class="card-top">
+        <div class="icon-wrap" style="--icon-bg:rgba(245,158,11,.15)">🖥️</div>
+        <div class="card-meta">
+          <span class="card-tag" style="--tag-bg:rgba(245,158,11,.2);--tag-color:#fbbf24">数字课堂</span>
+          <div class="card-title">中小学老师（AI融合数字课堂）</div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div>
+        <div class="block-label">📍 需求场景</div>
+        <div class="scene-text">教育局要求AI融合数字课堂，老师需要落地方案。</div>
+      </div>
+      <div class="pain-box">
+        <div class="block-label">🔥 核心痛点</div>
+        <div class="pain-text">需要AI辅助制作课件 / 数字人视频，但不会用工具。</div>
+      </div>
+    </div>
+
+    <!-- 26 -->
+    <div class="card cat-biz" data-cat="cat-biz">
+      <div class="card-top">
+        <div class="icon-wrap" style="--icon-bg:rgba(16,185,129,.15)">📋</div>
+        <div class="card-meta">
+          <span class="card-tag" style="--tag-bg:rgba(16,185,129,.2);--tag-color:#34d399">合规创业</span>
+          <div class="card-title">离职创业者 / AI独立开发者 / 知识付费个体</div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div>
+        <div class="block-label">📍 需求场景</div>
+        <div class="scene-text">个人从职场转型创业初期的合规经营搭建。</div>
+      </div>
+      <div class="pain-box">
+        <div class="block-label">🔥 核心痛点</div>
+        <div class="pain-text">离职后社保断缴导致人才补贴中断，不知如何合规注册公司。</div>
+      </div>
+    </div>
+
+    <!-- 27 -->
+    <div class="card cat-ops" data-cat="cat-ops">
+      <div class="card-top">
+        <div class="icon-wrap" style="--icon-bg:rgba(139,92,246,.15)">📝</div>
+        <div class="card-meta">
+          <span class="card-tag" style="--tag-bg:rgba(139,92,246,.2);--tag-color:#c084fc">矩阵运营</span>
+          <div class="card-title">小红书电商矩阵运营者</div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div>
+        <div class="block-label">📍 需求场景</div>
+        <div class="scene-text">需要在保证质量前提下大规模生产笔记。</div>
+      </div>
+      <div class="pain-box">
+        <div class="block-label">🔥 核心痛点</div>
+        <div class="pain-text">批量运营近100个账号，内容制作效率极低，纯靠怼量数据差。</div>
+      </div>
+    </div>
+
+    <!-- 28 -->
+    <div class="card cat-life" data-cat="cat-life">
+      <div class="card-top">
+        <div class="icon-wrap" style="--icon-bg:rgba(236,72,153,.15)">🧓</div>
+        <div class="card-meta">
+          <span class="card-tag" style="--tag-bg:rgba(236,72,153,.2);--tag-color:#f472b6">银发经济</span>
+          <div class="card-title">60岁以上中老年人（尤其60后退休群体）</div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div>
+        <div class="block-label">📍 需求场景</div>
+        <div class="scene-text">有钱有时间的退休群体需要健康管理、兴趣消费、文旅产品，但缺乏可信赖的供给。</div>
+      </div>
+      <div class="pain-box">
+        <div class="block-label">🔥 核心痛点</div>
+        <div class="pain-text">市场上针对中老年的优质产品和服务严重不足；骗子多导致信任成本极高。</div>
+      </div>
+    </div>
+
+  </div><!-- /grid -->
+
+  <script>
+    function filterCards(cat) {
+      const cards = document.querySelectorAll('.card');
+      cards.forEach(c => {
+        if (cat === 'all' || c.dataset.cat === cat) {
+          c.style.display = 'flex';
+        } else {
+          c.style.display = 'none';
+        }
+      });
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      event.target.classList.add('active');
+
+      // update counter
+      const visible = [...cards].filter(c => c.style.display !== 'none').length;
+      document.querySelector('.counter span').textContent = visible;
+    }
+  </script>
+
+</body>
+</html>
