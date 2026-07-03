@@ -195,6 +195,33 @@ function getRealmUrl(type) {
   return type === 'pavilion' ? settings.pavilionDataUrl : settings.towerDataUrl;
 }
 
+function getApiConfig() {
+  const settings = getSettings();
+  const endpoint = String(settings.apiEndpoint || '').trim().replace(/\/$/, '');
+  const token = String(settings.apiToken || '').trim();
+  return {
+    enabled: Boolean(settings.apiEnabled && endpoint && token),
+    endpoint,
+    token,
+  };
+}
+
+async function apiRequest(path, options = {}) {
+  const config = getApiConfig();
+  if (!config.enabled) return null;
+  const response = await fetch(`${config.endpoint}${path}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${config.token}`,
+      ...(options.headers || {}),
+    },
+  });
+  if (!response.ok) throw new Error(`small_world_api_${response.status}`);
+  if (response.status === 204) return null;
+  return response.json();
+}
+
 function getSourceBadge(payload) {
   if (!payload) return '未加载';
   if (payload.dirty) return '本地缓存未同步';
@@ -222,6 +249,18 @@ async function loadSmallWorldSource(type, options = {}) {
 
   const cached = readCachedData(type);
   const cacheMeta = readCacheMeta(type);
+
+  if (getApiConfig().enabled) {
+    try {
+      const data = await apiRequest(`/smallworld/${type}`);
+      writeCachedData(type, data, { source: 'api', dirty: false });
+      const payload = { data, path: `api:${type}`, source: 'remote', dirty: false };
+      setRuntimeCache(type, payload);
+      return payload;
+    } catch {
+      if (strictRemote) throw new Error(`${type} api pull failed`);
+    }
+  }
 
   if (preferCache && cached) {
     const payload = {
@@ -1265,6 +1304,21 @@ async function persistFloor(type, json) {
   const parsed = parseGistRawUrl(customUrl);
   const parsedGitHub = parseGitHubRawUrl(customUrl);
 
+  if (getApiConfig().enabled) {
+    try {
+      await syncSmallWorldToApi(type, json);
+      writeCachedData(type, json, { source: 'api', dirty: false });
+      setRuntimeCache(type, { data: json, path: `api:${type}`, source: 'remote', dirty: false });
+      showToast('已同步到服务器数据库');
+      return 'remote';
+    } catch {
+      writeCachedData(type, json, { source: 'cache', dirty: true });
+      setRuntimeCache(type, { data: json, path: customUrl || `cache:${type}`, source: 'cache', dirty: true });
+      showToast('服务器同步失败，已保存到本地缓存');
+      return 'cache';
+    }
+  }
+
   if (token && (parsed || parsedGitHub)) {
     try {
       await uploadSmallWorldToRemote(type, json);
@@ -1290,6 +1344,35 @@ async function commitFloorChanges({ app, type, floorId, raw, rawFloor, floor, is
   syncEditableItemsToRawFloor(rawFloor, items, floor, isPavilion);
   await persistFloor(type, raw);
   renderSmallWorldFloor(app, type, floorId);
+}
+
+async function syncSmallWorldToApi(type, json) {
+  const floors = pickVaultArray(json);
+  const isPavilion = type === 'pavilion';
+  for (const floor of floors) {
+    const floorId = Number(isPavilion ? floor.level : floor.floor);
+    const items = isPavilion ? (floor.items || []) : (floor.tasks || []);
+    for (const item of items) {
+      const payload = {
+        ...item,
+        floorId,
+        level: isPavilion ? floorId : item.level,
+        floor: isPavilion ? item.floor : floorId,
+      };
+      const id = encodeURIComponent(item.id);
+      try {
+        await apiRequest(`/smallworld/${type}/items/${id}`, {
+          method: 'PATCH',
+          body: JSON.stringify(payload),
+        });
+      } catch {
+        await apiRequest(`/smallworld/${type}/items`, {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+      }
+    }
+  }
 }
 
 function parseGistRawUrl(url) {

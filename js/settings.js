@@ -104,8 +104,24 @@ export function renderSettings(app) {
         <div class="cloud-config-block">
           <div>
             <strong>盒子数据源</strong>
-            <p class="panel-note">当前默认从 liangzai4322 的 GitHub Gist 读取盒子核心数据；写回需要在本机填写具备 gist 权限的 GitHub Token。</p>
+            <p class="panel-note">服务器 API 开启后优先按记录读写数据库；Gist 只作为兜底源保留。</p>
           </div>
+          <div class="setting-row">
+            <div>
+              <strong>启用服务器 API</strong>
+              <p class="panel-note">开启后任务、积分和小世界会优先连接你的服务器数据库。</p>
+            </div>
+            <label class="switch">
+              <input id="apiEnabled" type="checkbox" ${settings.apiEnabled ? 'checked' : ''}>
+              <span></span>
+            </label>
+          </div>
+          <label>服务器 API 地址
+            <input id="apiEndpoint" class="input" value="${escapeHtml(settings.apiEndpoint || 'https://liangzai666.com/taskbox-api/v1')}" placeholder="https://liangzai666.com/taskbox-api/v1">
+          </label>
+          <label>服务器 API Token（只保存在本机）
+            <input id="apiToken" class="input" type="password" value="${escapeHtml(settings.apiToken || '')}" placeholder="填写服务器 /etc/taskbox-api.env 中的 TASKBOX_API_TOKEN">
+          </label>
           <label>盒子 Gist Raw URL
             <input id="cloudEndpoint" class="input" value="${escapeHtml(settings.cloudEndpoint || '')}" placeholder="https://gist.githubusercontent.com/.../taskbox-backup.json">
           </label>
@@ -195,6 +211,15 @@ export function renderSettings(app) {
     setSettings({ cloudProvider: event.target.value });
     renderSettings(app);
   });
+  app.querySelector('#apiEnabled').addEventListener('change', (event) => {
+    setSettings({ apiEnabled: event.target.checked });
+  });
+  app.querySelector('#apiEndpoint').addEventListener('input', (event) => {
+    setSettings({ apiEndpoint: event.target.value.trim() });
+  });
+  app.querySelector('#apiToken').addEventListener('input', (event) => {
+    setSettings({ apiToken: event.target.value.trim() });
+  });
   app.querySelector('#cloudEndpoint').addEventListener('input', (event) => {
     setSettings({ cloudEndpoint: event.target.value.trim() });
   });
@@ -222,6 +247,9 @@ export function renderSettings(app) {
     setSettings({
       cloudEnabled: app.querySelector('#cloudEnabled').checked,
       cloudProvider: app.querySelector('#cloudProvider').value,
+      apiEnabled: app.querySelector('#apiEnabled').checked,
+      apiEndpoint: app.querySelector('#apiEndpoint').value.trim(),
+      apiToken: app.querySelector('#apiToken').value.trim(),
       cloudEndpoint: app.querySelector('#cloudEndpoint').value.trim(),
       cloudToken: app.querySelector('#cloudToken').value.trim(),
       githubToken: app.querySelector('#githubToken').value.trim(),

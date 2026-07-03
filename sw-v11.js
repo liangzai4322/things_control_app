@@ -1,4 +1,4 @@
-const CACHE_NAME = 'taskbox-v13-secret-scrub';
+const CACHE_NAME = 'taskbox-v14-server-api';
 const CACHE_FILES = [
   './',
   './index.html',

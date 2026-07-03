@@ -94,6 +94,9 @@ function normalize(data = {}) {
       pointsDataUrl: normalizeRemoteUrl(data.settings?.pointsDataUrl, DEFAULT_POINTS_URL, 'mock-points.json'),
       flomoWebhook: data.settings?.flomoWebhook || DEFAULT_FLOMO_WEBHOOK,
       githubToken: data.settings?.githubToken || '',
+      apiEnabled: data.settings?.apiEnabled ?? false,
+      apiEndpoint: data.settings?.apiEndpoint || 'https://liangzai666.com/taskbox-api/v1',
+      apiToken: data.settings?.apiToken || '',
     },
     meta: {
       updatedAt: data.meta?.updatedAt || new Date().toISOString(),
@@ -138,7 +141,10 @@ function seed() {
       cloudToken: '',
       pointsDataUrl: DEFAULT_POINTS_URL,
       flomoWebhook: DEFAULT_FLOMO_WEBHOOK,
-      githubToken: ''
+      githubToken: '',
+      apiEnabled: false,
+      apiEndpoint: 'https://liangzai666.com/taskbox-api/v1',
+      apiToken: '',
     },
     meta: { updatedAt: now, lastDailyReset: '', lastSummaryExportAt: null },
   });
@@ -259,6 +265,10 @@ export function addTask(task) {
     data.tasks.push(created);
     return data;
   });
+  scheduleApiRequest('/tasks', {
+    method: 'POST',
+    body: JSON.stringify(created),
+  });
   return created;
 }
 
@@ -292,25 +302,40 @@ export async function addBox({ name, description = '' }) {
     return data;
   });
 
-  try {
-    await pushDataToCloud({ force: true });
-  } catch {
-    // cloud push best-effort
+  const syncedToApi = scheduleApiRequest('/boxes', {
+    method: 'POST',
+    body: JSON.stringify(created),
+  });
+  if (!syncedToApi) {
+    try {
+      await pushDataToCloud({ force: true });
+    } catch {
+      // cloud push best-effort
+    }
   }
   return created;
 }
 
 
 export function restoreTask(task) {
+  let restored = null;
   updateData((data) => {
     const existing = data.tasks.find((t) => t.id === task.id || t.syncKey === task.syncKey);
     if (existing) {
       Object.assign(existing, { ...task, deleted: false, deletedAt: null, updatedAt: new Date().toISOString() });
+      restored = { ...existing };
     } else {
-      data.tasks.push({ ...task, deleted: false, deletedAt: null, updatedAt: new Date().toISOString() });
+      restored = { ...task, deleted: false, deletedAt: null, updatedAt: new Date().toISOString() };
+      data.tasks.push(restored);
     }
     return data;
   });
+  if (restored) {
+    scheduleApiRequest(`/tasks/${encodeURIComponent(restored.id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(restored),
+    });
+  }
 }
 
 export function updateTask(taskId, patch) {
@@ -329,19 +354,32 @@ export function updateTask(taskId, patch) {
     }
     return data;
   }, { skipCloud: !shouldCloudPush });
+  if (updated && shouldCloudPush) {
+    scheduleApiRequest(`/tasks/${encodeURIComponent(taskId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(updated),
+    });
+  }
   return updated;
 }
 
 export function deleteTask(taskId) {
+  let deleted = null;
   updateData((data) => {
     const t = data.tasks.find((x) => x.id === taskId);
     if (t) {
       t.deleted = true;
       t.deletedAt = new Date().toISOString();
       t.updatedAt = new Date().toISOString();
+      deleted = { ...t };
     }
     return data;
   });
+  if (deleted) {
+    scheduleApiRequest(`/tasks/${encodeURIComponent(taskId)}`, {
+      method: 'DELETE',
+    });
+  }
 }
 
 export function reorderTasks(boxId, orderedTaskIds) {
@@ -355,11 +393,21 @@ export function reorderTasks(boxId, orderedTaskIds) {
 }
 
 export function updateBox(boxId, patch) {
+  let updated = null;
   updateData((data) => {
     const box = data.boxes.find((b) => b.id === boxId);
-    if (box) Object.assign(box, patch);
+    if (box) {
+      Object.assign(box, patch);
+      updated = { ...box };
+    }
     return data;
   });
+  if (updated) {
+    scheduleApiRequest(`/boxes/${encodeURIComponent(boxId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(updated),
+    });
+  }
 }
 
 export function setSettings(patch) {
@@ -403,6 +451,7 @@ function sanitizeDataForExternal(data) {
     cloudToken: '',
     githubToken: '',
     flomoWebhook: '',
+    apiToken: '',
   };
   return sanitized;
 }
@@ -503,6 +552,7 @@ export function playSound(name) {
 function scheduleCloudPush() {
   clearTimeout(cloudSyncTimer);
   cloudSyncTimer = setTimeout(() => {
+    if (getApiConfig().enabled) return;
     pushDataToCloud().catch(() => {});
   }, 700);
 }
@@ -692,7 +742,41 @@ const LOCAL_ONLY_SETTING_KEYS = [
   'cloudToken',
   'githubToken',
   'flomoWebhook',
+  'apiToken',
 ];
+
+function getApiConfig(settings = getSettings()) {
+  const endpoint = String(settings.apiEndpoint || '').trim().replace(/\/$/, '');
+  const token = String(settings.apiToken || '').trim();
+  return {
+    enabled: Boolean(settings.apiEnabled && endpoint && token),
+    endpoint,
+    token,
+  };
+}
+
+async function apiRequest(path, options = {}) {
+  const config = getApiConfig();
+  if (!config.enabled) return null;
+  const response = await fetch(`${config.endpoint}${path}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${config.token}`,
+      ...(options.headers || {}),
+    },
+  });
+  if (!response.ok) throw new Error(`api_${response.status}`);
+  if (response.status === 204) return null;
+  return response.json();
+}
+
+function scheduleApiRequest(path, options = {}) {
+  const config = getApiConfig();
+  if (!config.enabled) return false;
+  apiRequest(path, options).catch(() => {});
+  return true;
+}
 
 function preserveLocalOnlySettings(nextSettings = {}, localSettings = {}) {
   const preserved = { ...nextSettings };
@@ -707,6 +791,7 @@ export async function pushDataToCloud(options = {}) {
   const data = getData();
   const payload = sanitizeDataForExternal(data);
   const { cloudEnabled, cloudEndpoint, cloudToken, githubToken } = data.settings;
+  if (getApiConfig(data.settings).enabled) return false;
 
   const endpoint = resolveCloudEndpoint(cloudEndpoint, { forRead: false });
   if (!endpoint) return false;
@@ -788,6 +873,15 @@ export async function pullDataFromCloud(options = {}) {
   const { force = false } = options;
   const local = getData();
   const { cloudEnabled, cloudEndpoint, cloudToken, githubToken } = local.settings;
+  const apiConfig = getApiConfig(local.settings);
+
+  if (apiConfig.enabled) {
+    const cloudData = normalize(await apiRequest('/taskbox'));
+    const merged = mergeData(local, cloudData);
+    merged.settings = preserveLocalOnlySettings(merged.settings, local.settings);
+    saveData(merged, { skipCloud: true });
+    return 'merged';
+  }
 
   const endpoint = resolveCloudEndpoint(cloudEndpoint, { forRead: true });
   if (!endpoint) return false;

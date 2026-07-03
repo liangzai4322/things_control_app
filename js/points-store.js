@@ -85,6 +85,39 @@ function readTaskboxSettings() {
   return readTaskboxData().settings || {};
 }
 
+function getApiConfig() {
+  const settings = readTaskboxSettings();
+  const endpoint = String(settings.apiEndpoint || '').trim().replace(/\/$/, '');
+  const token = String(settings.apiToken || '').trim();
+  return {
+    enabled: Boolean(settings.apiEnabled && endpoint && token),
+    endpoint,
+    token,
+  };
+}
+
+async function apiRequest(path, options = {}) {
+  const config = getApiConfig();
+  if (!config.enabled) return null;
+  const response = await fetch(`${config.endpoint}${path}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${config.token}`,
+      ...(options.headers || {}),
+    },
+  });
+  if (!response.ok) throw new Error(`points_api_${response.status}`);
+  if (response.status === 204) return null;
+  return response.json();
+}
+
+function scheduleApiRequest(path, options = {}) {
+  if (!getApiConfig().enabled) return false;
+  apiRequest(path, options).catch(() => {});
+  return true;
+}
+
 function readTaskboxBoxes() {
   return Array.isArray(readTaskboxData().boxes) ? readTaskboxData().boxes : [];
 }
@@ -206,6 +239,13 @@ function createFallbackPointsData() {
 
 async function fetchSource(url) {
   const settings = readTaskboxSettings();
+  if (getApiConfig().enabled) {
+    const normalized = normalizePointsData(await apiRequest('/points'));
+    normalized.meta.sourceUrl = getApiConfig().endpoint;
+    normalized.meta.lastLoadedAt = nowIso();
+    normalized.meta.dirty = false;
+    return normalized;
+  }
   const gist = parseGistRawUrl(url);
   if (gist) {
     return fetchLatestGistSource(gist, url, String(settings.githubToken || '').trim());
@@ -306,6 +346,7 @@ async function fetchLatestGistSource(parsed, url, token = '') {
 function schedulePointsCloudPush() {
   clearTimeout(pointsSyncTimer);
   pointsSyncTimer = setTimeout(() => {
+    if (getApiConfig().enabled) return;
     pushPointsToCloud().catch(() => {});
   }, 700);
 }
@@ -321,12 +362,14 @@ export function getPointsSyncState() {
   const hasToken = Boolean(String(settings.githubToken || '').trim());
   const isGistSource = Boolean(parseGistRawUrl(sourceUrl));
   const isGitHubSource = Boolean(parseGitHubRawUrl(sourceUrl));
+  const apiConfig = getApiConfig();
   return {
     sourceUrl,
     hasToken,
     isGistSource,
     isGitHubSource,
-    autoPushEnabled: Boolean((isGistSource || isGitHubSource) && hasToken),
+    apiEnabled: apiConfig.enabled,
+    autoPushEnabled: apiConfig.enabled || Boolean((isGistSource || isGitHubSource) && hasToken),
   };
 }
 
@@ -338,6 +381,7 @@ export async function pushPointsToCloud(options = {}) {
   const { force = false, silent = false } = options;
   const pointsData = getPointsDataSync();
   const settings = readTaskboxSettings();
+  if (getApiConfig().enabled) return false;
   const sourceUrl = getPointsSourceUrl();
   const token = String(settings.githubToken || '').trim();
   const parsed = parseGistRawUrl(sourceUrl);
@@ -611,6 +655,10 @@ export function recordPointsTransaction({
     if (sourceType === 'historical_balance') data.meta.openingBalanceRecorded = true;
     return data;
   });
+  scheduleApiRequest('/points/transactions', {
+    method: 'POST',
+    body: JSON.stringify(created),
+  });
   return created;
 }
 
@@ -661,12 +709,19 @@ export function saveReward(rewardDraft = {}) {
   if (!Number.isFinite(Number(normalizedDraft.cost)) || normalizedDraft.cost < 0) throw new Error('reward_cost_invalid');
 
   let saved = null;
+  let existed = false;
   updatePointsData((data) => {
     const existing = data.rewards.find((reward) => reward.id === normalizedDraft.id);
-    if (existing) Object.assign(existing, normalizedDraft);
-    else data.rewards.push(normalizedDraft);
+    if (existing) {
+      existed = true;
+      Object.assign(existing, normalizedDraft);
+    } else data.rewards.push(normalizedDraft);
     saved = normalizedDraft;
     return data;
+  });
+  scheduleApiRequest(existed ? `/points/rewards/${encodeURIComponent(saved.id)}` : '/points/rewards', {
+    method: existed ? 'PATCH' : 'POST',
+    body: JSON.stringify(saved),
   });
 
   return saved;
@@ -681,6 +736,12 @@ export function toggleRewardActive(rewardId) {
     changed = { ...reward };
     return data;
   });
+  if (changed) {
+    scheduleApiRequest(`/points/rewards/${encodeURIComponent(changed.id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(changed),
+    });
+  }
   return changed;
 }
 
