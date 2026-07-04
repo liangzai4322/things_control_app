@@ -7,6 +7,7 @@ const LONG_PRESS_MS = 500;
 const DELETE_SWIPE_THRESHOLD = 120;
 
 let undoTimer = null;
+let contextMenuCleanup = null;
 
 function escapeHtml(value = '') {
   return String(value)
@@ -134,7 +135,77 @@ function showUndo(task, onUndo, onExpire) {
   }, 3000);
 }
 
+function closeTaskContextMenu() {
+  contextMenuCleanup?.();
+  contextMenuCleanup = null;
+  document.querySelector('.task-context-menu')?.remove();
+}
+
+function deleteTaskWithUndo(app, boxId, taskSnapshot) {
+  if (!taskSnapshot?.id) return;
+  closeTaskContextMenu();
+  deleteTask(taskSnapshot.id);
+  renderBoxDetail(app, boxId);
+  showUndo(taskSnapshot, () => {
+    restoreTask(taskSnapshot);
+    renderBoxDetail(app, boxId);
+  });
+}
+
+function toggleTaskPinned(app, box, task) {
+  if (!task?.id) return;
+  closeTaskContextMenu();
+  const pinned = !task.pinned;
+  updateTask(task.id, { pinned });
+  showToast(pinned ? '已置顶任务' : '已取消置顶');
+  renderBoxDetail(app, box.id);
+}
+
+function openTaskContextMenu(event, app, box, task) {
+  event.preventDefault();
+  event.stopPropagation();
+  closeTaskContextMenu();
+
+  const menu = document.createElement('div');
+  menu.className = 'task-context-menu';
+  menu.innerHTML = `
+    <button type="button" data-action="pin">${task.pinned ? '取消置顶' : '置顶任务'}</button>
+    <button type="button" data-action="delete" class="danger">删除任务</button>
+  `;
+  document.body.appendChild(menu);
+
+  const rect = menu.getBoundingClientRect();
+  const x = Math.min(event.clientX, window.innerWidth - rect.width - 12);
+  const y = Math.min(event.clientY, window.innerHeight - rect.height - 12);
+  menu.style.left = `${Math.max(12, x)}px`;
+  menu.style.top = `${Math.max(12, y)}px`;
+
+  menu.addEventListener('click', (clickEvent) => {
+    const action = clickEvent.target?.dataset?.action;
+    if (action === 'pin') toggleTaskPinned(app, box, task);
+    if (action === 'delete') deleteTaskWithUndo(app, box.id, task);
+  });
+
+  const onPointerDown = (pointerEvent) => {
+    if (!menu.contains(pointerEvent.target)) closeTaskContextMenu();
+  };
+  const onKeyDown = (keyEvent) => {
+    if (keyEvent.key === 'Escape') closeTaskContextMenu();
+  };
+  const onScroll = () => closeTaskContextMenu();
+
+  setTimeout(() => document.addEventListener('pointerdown', onPointerDown), 0);
+  document.addEventListener('keydown', onKeyDown);
+  window.addEventListener('scroll', onScroll, true);
+  contextMenuCleanup = () => {
+    document.removeEventListener('pointerdown', onPointerDown);
+    document.removeEventListener('keydown', onKeyDown);
+    window.removeEventListener('scroll', onScroll, true);
+  };
+}
+
 export function renderBoxDetail(app, boxId) {
+  closeTaskContextMenu();
   const box = getBoxes().find((item) => item.id === boxId);
   if (!box) return navigate('#home');
 
@@ -246,7 +317,7 @@ function taskItem(task, box) {
   const pointsValue = getTaskPointValue(task, box);
 
   return `
-    <article class="task-item ${task.isCompleted ? 'done' : ''}" data-id="${task.id}">
+    <article class="task-item ${task.isCompleted ? 'done' : ''} ${task.pinned ? 'pinned' : ''}" data-id="${task.id}">
       <div class="task-main" data-main="1">
         <button class="check ${task.isCompleted ? 'checked' : ''}" style="--check-color:${color}">${task.isCompleted ? '✓' : ''}</button>
         <button class="task-content" data-action="edit">
@@ -255,6 +326,7 @@ function taskItem(task, box) {
             ${hasNote ? '<span class="task-note-badge">备注</span>' : ''}
           </div>
           <div class="task-meta">
+            ${task.pinned ? '<span class="task-chip pin-chip">置顶</span>' : ''}
             <span class="task-chip">${escapeHtml(getPriorityLabel(task.priority ?? 0))}</span>
             ${task.dueDate ? `<span class="task-chip ${overdue ? 'overdue-chip' : ''}">${escapeHtml(formatDueLabel(task.dueDate))}</span>` : ''}
             <span class="task-chip">${taskProgress}%</span>
@@ -300,6 +372,11 @@ function bindTaskEvents(app, box, taskMap) {
       openTaskEditor({ taskId, boxId: box.id }, () => renderBoxDetail(app, box.id));
     });
 
+    item.addEventListener('contextmenu', (event) => {
+      const task = taskMap.get(taskId);
+      if (task) openTaskContextMenu(event, app, box, task);
+    });
+
     bindSwipeDelete(item, box.id, app, taskMap.get(taskId));
   });
 
@@ -334,12 +411,7 @@ function bindSwipeDelete(item, boxId, app, taskSnapshot) {
     if (dx < -DELETE_SWIPE_THRESHOLD && Math.abs(dx) > Math.abs(dy)) {
       main.style.transform = 'translateX(-120%)';
       setTimeout(() => {
-        deleteTask(taskSnapshot.id);
-        renderBoxDetail(app, boxId);
-        showUndo(taskSnapshot, () => {
-          restoreTask(taskSnapshot);
-          renderBoxDetail(app, boxId);
-        });
+        deleteTaskWithUndo(app, boxId, taskSnapshot);
       }, 120);
     } else {
       main.style.transform = '';

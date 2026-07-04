@@ -53,6 +53,7 @@ function normalize(data = {}) {
       weight: t.weight ?? 1,
       pointsValue: t.pointsValue !== undefined && t.pointsValue !== null && Number.isFinite(Number(t.pointsValue)) ? Number(t.pointsValue) : null,
       progress: t.progress ?? (t.isCompleted ? 100 : 0),
+      pinned: Boolean(t.pinned),
       deleted: t.deleted ?? false,
       deletedAt: t.deletedAt ?? null,
       note: t.note ?? [t.reflection, t.review, t.summaryText].filter(Boolean).join('\n').trim(),
@@ -210,7 +211,8 @@ export const getSettings = () => getData().settings;
 export function getTasksByBox(boxId) {
   return getTasks()
     .filter((t) => t.boxId === boxId)
-    .sort((a, b) => (Number(b.weight)||1) - (Number(a.weight)||1)
+    .sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned))
+      || (Number(b.weight)||1) - (Number(a.weight)||1)
       || (Number(b.priority)||0) - (Number(a.priority)||0)
       || (Number(b.progress)||0) - (Number(a.progress)||0)
       || a.sortOrder - b.sortOrder
@@ -229,6 +231,7 @@ export function addTask(task) {
       weight: task.weight ?? 1,
       pointsValue: task.pointsValue ?? null,
       progress: task.progress ?? 0,
+      pinned: Boolean(task.pinned),
       dueDate: task.dueDate ?? null,
       isCompleted: task.isCompleted ?? false,
       deleted: false,
@@ -310,7 +313,7 @@ export function restoreTask(task) {
 }
 
 export function updateTask(taskId, patch) {
-  const cloudCriticalKeys = new Set(['content', 'boxId', 'priority', 'weight', 'pointsValue', 'progress', 'dueDate', 'isCompleted', 'deleted', 'deletedAt', 'sortOrder', 'completedAt', 'note']);
+  const cloudCriticalKeys = new Set(['content', 'boxId', 'priority', 'weight', 'pointsValue', 'progress', 'pinned', 'dueDate', 'isCompleted', 'deleted', 'deletedAt', 'sortOrder', 'completedAt', 'note']);
   const shouldCloudPush = Object.keys(patch || {}).some((k) => cloudCriticalKeys.has(k));
   let updated = null;
   updateData((data) => {

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'taskbox-v16-completed-timeline';
+const CACHE_NAME = 'taskbox-v17-task-context-menu';
 const CACHE_FILES = [
   './',
   './index.html',

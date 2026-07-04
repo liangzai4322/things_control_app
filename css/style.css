@@ -840,6 +840,20 @@ h4 {
   box-shadow: var(--shadow-sm);
 }
 
+.task-item.pinned {
+  border-color: rgba(247, 119, 77, 0.42);
+  box-shadow: 0 14px 30px rgba(247, 119, 77, 0.12), var(--shadow-sm);
+}
+
+.task-item.pinned::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: linear-gradient(180deg, #f7774d, #ffd166);
+  z-index: 1;
+}
+
 .task-item::after {
   content: '左滑删除';
   position: absolute;
@@ -946,6 +960,17 @@ h4 {
   color: var(--text-secondary);
 }
 
+.pin-chip {
+  background: rgba(247, 119, 77, 0.14);
+  color: #c24e1f;
+  font-weight: 800;
+}
+
+:root[data-theme='dark'] .pin-chip {
+  background: rgba(255, 177, 105, 0.16);
+  color: #ffc98b;
+}
+
 :root[data-theme='dark'] .task-chip {
   background: rgba(255, 255, 255, 0.08);
 }
@@ -1037,6 +1062,48 @@ h4 {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.task-context-menu {
+  position: fixed;
+  z-index: 80;
+  min-width: 168px;
+  padding: 8px;
+  border-radius: 18px;
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.2);
+  backdrop-filter: blur(18px);
+}
+
+:root[data-theme='dark'] .task-context-menu {
+  background: rgba(15, 23, 42, 0.88);
+}
+
+.task-context-menu button {
+  width: 100%;
+  height: 38px;
+  justify-content: flex-start;
+  padding: 0 12px;
+  border-radius: 12px;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 750;
+}
+
+.task-context-menu button:hover {
+  background: rgba(15, 23, 42, 0.07);
+}
+
+:root[data-theme='dark'] .task-context-menu button:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.task-context-menu button.danger {
+  color: #dc2626;
 }
 
 .collapsed {
