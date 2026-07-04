@@ -1,10 +1,9 @@
-const CACHE_NAME = 'taskbox-v14-server-api';
+const CACHE_NAME = 'taskbox-v16-completed-timeline';
 const CACHE_FILES = [
   './',
   './index.html',
   './css/style.css',
   './js/app.js',
-  './js/gist-sync-patch.js?v=5',
   './js/points-page.js',
   './js/points-store.js',
   './js/points-ai.js',

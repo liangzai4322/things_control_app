@@ -1,7 +1,5 @@
 export const POINTS_CACHE_KEY = 'taskbox_points_cache';
-const DATA_GIST_OWNER = 'liangzai4322';
-const DATA_GIST_ID = 'dee00431619fe628079ffa9713994fc7';
-export const DEFAULT_POINTS_URL = `https://gist.githubusercontent.com/${DATA_GIST_OWNER}/${DATA_GIST_ID}/raw/mock-points.json`;
+const DEFAULT_API_ENDPOINT = 'https://liangzai666.com/taskbox-api/v1';
 
 const TASKBOX_STORAGE_KEY = 'taskbox_data';
 const LOCAL_POINTS_FALLBACK_URL = 'mock-points.json';
@@ -90,7 +88,7 @@ function getApiConfig() {
   const endpoint = String(settings.apiEndpoint || '').trim().replace(/\/$/, '');
   const token = String(settings.apiToken || '').trim();
   return {
-    enabled: Boolean(settings.apiEnabled && endpoint && token),
+    enabled: Boolean(endpoint && token),
     endpoint,
     token,
   };
@@ -238,138 +236,36 @@ function createFallbackPointsData() {
 }
 
 async function fetchSource(url) {
-  const settings = readTaskboxSettings();
   if (getApiConfig().enabled) {
+    const config = getApiConfig();
     const normalized = normalizePointsData(await apiRequest('/points'));
-    normalized.meta.sourceUrl = getApiConfig().endpoint;
+    normalized.meta.sourceUrl = config.endpoint;
     normalized.meta.lastLoadedAt = nowIso();
     normalized.meta.dirty = false;
     return normalized;
   }
-  const gist = parseGistRawUrl(url);
-  if (gist) {
-    return fetchLatestGistSource(gist, url, String(settings.githubToken || '').trim());
-  }
-  const github = parseGitHubRawUrl(url);
-  if (github) {
-    return fetchGitHubRawSource(github, url);
-  }
-
-  const response = await fetch(url, { cache: 'no-store' });
-  if (!response.ok) throw new Error('points_fetch_failed');
-  const payload = await response.json();
-  const normalized = normalizePointsData(payload);
-  normalized.meta.sourceUrl = url;
-  normalized.meta.lastLoadedAt = nowIso();
-  normalized.meta.dirty = false;
-  return normalized;
-}
-
-function parseGistRawUrl(url) {
-  const match = String(url || '').match(/gist\.githubusercontent\.com\/[^/]+\/([a-f0-9]+)\/raw(?:\/[a-f0-9]+)?\/(.+)$/i);
-  if (!match) return null;
-  return { gistId: match[1], filename: decodeURIComponent(match[2]) };
-}
-
-function parseGitHubRawUrl(url) {
-  const match = String(url || '').match(/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\/(.+)$/i);
-  if (!match) return null;
-  return {
-    owner: match[1],
-    repo: match[2],
-    branch: match[3],
-    path: decodeURIComponent(match[4]),
-  };
-}
-
-function encodeRepoPath(path) {
-  return String(path || '').split('/').map((part) => encodeURIComponent(part)).join('/');
-}
-
-function getStableGitHubRawUrl(parsed) {
-  return `https://raw.githubusercontent.com/${parsed.owner}/${parsed.repo}/${parsed.branch}/${encodeRepoPath(parsed.path)}`;
-}
-
-function toBase64Utf8(text) {
-  const bytes = new TextEncoder().encode(text);
-  let binary = '';
-  const chunkSize = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
-  }
-  return btoa(binary);
-}
-
-async function fetchGitHubRawSource(parsed, url) {
-  const response = await fetch(getStableGitHubRawUrl(parsed), { cache: 'no-store' });
-  if (!response.ok) throw new Error('points_github_raw_fetch_failed');
-  const payload = await response.json();
-  const normalized = normalizePointsData(payload);
-  normalized.meta.sourceUrl = url;
-  normalized.meta.lastLoadedAt = nowIso();
-  normalized.meta.dirty = false;
-  return normalized;
-}
-
-async function fetchLatestGistSource(parsed, url, token = '') {
-  const headers = {
-    Accept: 'application/vnd.github+json',
-  };
-  if (token) headers.Authorization = `Bearer ${token}`;
-
-  const response = await fetch(`https://api.github.com/gists/${parsed.gistId}`, {
-    method: 'GET',
-    headers,
-    cache: 'no-store',
-  });
-  if (!response.ok) throw new Error('points_gist_fetch_failed');
-
-  const payload = await response.json();
-  const file = payload?.files?.[parsed.filename];
-  if (!file) throw new Error('points_gist_file_missing');
-
-  let content = file.content;
-  if (!content && file.raw_url) {
-    const rawResponse = await fetch(file.raw_url, { cache: 'no-store' });
-    if (!rawResponse.ok) throw new Error('points_gist_raw_fetch_failed');
-    content = await rawResponse.text();
-  }
-  if (!content) throw new Error('points_gist_empty');
-
-  const normalized = normalizePointsData(JSON.parse(content));
-  normalized.meta.sourceUrl = url;
-  normalized.meta.lastLoadedAt = nowIso();
-  normalized.meta.dirty = false;
-  return normalized;
+  throw new Error('points_api_not_configured');
 }
 
 function schedulePointsCloudPush() {
   clearTimeout(pointsSyncTimer);
-  pointsSyncTimer = setTimeout(() => {
-    if (getApiConfig().enabled) return;
-    pushPointsToCloud().catch(() => {});
-  }, 700);
+  // Points are written to the server through record-level API calls.
+  // Full JSON cloud uploads are retired.
+  pointsSyncTimer = null;
 }
 
 export function getPointsSourceUrl() {
   const settings = readTaskboxSettings();
-  return String(settings.pointsDataUrl || '').trim() || DEFAULT_POINTS_URL;
+  return String(settings.apiEndpoint || '').trim().replace(/\/$/, '') || DEFAULT_API_ENDPOINT;
 }
 
 export function getPointsSyncState() {
-  const settings = readTaskboxSettings();
   const sourceUrl = getPointsSourceUrl();
-  const hasToken = Boolean(String(settings.githubToken || '').trim());
-  const isGistSource = Boolean(parseGistRawUrl(sourceUrl));
-  const isGitHubSource = Boolean(parseGitHubRawUrl(sourceUrl));
   const apiConfig = getApiConfig();
   return {
     sourceUrl,
-    hasToken,
-    isGistSource,
-    isGitHubSource,
     apiEnabled: apiConfig.enabled,
-    autoPushEnabled: apiConfig.enabled || Boolean((isGistSource || isGitHubSource) && hasToken),
+    autoPushEnabled: apiConfig.enabled,
   };
 }
 
@@ -378,76 +274,7 @@ export function getPointsDataSync() {
 }
 
 export async function pushPointsToCloud(options = {}) {
-  const { force = false, silent = false } = options;
-  const pointsData = getPointsDataSync();
-  const settings = readTaskboxSettings();
-  if (getApiConfig().enabled) return false;
-  const sourceUrl = getPointsSourceUrl();
-  const token = String(settings.githubToken || '').trim();
-  const parsed = parseGistRawUrl(sourceUrl);
-  const parsedGitHub = parseGitHubRawUrl(sourceUrl);
-  const syncedPayload = normalizePointsData({
-    ...pointsData,
-    meta: {
-      ...pointsData.meta,
-      sourceUrl,
-      lastLoadedAt: nowIso(),
-      dirty: false,
-    },
-  });
-
-  if ((!parsed && !parsedGitHub) || !token) return false;
-  if (!force && !pointsData.meta.dirty) return false;
-
-  if (parsedGitHub) {
-    const apiPath = encodeRepoPath(parsedGitHub.path);
-    const apiBase = `https://api.github.com/repos/${parsedGitHub.owner}/${parsedGitHub.repo}/contents/${apiPath}`;
-    const currentResponse = await fetch(`${apiBase}?ref=${encodeURIComponent(parsedGitHub.branch)}`, {
-      method: 'GET',
-      headers: {
-        Accept: 'application/vnd.github+json',
-        Authorization: `Bearer ${token}`,
-      },
-      cache: 'no-store',
-    });
-    if (!currentResponse.ok) throw new Error('points_github_file_fetch_failed');
-    const current = await currentResponse.json();
-    const response = await fetch(apiBase, {
-      method: 'PUT',
-      headers: {
-        Accept: 'application/vnd.github+json',
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        message: `Update ${parsedGitHub.path}`,
-        content: toBase64Utf8(`${JSON.stringify(syncedPayload, null, 2)}\n`),
-        sha: current.sha,
-        branch: parsedGitHub.branch,
-      }),
-    });
-    if (!response.ok) throw new Error('points_github_file_update_failed');
-  } else {
-    const response = await fetch(`https://api.github.com/gists/${parsed.gistId}`, {
-      method: 'PATCH',
-      headers: {
-        Accept: 'application/vnd.github+json',
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        files: {
-          [parsed.filename]: {
-            content: JSON.stringify(syncedPayload, null, 2),
-          },
-        },
-      }),
-    });
-    if (!response.ok) throw new Error('points_gist_patch_failed');
-  }
-  const saved = writeCache(syncedPayload, { dirty: false });
-  if (!silent) showPointsSyncToast('☁️已更新');
-  return saved;
+  return false;
 }
 
 export async function pullPointsFromCloud() {
@@ -455,7 +282,7 @@ export async function pullPointsFromCloud() {
   const url = getPointsSourceUrl();
   const sourceChanged = cached && String(cached.meta?.sourceUrl || '').trim() !== url;
 
-  if (cached?.meta?.dirty && !sourceChanged) {
+  if (!getApiConfig().enabled && cached?.meta?.dirty && !sourceChanged) {
     try {
       const synced = await pushPointsToCloud({ force: true });
       if (!synced) return { status: 'dirty-cache', data: cached };

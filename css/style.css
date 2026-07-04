@@ -994,6 +994,51 @@ h4 {
   font-weight: 700;
 }
 
+.completed-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.completed-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.completed-group-head {
+  position: sticky;
+  top: calc(12px + env(safe-area-inset-top));
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.68);
+  border: 1px solid var(--stroke);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 800;
+  backdrop-filter: blur(14px);
+}
+
+:root[data-theme='dark'] .completed-group-head {
+  background: rgba(15, 23, 42, 0.74);
+}
+
+.completed-group-head small {
+  font-size: 12px;
+  font-weight: 700;
+  opacity: 0.72;
+}
+
+.completed-group-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .collapsed {
   display: none;
 }

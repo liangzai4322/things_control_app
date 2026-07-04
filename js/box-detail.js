@@ -46,6 +46,73 @@ function formatDueLabel(dueDate) {
   return `${target.getMonth() + 1}/${target.getDate()} 截止`;
 }
 
+function getCompletedTime(task) {
+  const candidates = [task.completedAt, task.updatedAt, task.createdAt];
+  for (const value of candidates) {
+    if (!value) continue;
+    const date = new Date(value);
+    if (!Number.isNaN(date.getTime())) return date;
+  }
+  return new Date(0);
+}
+
+function startOfLocalDay(date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function formatCompletedGroupLabel(date) {
+  const today = startOfLocalDay(new Date());
+  const target = startOfLocalDay(date);
+  const diffDays = Math.round((today - target) / 86400000);
+  if (diffDays === 0) return '今天';
+  if (diffDays === 1) return '昨天';
+  const week = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][date.getDay()];
+  return `${date.getMonth() + 1}月${date.getDate()}日 ${week}`;
+}
+
+function getCompletedGroupKey(date) {
+  const today = startOfLocalDay(new Date());
+  const target = startOfLocalDay(date);
+  const diffDays = Math.round((today - target) / 86400000);
+  if (diffDays >= 0 && diffDays < 7) {
+    return target.toISOString().slice(0, 10);
+  }
+  return 'older';
+}
+
+function renderCompletedTaskGroups(tasks, box) {
+  const sorted = [...tasks].sort((a, b) => getCompletedTime(b) - getCompletedTime(a));
+  const groups = [];
+  const groupMap = new Map();
+
+  sorted.forEach((task) => {
+    const completedTime = getCompletedTime(task);
+    const key = getCompletedGroupKey(completedTime);
+    if (!groupMap.has(key)) {
+      const group = {
+        key,
+        label: key === 'older' ? '一周以前' : formatCompletedGroupLabel(completedTime),
+        tasks: [],
+      };
+      groupMap.set(key, group);
+      groups.push(group);
+    }
+    groupMap.get(key).tasks.push(task);
+  });
+
+  return groups.map((group) => `
+    <section class="completed-group">
+      <div class="completed-group-head">
+        <span>${escapeHtml(group.label)}</span>
+        <small>${group.tasks.length} 项</small>
+      </div>
+      <div class="completed-group-list">
+        ${group.tasks.map((task) => taskItem(task, box)).join('')}
+      </div>
+    </section>
+  `).join('');
+}
+
 function showUndo(task, onUndo, onExpire) {
   clearTimeout(undoTimer);
   document.querySelector('.undo-banner')?.remove();
@@ -136,7 +203,7 @@ export function renderBoxDetail(app, boxId) {
 
         ${doneTasks.length ? `
           <button class="completed-toggle" id="toggleDone">已完成 ${doneTasks.length} 项 ▸</button>
-          <div id="doneTasks" class="collapsed">${doneTasks.map((task) => taskItem(task, box)).join('')}</div>
+          <div id="doneTasks" class="completed-timeline collapsed">${renderCompletedTaskGroups(doneTasks, box)}</div>
         ` : ''}
       </section>
 

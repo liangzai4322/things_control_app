@@ -1,6 +1,8 @@
-import { getSettings, setSettings, exportData, importData, pushDataToCloud, pullDataFromCloud, exportDailySummary } from './db.js';
+import { getSettings, setSettings, exportData, importData, pullDataFromCloud, exportDailySummary } from './db.js';
 import { navigate, showToast } from './app.js';
-import { getPointsSyncState, pullPointsFromCloud } from './points-store.js';
+import { pullPointsFromCloud } from './points-store.js';
+
+const DEFAULT_API_ENDPOINT = 'https://liangzai666.com/taskbox-api/v1';
 
 function escapeHtml(value = '') {
   return String(value)
@@ -11,9 +13,26 @@ function escapeHtml(value = '') {
     .replaceAll("'", '&#39;');
 }
 
+function persistServerSettings(app) {
+  setSettings({
+    apiEnabled: true,
+    apiEndpoint: app.querySelector('#apiEndpoint').value.trim() || DEFAULT_API_ENDPOINT,
+    apiToken: app.querySelector('#apiToken').value.trim(),
+    cloudProvider: 'api',
+    cloudEnabled: false,
+    cloudEndpoint: '',
+    cloudToken: '',
+    githubToken: '',
+    pointsDataUrl: '',
+    pavilionDataUrl: '',
+    towerDataUrl: '',
+  });
+}
+
 export function renderSettings(app) {
   const settings = getSettings();
-  const pointsSyncState = getPointsSyncState();
+  const apiEndpoint = settings.apiEndpoint || DEFAULT_API_ENDPOINT;
+  const hasToken = Boolean(String(settings.apiToken || '').trim());
 
   app.innerHTML = `
     <main id="settings" class="page settings-page">
@@ -25,8 +44,8 @@ export function renderSettings(app) {
 
       <section class="panel settings-hero">
         <p class="eyebrow">Preferences</p>
-        <h3>同步、主题与数据管理</h3>
-        <p class="settings-intro">把界面、云端同步和导入导出配置集中在这里，避免频繁切页查找。</p>
+        <h3>服务器数据库、主题与数据管理</h3>
+        <p class="settings-intro">当前只使用服务器 API 作为云端数据库，旧的整份 JSON 云同步方案已关闭。</p>
       </section>
 
       <section class="panel">
@@ -76,66 +95,25 @@ export function renderSettings(app) {
       <section class="panel">
         <div class="panel-heading">
           <div>
-            <p class="eyebrow">Cloud Sync</p>
-            <h3>云端同步</h3>
+            <p class="eyebrow">Server Database</p>
+            <h3>服务器数据库</h3>
           </div>
-          <p class="panel-note">多设备共享同一份 TaskBox 数据。</p>
+          <p class="panel-note">任务、积分、珍宝阁和弑神塔统一通过服务器 API 读写。</p>
         </div>
-
-        <div class="setting-row">
-          <div>
-            <strong>启用云同步</strong>
-            <p class="panel-note">开启后任务变更会自动尝试上传。</p>
-          </div>
-          <label class="switch">
-            <input id="cloudEnabled" type="checkbox" ${settings.cloudEnabled ? 'checked' : ''}>
-            <span></span>
-          </label>
-        </div>
-
-        <label>云端类型
-          <select id="cloudProvider" class="input">
-            <option value="gist" ${settings.cloudProvider !== 'json' && settings.cloudProvider !== 'github' ? 'selected' : ''}>GitHub Gist</option>
-            <option value="github" ${settings.cloudProvider === 'github' ? 'selected' : ''}>GitHub 数据仓库（兼容）</option>
-            <option value="json" ${settings.cloudProvider === 'json' ? 'selected' : ''}>通用 JSON / JSONBin</option>
-          </select>
-        </label>
 
         <div class="cloud-config-block">
-          <div>
-            <strong>盒子数据源</strong>
-            <p class="panel-note">服务器 API 开启后优先按记录读写数据库；Gist 只作为兜底源保留。</p>
-          </div>
-          <div class="setting-row">
-            <div>
-              <strong>启用服务器 API</strong>
-              <p class="panel-note">开启后任务、积分和小世界会优先连接你的服务器数据库。</p>
-            </div>
-            <label class="switch">
-              <input id="apiEnabled" type="checkbox" ${settings.apiEnabled ? 'checked' : ''}>
-              <span></span>
-            </label>
-          </div>
           <label>服务器 API 地址
-            <input id="apiEndpoint" class="input" value="${escapeHtml(settings.apiEndpoint || 'https://liangzai666.com/taskbox-api/v1')}" placeholder="https://liangzai666.com/taskbox-api/v1">
+            <input id="apiEndpoint" class="input" value="${escapeHtml(apiEndpoint)}" placeholder="${DEFAULT_API_ENDPOINT}">
           </label>
           <label>服务器 API Token（只保存在本机）
-            <input id="apiToken" class="input" type="password" value="${escapeHtml(settings.apiToken || '')}" placeholder="填写服务器 /etc/taskbox-api.env 中的 TASKBOX_API_TOKEN">
+            <input id="apiToken" class="input" type="password" value="${escapeHtml(settings.apiToken || '')}" placeholder="填写服务器 TASKBOX_API_TOKEN">
           </label>
-          <label>盒子 Gist Raw URL
-            <input id="cloudEndpoint" class="input" value="${escapeHtml(settings.cloudEndpoint || '')}" placeholder="https://gist.githubusercontent.com/.../taskbox-backup.json">
-          </label>
-          <label>GitHub Token（只保存在本机，用于写回 Gist）
-            <input id="githubToken" class="input" type="password" value="${escapeHtml(settings.githubToken || '')}" placeholder="ghp_xxx">
-          </label>
-          <label>通用 JSON 访问令牌（JSONBin 等兜底源才需要）
-            <input id="cloudToken" class="input" type="password" value="${escapeHtml(settings.cloudToken || '')}" placeholder="Bearer Token / X-Master-Key">
-          </label>
+          <p class="panel-note">${hasToken ? 'Token 已保存在本机，进入页面会默认从服务器拉取最新数据。' : '缺少 Token 时只能使用本地缓存，无法读写服务器数据库。'}</p>
         </div>
 
         <div class="action-grid">
-          <button class="btn" id="pullCloudBtn">从云端拉取</button>
-          <button class="btn" id="pushCloudBtn">上传到云端</button>
+          <button class="btn" id="pullCloudBtn">拉取盒子数据</button>
+          <button class="btn" id="pullPointsBtn">拉取积分账本</button>
         </div>
       </section>
 
@@ -143,31 +121,9 @@ export function renderSettings(app) {
         <div class="panel-heading">
           <div>
             <p class="eyebrow">Data</p>
-            <h3>积分账本</h3>
+            <h3>本地备份</h3>
           </div>
-          <p class="panel-note">${escapeHtml(
-            pointsSyncState.autoPushEnabled
-                ? '当前默认读取你配置的 Gist Raw 链接，本地改动会自动同步。'
-              : (pointsSyncState.isGistSource || pointsSyncState.isGitHubSource)
-                ? '当前默认读取你配置的 Gist Raw 链接；要自动同步，请先填写 GitHub Token。'
-                : '当前可以在这里配置积分账本的远端 JSON 地址。'
-          )}</p>
-        </div>
-        <label>积分 JSON URL（可留空）
-          <input id="pointsDataUrl" class="input" value="${escapeHtml(settings.pointsDataUrl || '')}" placeholder="https://gist.githubusercontent.com/.../mock-points.json">
-        </label>
-        <div class="action-grid">
-          <button class="btn" id="pullPointsBtn">拉取云端账本</button>
-        </div>
-      </section>
-
-      <section class="panel">
-        <div class="panel-heading">
-          <div>
-            <p class="eyebrow">Data</p>
-            <h3>数据管理</h3>
-          </div>
-          <p class="panel-note">导入会覆盖本地当前数据。</p>
+          <p class="panel-note">导出/导入只用于本地备份和恢复，不再作为云端同步方案。</p>
         </div>
         <div class="action-grid">
           <button class="btn" id="exportBtn">导出数据</button>
@@ -204,77 +160,29 @@ export function renderSettings(app) {
     setSettings({ soundEnabled: event.target.checked });
   });
 
-  app.querySelector('#cloudEnabled').addEventListener('change', (event) => {
-    setSettings({ cloudEnabled: event.target.checked });
-  });
-  app.querySelector('#cloudProvider').addEventListener('change', (event) => {
-    setSettings({ cloudProvider: event.target.value });
-    renderSettings(app);
-  });
-  app.querySelector('#apiEnabled').addEventListener('change', (event) => {
-    setSettings({ apiEnabled: event.target.checked });
-  });
-  app.querySelector('#apiEndpoint').addEventListener('input', (event) => {
-    setSettings({ apiEndpoint: event.target.value.trim() });
-  });
-  app.querySelector('#apiToken').addEventListener('input', (event) => {
-    setSettings({ apiToken: event.target.value.trim() });
-  });
-  app.querySelector('#cloudEndpoint').addEventListener('input', (event) => {
-    setSettings({ cloudEndpoint: event.target.value.trim() });
-  });
-  app.querySelector('#cloudToken').addEventListener('input', (event) => {
-    setSettings({ cloudToken: event.target.value.trim() });
-  });
-  app.querySelector('#githubToken').addEventListener('input', (event) => {
-    setSettings({ githubToken: event.target.value.trim() });
-  });
-  app.querySelector('#pointsDataUrl').addEventListener('input', (event) => {
-    setSettings({ pointsDataUrl: event.target.value.trim() });
-  });
-  app.querySelector('#pullPointsBtn').addEventListener('click', async () => {
-    try {
-      const result = await pullPointsFromCloud();
-      if (result.status === 'remote') showToast('已拉取最新积分账本');
-      else if (result.status === 'dirty-cache') showToast('本地有未同步改动，已优先保留本地账本');
-      else showToast('云端拉取失败，已使用本地缓存');
-    } catch {
-      showToast('积分账本拉取失败，请检查链接或网络');
-    }
-  });
-
-  const syncCloudSettings = () => {
-    setSettings({
-      cloudEnabled: app.querySelector('#cloudEnabled').checked,
-      cloudProvider: app.querySelector('#cloudProvider').value,
-      apiEnabled: app.querySelector('#apiEnabled').checked,
-      apiEndpoint: app.querySelector('#apiEndpoint').value.trim(),
-      apiToken: app.querySelector('#apiToken').value.trim(),
-      cloudEndpoint: app.querySelector('#cloudEndpoint').value.trim(),
-      cloudToken: app.querySelector('#cloudToken').value.trim(),
-      githubToken: app.querySelector('#githubToken').value.trim(),
-    });
-  };
+  app.querySelector('#apiEndpoint').addEventListener('input', () => persistServerSettings(app));
+  app.querySelector('#apiToken').addEventListener('input', () => persistServerSettings(app));
 
   app.querySelector('#pullCloudBtn').addEventListener('click', async () => {
-    syncCloudSettings();
+    persistServerSettings(app);
     try {
       const result = await pullDataFromCloud({ force: true });
-      if (result === 'merged') showToast('已与云端合并并去重');
-      else showToast('本地已是最新');
+      if (result === 'merged') showToast('已从服务器拉取盒子数据');
+      else showToast('缺少服务器 API Token，已保留本地缓存');
       navigate('#home');
     } catch {
-      showToast('云端拉取失败，请检查 Raw 链接或网络');
+      showToast('服务器拉取失败，请检查 API Token 或网络');
     }
   });
 
-  app.querySelector('#pushCloudBtn').addEventListener('click', async () => {
-    syncCloudSettings();
+  app.querySelector('#pullPointsBtn').addEventListener('click', async () => {
+    persistServerSettings(app);
     try {
-      const result = await pushDataToCloud({ force: true });
-      showToast(result ? '已上传到云端' : '缺少 GitHub Token，无法写回云端');
+      const result = await pullPointsFromCloud();
+      if (result.status === 'remote') showToast('已从服务器拉取积分账本');
+      else showToast('服务器拉取失败，已使用本地缓存');
     } catch {
-      showToast('云端上传失败，请检查 GitHub Token 权限');
+      showToast('积分账本拉取失败，请检查 API Token 或网络');
     }
   });
 

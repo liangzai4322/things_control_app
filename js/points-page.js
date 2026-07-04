@@ -51,21 +51,16 @@ function formatTime(value) {
 
 function getSourceLabel(pointsData, syncState = getPointsSyncState()) {
   const url = pointsData.meta.sourceUrl || getPointsSourceUrl();
-  if (url.includes('gist.githubusercontent.com')) return 'GitHub Gist';
-  if (url.includes('raw.githubusercontent.com')) return 'GitHub 数据仓库';
-  if (!url) return '本地 mock JSON';
-  if (!/^https?:/i.test(url) && (url.endsWith('mock-points.json') || url.endsWith('data/mock-points.json'))) return '本地 mock JSON';
-  return '自定义 JSON';
+  if (syncState.apiEnabled) return '服务器数据库';
+  if (url) return '本地缓存';
+  return '本地兜底';
 }
 
 function getSyncNote(syncState) {
   if (syncState.autoPushEnabled) {
-    return '进入页面会默认拉一次远端账本；本地改动会自动同步到 GitHub Gist。手动拉取入口也放在右上角。';
+    return '进入页面会默认拉一次服务器账本；新增、修改、兑换会按记录写入服务器数据库。';
   }
-  if (syncState.isGistSource || syncState.isGitHubSource) {
-    return '进入页面会默认拉一次远端账本；要自动上传，请先在小世界设置里填写 GitHub Token。手动拉取入口也放在右上角。';
-  }
-  return '当前积分源不是 Gist Raw 链接，本地改动暂时只会保存在本地缓存。手动拉取入口也放在右上角。';
+  return '缺少服务器 API Token 时只使用本地缓存。请到设置里填写 Token 后再拉取。';
 }
 
 function groupRewardsByCategory(rewards = []) {
@@ -524,9 +519,9 @@ function openRewardManagerSheet({ app, viewState }) {
     <div class="sheet-content">
       <p class="eyebrow">Reward Pool</p>
       <h3>管理奖励池</h3>
-      <p class="sheet-lead">奖励现在可以在系统里维护，后续会自动同步到 GitHub Gist。</p>
+      <p class="sheet-lead">奖励现在直接维护到服务器数据库，本地缓存只做离线兜底。</p>
       <div class="sheet-actions">
-        <button class="btn primary" id="rewardAddBtn">Add Reward</button>
+        <button class="btn primary" id="rewardAddBtn">新增奖励</button>
       </div>
       <section class="points-manage-groups">
         ${rewards.length
@@ -541,7 +536,6 @@ function openRewardManagerSheet({ app, viewState }) {
       </section>
       <div class="sheet-actions">
         <button class="btn" id="rewardCloseBtn">关闭</button>
-        <button class="btn primary" id="rewardAddBtn">新增奖励</button>
       </div>
     </div>
   `, { height: '82vh' });

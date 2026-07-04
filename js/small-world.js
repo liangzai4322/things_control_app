@@ -191,8 +191,7 @@ function getRealmMeta(type) {
 }
 
 function getRealmUrl(type) {
-  const settings = getSettings();
-  return type === 'pavilion' ? settings.pavilionDataUrl : settings.towerDataUrl;
+  return '';
 }
 
 function getApiConfig() {
@@ -200,7 +199,7 @@ function getApiConfig() {
   const endpoint = String(settings.apiEndpoint || '').trim().replace(/\/$/, '');
   const token = String(settings.apiToken || '').trim();
   return {
-    enabled: Boolean(settings.apiEnabled && endpoint && token),
+    enabled: Boolean(endpoint && token),
     endpoint,
     token,
   };
@@ -800,40 +799,36 @@ export function renderSmallWorldSettings(app) {
       </header>
 
       <section class="panel sw-settings-hero">
-        <p class="eyebrow">Source Config</p>
-        <h3>配置数据源与写回方式</h3>
-        <p class="panel-note">使用 Gist Raw URL + 具备 gist 权限的 GitHub Token 可以把编辑结果写回远端。未配置写回时，修改会保存在当前浏览器缓存。</p>
+        <p class="eyebrow">Server Database</p>
+        <h3>小世界统一使用服务器数据库</h3>
+        <p class="panel-note">珍宝阁和弑神塔都从服务器 API 读取并按记录写回；服务器不可用时只保留本地缓存兜底，不再使用旧的整份 JSON 云同步。</p>
       </section>
 
       <section class="panel">
         <div class="sw-realm-head">
           <div>
             <p class="eyebrow">Pavilion</p>
-            <h3>珍宝阁数据源</h3>
+            <h3>珍宝阁同步状态</h3>
           </div>
           <span class="sw-status-badge ${pavilionMeta?.dirty ? 'warn' : ''}">${escapeHtml(pavilionMeta?.dirty ? '有本地未同步改动' : '状态正常')}</span>
         </div>
-        <label>pavilion.json URL
-          <input id="swPavilionDataUrl" class="input" value="${escapeHtml(settings.pavilionDataUrl || '')}" placeholder="https://.../pavilion.json">
-        </label>
+        <p class="panel-note">数据源：${escapeHtml(settings.apiEndpoint || 'https://liangzai666.com/taskbox-api/v1')}</p>
       </section>
 
       <section class="panel">
         <div class="sw-realm-head">
           <div>
             <p class="eyebrow">Tower</p>
-            <h3>弑神塔数据源</h3>
+            <h3>弑神塔同步状态</h3>
           </div>
           <span class="sw-status-badge ${towerMeta?.dirty ? 'warn' : ''}">${escapeHtml(towerMeta?.dirty ? '有本地未同步改动' : '状态正常')}</span>
         </div>
-        <label>tower.json URL
-          <input id="swTowerDataUrl" class="input" value="${escapeHtml(settings.towerDataUrl || '')}" placeholder="https://.../tower.json">
-        </label>
+        <p class="panel-note">数据源：${escapeHtml(settings.apiEndpoint || 'https://liangzai666.com/taskbox-api/v1')}</p>
       </section>
 
       <section class="panel">
         <div class="action-grid">
-          <button class="btn" id="swPullBtn">从远端拉取</button>
+          <button class="btn" id="swPullBtn">从服务器拉取</button>
           <button class="btn" id="swMapBtn">返回地图</button>
         </div>
       </section>
@@ -848,34 +843,22 @@ export function renderSmallWorldSettings(app) {
         <label>Flomo Webhook（用于发送抽奖结果）
           <input id="swFlomoWebhook" class="input" value="${escapeHtml(settings.flomoWebhook || '')}" placeholder="https://flomoapp.com/iwh/...">
         </label>
-        <label>GitHub Token（用于自动回写 Gist）
-          <input id="swGithubToken" class="input" type="password" value="${escapeHtml(settings.githubToken || '')}" placeholder="ghp_xxx">
-        </label>
       </section>
     </main>
   `;
 
   app.querySelector('#swSettingsBackBtn').addEventListener('click', () => navigate('#smallworld'));
   app.querySelector('#swMapBtn').addEventListener('click', () => navigate('#smallworld'));
-  app.querySelector('#swPavilionDataUrl').addEventListener('input', (event) => {
-    setSettings({ pavilionDataUrl: event.target.value.trim() });
-  });
-  app.querySelector('#swTowerDataUrl').addEventListener('input', (event) => {
-    setSettings({ towerDataUrl: event.target.value.trim() });
-  });
   app.querySelector('#swFlomoWebhook').addEventListener('input', (event) => {
     setSettings({ flomoWebhook: event.target.value.trim() });
-  });
-  app.querySelector('#swGithubToken').addEventListener('input', (event) => {
-    setSettings({ githubToken: event.target.value.trim() });
   });
   app.querySelector('#swPullBtn').addEventListener('click', async () => {
     try {
       await pullSmallWorldData();
-      showToast('小世界数据已拉取到本地缓存');
+      showToast('小世界数据已从服务器拉取');
       renderSmallWorldSettings(app);
     } catch {
-      showToast('拉取失败，请检查数据源 URL 或网络');
+      showToast('拉取失败，请检查服务器 API Token 或网络');
     }
   });
 }
@@ -1298,11 +1281,7 @@ function openFloorItemEditor({
 }
 
 async function persistFloor(type, json) {
-  const settings = getSettings();
   const customUrl = getRealmUrl(type);
-  const token = (settings.githubToken || '').trim();
-  const parsed = parseGistRawUrl(customUrl);
-  const parsedGitHub = parseGitHubRawUrl(customUrl);
 
   if (getApiConfig().enabled) {
     try {
@@ -1315,21 +1294,6 @@ async function persistFloor(type, json) {
       writeCachedData(type, json, { source: 'cache', dirty: true });
       setRuntimeCache(type, { data: json, path: customUrl || `cache:${type}`, source: 'cache', dirty: true });
       showToast('服务器同步失败，已保存到本地缓存');
-      return 'cache';
-    }
-  }
-
-  if (token && (parsed || parsedGitHub)) {
-    try {
-      await uploadSmallWorldToRemote(type, json);
-      writeCachedData(type, json, { source: 'remote', dirty: false });
-      setRuntimeCache(type, { data: json, path: customUrl, source: 'remote', dirty: false });
-      showToast('已同步到云端');
-      return 'remote';
-    } catch {
-      writeCachedData(type, json, { source: 'cache', dirty: true });
-      setRuntimeCache(type, { data: json, path: customUrl || `cache:${type}`, source: 'cache', dirty: true });
-      showToast('远端同步失败，已保存到本地缓存');
       return 'cache';
     }
   }
@@ -1373,97 +1337,6 @@ async function syncSmallWorldToApi(type, json) {
       }
     }
   }
-}
-
-function parseGistRawUrl(url) {
-  const match = String(url || '').match(/gist\.githubusercontent\.com\/[^/]+\/([a-f0-9]+)\/raw(?:\/[a-f0-9]+)?\/(.+)$/i);
-  if (!match) return null;
-  return { gistId: match[1], filename: decodeURIComponent(match[2]) };
-}
-
-function parseGitHubRawUrl(url) {
-  const match = String(url || '').match(/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\/(.+)$/i);
-  if (!match) return null;
-  return {
-    owner: match[1],
-    repo: match[2],
-    branch: match[3],
-    path: decodeURIComponent(match[4]),
-  };
-}
-
-function encodeRepoPath(path) {
-  return String(path || '').split('/').map((part) => encodeURIComponent(part)).join('/');
-}
-
-function toBase64Utf8(text) {
-  const bytes = new TextEncoder().encode(text);
-  let binary = '';
-  const chunkSize = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
-  }
-  return btoa(binary);
-}
-
-async function uploadSmallWorldToRemote(type, json) {
-  const settings = getSettings();
-  const token = (settings.githubToken || '').trim();
-  if (!token) throw new Error('missing_token');
-
-  const dataUrl = getRealmUrl(type);
-  const parsed = parseGistRawUrl(dataUrl);
-  const parsedGitHub = parseGitHubRawUrl(dataUrl);
-  if (!parsed && !parsedGitHub) throw new Error('invalid_remote_url');
-
-  if (parsedGitHub) {
-    const apiPath = encodeRepoPath(parsedGitHub.path);
-    const apiBase = `https://api.github.com/repos/${parsedGitHub.owner}/${parsedGitHub.repo}/contents/${apiPath}`;
-    const currentResponse = await fetch(`${apiBase}?ref=${encodeURIComponent(parsedGitHub.branch)}`, {
-      method: 'GET',
-      headers: {
-        Accept: 'application/vnd.github+json',
-        Authorization: `Bearer ${token}`,
-      },
-      cache: 'no-store',
-    });
-    if (!currentResponse.ok) throw new Error('github_file_fetch_failed');
-    const current = await currentResponse.json();
-
-    const response = await fetch(apiBase, {
-      method: 'PUT',
-      headers: {
-        Accept: 'application/vnd.github+json',
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        message: `Update ${parsedGitHub.path}`,
-        content: toBase64Utf8(`${JSON.stringify(json, null, 2)}\n`),
-        sha: current.sha,
-        branch: parsedGitHub.branch,
-      }),
-    });
-    if (!response.ok) throw new Error('github_file_update_failed');
-    return;
-  }
-
-  const response = await fetch(`https://api.github.com/gists/${parsed.gistId}`, {
-    method: 'PATCH',
-    headers: {
-      Accept: 'application/vnd.github+json',
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      files: {
-        [parsed.filename]: {
-          content: JSON.stringify(json, null, 2),
-        },
-      },
-    }),
-  });
-  if (!response.ok) throw new Error('gist_patch_failed');
 }
 
 function openSpin(items, isPavilion, onComplete) {
