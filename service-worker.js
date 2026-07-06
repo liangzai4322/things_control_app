@@ -1,4 +1,4 @@
-const CACHE_NAME = 'taskbox-v18-quick-switch-pin-theme';
+const CACHE_NAME = 'taskbox-v19-desktop-density';
 const CACHE_FILES = [
   './',
   './index.html',
