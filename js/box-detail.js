@@ -5,6 +5,21 @@ import { getTaskPointValue, reconcileCompletedTaskPoints, syncTaskCompletionPoin
 
 const LONG_PRESS_MS = 500;
 const DELETE_SWIPE_THRESHOLD = 120;
+const QUICK_SWITCH_COLORS = ['important', 'misc', 'relax'];
+const QUICK_SWITCH_LABELS = {
+  important: '重要',
+  misc: '待办',
+  relax: '放松',
+};
+const BOX_PIN_THEMES = {
+  important: { start: '#f9734e', end: '#ff9a5a', soft: 'rgba(249, 115, 78, 0.15)', border: 'rgba(249, 115, 78, 0.46)', shadow: 'rgba(249, 115, 78, 0.16)', text: '#c2410c' },
+  misc: { start: '#2f6df6', end: '#22c3dd', soft: 'rgba(47, 109, 246, 0.14)', border: 'rgba(47, 109, 246, 0.42)', shadow: 'rgba(47, 109, 246, 0.14)', text: '#1d4ed8' },
+  relax: { start: '#0ea5a4', end: '#4ade80', soft: 'rgba(14, 165, 164, 0.15)', border: 'rgba(14, 165, 164, 0.42)', shadow: 'rgba(14, 165, 164, 0.15)', text: '#047857' },
+  reward: { start: '#f6c445', end: '#fb923c', soft: 'rgba(246, 196, 69, 0.18)', border: 'rgba(246, 196, 69, 0.48)', shadow: 'rgba(246, 196, 69, 0.16)', text: '#b45309' },
+  punish: { start: '#334155', end: '#0f172a', soft: 'rgba(51, 65, 85, 0.16)', border: 'rgba(51, 65, 85, 0.42)', shadow: 'rgba(51, 65, 85, 0.14)', text: '#334155' },
+  study: { start: '#22c55e', end: '#15803d', soft: 'rgba(34, 197, 94, 0.15)', border: 'rgba(34, 197, 94, 0.42)', shadow: 'rgba(34, 197, 94, 0.14)', text: '#15803d' },
+  health: { start: '#0f9bd7', end: '#2563eb', soft: 'rgba(15, 155, 215, 0.15)', border: 'rgba(15, 155, 215, 0.42)', shadow: 'rgba(15, 155, 215, 0.14)', text: '#0369a1' },
+};
 
 let undoTimer = null;
 let contextMenuCleanup = null;
@@ -114,6 +129,42 @@ function renderCompletedTaskGroups(tasks, box) {
   `).join('');
 }
 
+function getQuickSwitchBoxes(currentBox, boxes) {
+  if (!QUICK_SWITCH_COLORS.includes(currentBox?.color)) return [];
+  return QUICK_SWITCH_COLORS
+    .map((color) => boxes.find((box) => box.color === color))
+    .filter((box) => box && box.id !== currentBox.id);
+}
+
+function getQuickSwitchLabel(box) {
+  return QUICK_SWITCH_LABELS[box.color] || String(box.name || '').replace(/盒$/, '') || '切换';
+}
+
+function renderQuickSwitches(boxes) {
+  if (!boxes.length) return '';
+  return `
+    <nav class="detail-switchers" aria-label="快速切换盒子">
+      ${boxes.map((box) => `
+        <button class="quick-box-switch ${box.color}" type="button" data-quick-box="${box.id}" aria-label="切换到${escapeHtml(box.name)}">
+          ${escapeHtml(getQuickSwitchLabel(box))}
+        </button>
+      `).join('')}
+    </nav>
+  `;
+}
+
+function getBoxPinStyle(box) {
+  const theme = BOX_PIN_THEMES[box?.color] || BOX_PIN_THEMES.important;
+  return [
+    `--pin-start:${theme.start}`,
+    `--pin-end:${theme.end}`,
+    `--pin-soft:${theme.soft}`,
+    `--pin-border:${theme.border}`,
+    `--pin-shadow:${theme.shadow}`,
+    `--pin-text:${theme.text}`,
+  ].join(';');
+}
+
 function showUndo(task, onUndo, onExpire) {
   clearTimeout(undoTimer);
   document.querySelector('.undo-banner')?.remove();
@@ -206,10 +257,12 @@ function openTaskContextMenu(event, app, box, task) {
 
 export function renderBoxDetail(app, boxId) {
   closeTaskContextMenu();
-  const box = getBoxes().find((item) => item.id === boxId);
+  const boxes = getBoxes();
+  const box = boxes.find((item) => item.id === boxId);
   if (!box) return navigate('#home');
 
   const tasks = getTasksByBox(boxId);
+  const quickSwitchBoxes = getQuickSwitchBoxes(box, boxes);
   const taskMap = new Map(tasks.map((task) => [task.id, task]));
   const openTasks = tasks.filter((task) => !task.isCompleted);
   const doneTasks = tasks.filter((task) => task.isCompleted);
@@ -220,6 +273,7 @@ export function renderBoxDetail(app, boxId) {
       <header class="topbar safe-top detail-topbar">
         <button class="icon-btn icon-btn-ghost" id="backBtn">←</button>
         <div class="row gap8 detail-actions">
+          ${renderQuickSwitches(quickSwitchBoxes)}
           <button class="icon-btn icon-btn-ghost" id="wheelBtn" aria-label="随机抽取">🎡</button>
           <button class="icon-btn icon-btn-ghost" id="settingsBtn" aria-label="设置">⚙</button>
         </div>
@@ -285,6 +339,9 @@ export function renderBoxDetail(app, boxId) {
   `;
 
   app.querySelector('#backBtn').addEventListener('click', () => navigate('#home'));
+  app.querySelectorAll('[data-quick-box]').forEach((button) => {
+    button.addEventListener('click', () => navigate(`#box/${button.dataset.quickBox}`));
+  });
   app.querySelector('#wheelBtn').addEventListener('click', () => openLuckyWheel(box));
   app.querySelector('#settingsBtn').addEventListener('click', () => navigate('#settings'));
   app.querySelector('#boxNameInput').addEventListener('blur', (event) => {
@@ -317,7 +374,7 @@ function taskItem(task, box) {
   const pointsValue = getTaskPointValue(task, box);
 
   return `
-    <article class="task-item ${task.isCompleted ? 'done' : ''} ${task.pinned ? 'pinned' : ''}" data-id="${task.id}">
+    <article class="task-item ${task.isCompleted ? 'done' : ''} ${task.pinned ? 'pinned' : ''}" data-id="${task.id}" style="${getBoxPinStyle(box)}">
       <div class="task-main" data-main="1">
         <button class="check ${task.isCompleted ? 'checked' : ''}" style="--check-color:${color}">${task.isCompleted ? '✓' : ''}</button>
         <button class="task-content" data-action="edit">

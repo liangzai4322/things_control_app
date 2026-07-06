@@ -1,4 +1,4 @@
-const CACHE_NAME = 'taskbox-v17-task-context-menu';
+const CACHE_NAME = 'taskbox-v18-quick-switch-pin-theme';
 const CACHE_FILES = [
   './',
   './index.html',

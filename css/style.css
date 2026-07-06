@@ -710,6 +710,35 @@ h4 {
 
 .detail-actions {
   margin-left: auto;
+  align-items: center;
+}
+
+.detail-switchers {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.quick-box-switch {
+  min-height: 40px;
+  min-width: 52px;
+  padding: 0 13px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 999px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 850;
+  letter-spacing: 0.02em;
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.14);
+}
+
+.quick-box-switch:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 16px 30px rgba(15, 23, 42, 0.18);
+}
+
+.quick-box-switch:active {
+  transform: scale(0.97);
 }
 
 .detail-hero {
@@ -841,8 +870,8 @@ h4 {
 }
 
 .task-item.pinned {
-  border-color: rgba(247, 119, 77, 0.42);
-  box-shadow: 0 14px 30px rgba(247, 119, 77, 0.12), var(--shadow-sm);
+  border-color: var(--pin-border, rgba(247, 119, 77, 0.42));
+  box-shadow: 0 14px 30px var(--pin-shadow, rgba(247, 119, 77, 0.12)), var(--shadow-sm);
 }
 
 .task-item.pinned::before {
@@ -850,7 +879,7 @@ h4 {
   position: absolute;
   inset: 0 auto 0 0;
   width: 4px;
-  background: linear-gradient(180deg, #f7774d, #ffd166);
+  background: linear-gradient(180deg, var(--pin-start, #f7774d), var(--pin-end, #ffd166));
   z-index: 1;
 }
 
@@ -961,14 +990,14 @@ h4 {
 }
 
 .pin-chip {
-  background: rgba(247, 119, 77, 0.14);
-  color: #c24e1f;
+  background: var(--pin-soft, rgba(247, 119, 77, 0.14));
+  color: var(--pin-text, #c24e1f);
   font-weight: 800;
 }
 
 :root[data-theme='dark'] .pin-chip {
-  background: rgba(255, 177, 105, 0.16);
-  color: #ffc98b;
+  background: var(--pin-soft, rgba(255, 177, 105, 0.16));
+  color: var(--pin-end, #ffc98b);
 }
 
 :root[data-theme='dark'] .task-chip {
@@ -2771,6 +2800,25 @@ select:focus {
 
   .detail-summary {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .detail-topbar {
+    gap: 8px;
+  }
+
+  .detail-actions {
+    gap: 6px;
+  }
+
+  .detail-switchers {
+    gap: 5px;
+  }
+
+  .quick-box-switch {
+    min-width: 46px;
+    min-height: 38px;
+    padding: 0 10px;
+    font-size: 12px;
   }
 
   .box-grid {
