@@ -1,8 +1,8 @@
 import { getBoxes, getDeletedTasksByBox, getTasksByBox, updateTask, deleteTask, reorderTasks, updateBox, addTask, playSound, restoreTask } from './db.js';
 import { navigate, openSheet, showToast } from './app.js';
-import { bindDailyQuote, renderDailyQuote } from './daily-quote.js';
 import { openLuckyWheel } from './lucky-wheel.js';
 import { getTaskPointValue, reconcileCompletedTaskPoints, syncTaskCompletionPoints } from './points-store.js';
+import { formatDueLabel as formatDueDateLabel, fromDateTimeLocalValue, getBoxDailySentence, isTaskOverdue, toDateTimeLocalValue } from './task-utils.js';
 
 const LONG_PRESS_MS = 500;
 const DELETE_SWIPE_THRESHOLD = 120;
@@ -141,7 +141,7 @@ function renderDeletedTasks(tasks, box) {
             <span class="task-note-badge">已删除</span>
           </div>
           <div class="task-meta">
-            <span class="task-chip">${task.deletedAt ? escapeHtml(formatDueLabel(task.deletedAt).replace('截止', '删除')) : '已删除'}</span>
+            <span class="task-chip">${task.deletedAt ? escapeHtml(formatDueDateLabel(task.deletedAt).replace('截止', '删除')) : '已删除'}</span>
             <span class="task-chip">${escapeHtml(getPriorityLabel(task.priority ?? 0))}</span>
           </div>
         </div>
@@ -302,14 +302,16 @@ export function renderBoxDetail(app, boxId) {
         </div>
       </header>
 
-      ${renderDailyQuote()}
-
       <section class="detail-hero panel ${box.color}">
         <div class="detail-hero-head">
           <span class="detail-icon">${escapeHtml(box.icon)}</span>
           <div class="detail-hero-copy">
             <p class="eyebrow">任务盒</p>
             <input id="boxNameInput" class="title-input" value="${escapeHtml(box.name)}" aria-label="盒子名称">
+            <label class="box-sentence-editor">
+              <span>每日一句</span>
+              <textarea id="boxSentenceInput" class="box-sentence-input" rows="3" aria-label="盒子每日一句">${escapeHtml(getBoxDailySentence(box))}</textarea>
+            </label>
             <p class="detail-hero-desc">${escapeHtml(String(box.description || '').trim() || '把同类任务放进一个盒子里，降低来回切换的成本。')}</p>
           </div>
         </div>
@@ -374,10 +376,17 @@ export function renderBoxDetail(app, boxId) {
   });
   app.querySelector('#wheelBtn').addEventListener('click', () => openLuckyWheel(box));
   app.querySelector('#settingsBtn').addEventListener('click', () => navigate('#settings'));
-  bindDailyQuote(app);
   app.querySelector('#boxNameInput').addEventListener('blur', (event) => {
     const name = event.target.value.trim();
     if (name) updateBox(box.id, { name });
+  });
+  app.querySelector('#boxSentenceInput').addEventListener('blur', (event) => {
+    const description = event.target.value.trim();
+    updateBox(box.id, { description });
+    if (!description) event.target.value = getBoxDailySentence({ description });
+  });
+  app.querySelector('#boxSentenceInput').addEventListener('keydown', (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') event.target.blur();
   });
 
   const openEditor = () => openTaskEditor({ boxId: box.id }, () => renderBoxDetail(app, box.id));
@@ -416,7 +425,7 @@ export function renderBoxDetail(app, boxId) {
 }
 
 function taskItem(task, box) {
-  const overdue = task.dueDate && !task.isCompleted && new Date(task.dueDate) < new Date();
+  const overdue = isTaskOverdue(task);
   const color = getPriorityColor(task.priority ?? 0);
   const taskProgress = Math.max(0, Math.min(100, Number(task.progress) || 0));
   const hasNote = Boolean((task.note || '').trim());
@@ -424,7 +433,7 @@ function taskItem(task, box) {
   const pointsValue = getTaskPointValue(task, box);
 
   return `
-    <article class="task-item ${task.isCompleted ? 'done' : ''} ${task.pinned ? 'pinned' : ''}" data-id="${task.id}" style="${getBoxPinStyle(box)}">
+    <article class="task-item ${task.isCompleted ? 'done' : ''} ${task.pinned ? 'pinned' : ''} ${overdue ? 'overdue' : ''}" data-id="${task.id}" style="${getBoxPinStyle(box)}">
       <div class="task-main" data-main="1">
         <button class="check ${task.isCompleted ? 'checked' : ''}" style="--check-color:${color}">${task.isCompleted ? '✓' : ''}</button>
         <button class="task-content" data-action="edit">
@@ -435,7 +444,7 @@ function taskItem(task, box) {
           <div class="task-meta">
             ${task.pinned ? '<span class="task-chip pin-chip">置顶</span>' : ''}
             <span class="task-chip">${escapeHtml(getPriorityLabel(task.priority ?? 0))}</span>
-            ${task.dueDate ? `<span class="task-chip ${overdue ? 'overdue-chip' : ''}">${escapeHtml(formatDueLabel(task.dueDate))}</span>` : ''}
+            ${task.dueDate ? `<span class="task-chip ${overdue ? 'overdue-chip' : ''}">${escapeHtml(formatDueDateLabel(task.dueDate))}</span>` : ''}
             <span class="task-chip">${taskProgress}%</span>
             ${pointsValue > 0 ? `<span class="task-chip points-chip">+${pointsValue} 分</span>` : ''}
           </div>
@@ -612,7 +621,7 @@ function openTaskEditor({ taskId, boxId }, onDone) {
         </div>
       </label>
 
-      <label>截止日期<input id="taskDate" class="input" type="date" value="${task?.dueDate ? task.dueDate.slice(0, 10) : ''}"></label>
+      <label>截止日期<input id="taskDate" class="input" type="datetime-local" value="${escapeHtml(toDateTimeLocalValue(task?.dueDate))}"></label>
       <label>抽奖权重（选填，默认 1）<input id="taskWeight" class="input" type="number" min="1" step="1" placeholder="1" value="${task?.weight ?? ''}"></label>
       <label>完成奖励积分<input id="taskPointsValue" class="input" type="number" min="0" step="1" value="${initialPoints}"></label>
       <label>所属盒子
@@ -678,7 +687,7 @@ function openTaskEditor({ taskId, boxId }, onDone) {
       progress,
       weight,
       pointsValue,
-      dueDate: due ? new Date(due).toISOString() : null,
+      dueDate: fromDateTimeLocalValue(due),
       boxId: nextBoxId,
       note: root.querySelector('#taskNote').value.trim(),
       isCompleted: done,

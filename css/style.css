@@ -658,6 +658,33 @@ h4 {
   min-height: 40px;
 }
 
+.box-daily-sentence {
+  min-height: 76px;
+  padding: 12px 13px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.13);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+.box-daily-sentence span {
+  display: block;
+  margin-bottom: 7px;
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.box-daily-sentence p {
+  margin: 0;
+  color: #fff;
+  font-size: 15px;
+  line-height: 1.55;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .box-main {
   margin-top: 18px;
   display: flex;
@@ -876,6 +903,49 @@ h4 {
   line-height: 1.55;
 }
 
+.detail-hero .detail-hero-desc {
+  display: none;
+}
+
+.box-sentence-editor {
+  display: block;
+  margin-top: 14px;
+  max-width: 100%;
+}
+
+.box-sentence-editor span {
+  display: block;
+  margin-bottom: 8px;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.box-sentence-input {
+  width: 100%;
+  min-height: 112px;
+  resize: vertical;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  padding: 13px 14px;
+  font-size: 16px;
+  line-height: 1.55;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
+}
+
+.box-sentence-input:focus {
+  outline: none;
+  border-color: rgba(255, 255, 255, 0.56);
+  background: rgba(255, 255, 255, 0.19);
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.14);
+}
+
+.box-sentence-input::placeholder {
+  color: rgba(255, 255, 255, 0.58);
+}
+
 .detail-summary {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1087,6 +1157,37 @@ h4 {
 .overdue-chip {
   background: rgba(255, 77, 79, 0.14);
   color: #dc2626;
+}
+
+.task-item.overdue {
+  border-color: rgba(248, 113, 113, 0.72);
+  background:
+    linear-gradient(135deg, rgba(127, 29, 29, 0.98), rgba(220, 38, 38, 0.94)),
+    var(--surface);
+  color: #fff;
+  box-shadow: 0 22px 46px rgba(127, 29, 29, 0.28);
+}
+
+.task-item.overdue .task-title,
+.task-item.overdue .task-note-preview,
+.task-item.overdue .grip {
+  color: #fff;
+}
+
+.task-item.overdue .task-chip,
+.task-item.overdue .task-note-badge {
+  background: rgba(255, 255, 255, 0.16);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.task-item.overdue .overdue-chip {
+  background: #fff;
+  color: #991b1b;
+  font-weight: 900;
+}
+
+.task-item.overdue .mini-progress {
+  background: rgba(255, 255, 255, 0.2);
 }
 
 .task-note-preview {
@@ -3010,6 +3111,10 @@ select:focus {
     min-height: 0;
   }
 
+  .box-daily-sentence {
+    min-height: 86px;
+  }
+
   .important-preview {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -3038,7 +3143,6 @@ select:focus {
     grid-template-columns: minmax(290px, 340px) minmax(0, 1fr);
     grid-template-areas:
       "topbar topbar"
-      "quote quote"
       "hero tasks-head"
       "hero tasks";
     align-items: start;
@@ -3050,10 +3154,6 @@ select:focus {
     grid-area: topbar;
     margin-bottom: 0;
     padding-bottom: 2px;
-  }
-
-  .detail-page > .daily-quote-strip {
-    grid-area: quote;
   }
 
   .detail-hero {
@@ -3405,6 +3505,266 @@ select:focus {
   .sw-floor:hover {
     transform: translateY(-1px);
     box-shadow: var(--shadow-md);
+  }
+}
+
+.task-item.overdue,
+:root[data-theme='dark'] .task-item.overdue {
+  border-color: rgba(248, 113, 113, 0.76);
+  background:
+    linear-gradient(135deg, rgba(127, 29, 29, 0.98), rgba(220, 38, 38, 0.94)),
+    var(--surface);
+  color: #fff;
+  box-shadow: 0 22px 46px rgba(127, 29, 29, 0.3);
+}
+
+.task-item.overdue .task-main,
+:root[data-theme='dark'] .task-item.overdue .task-main {
+  background: transparent;
+}
+
+.task-item.overdue .task-content,
+.task-item.overdue .check {
+  color: #fff;
+}
+
+.task-item.overdue .check {
+  border-color: #fff;
+}
+
+@media (hover: hover) {
+  .task-item.overdue:hover {
+    box-shadow: 0 26px 52px rgba(127, 29, 29, 0.36);
+  }
+}
+
+.deleted-timeline.collapsed,
+.completed-timeline.collapsed {
+  display: none;
+}
+
+/* Frontend refresh: keep the current visual language, but make each section feel more deliberate. */
+.topbar.safe-top {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  margin: -4px -2px 0;
+  padding: calc(6px + env(safe-area-inset-top)) 2px 8px;
+  border-radius: 0 0 24px 24px;
+  background: linear-gradient(180deg, rgba(255, 248, 239, 0.86), rgba(255, 248, 239, 0.52) 70%, transparent);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+:root[data-theme='dark'] .topbar.safe-top {
+  background: linear-gradient(180deg, rgba(17, 24, 39, 0.9), rgba(17, 24, 39, 0.52) 70%, transparent);
+}
+
+.home-hero,
+.points-hero,
+.sw-world-hero,
+.sw-floor-hero,
+.sw-settings-hero,
+.settings-hero {
+  border-color: rgba(255, 255, 255, 0.42);
+  box-shadow: 0 28px 70px rgba(15, 23, 42, 0.15);
+}
+
+.home-hero::before,
+.points-hero::after,
+.sw-world-hero::after,
+.sw-floor-hero::after,
+.sw-settings-hero::after,
+.settings-hero::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 16% 0%, rgba(255, 255, 255, 0.4), transparent 28%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.14), transparent 44%);
+}
+
+.home-hero > *,
+.points-hero > *,
+.sw-world-hero > *,
+.sw-floor-hero > *,
+.sw-settings-hero > *,
+.settings-hero > * {
+  position: relative;
+  z-index: 1;
+}
+
+.box-card {
+  isolation: isolate;
+}
+
+.box-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 72% 12%, rgba(255, 255, 255, 0.3), transparent 20%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.02) 55%);
+}
+
+.box-card .progress,
+.task-item .mini-progress,
+.sw-item-card .mini-progress {
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.1);
+}
+
+.box-daily-sentence,
+.box-sentence-input {
+  border: 1px solid rgba(255, 255, 255, 0.22);
+}
+
+.box-sentence-input {
+  font-size: 16px;
+  line-height: 1.65;
+}
+
+.task-section-header,
+.points-filter-panel,
+.sw-realm-picker,
+.sw-realm,
+.points-rule-card,
+.points-reward-card,
+.points-transaction,
+.sw-floor-card,
+.sw-item-card,
+.settings-page .panel {
+  border-color: rgba(255, 255, 255, 0.36);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.task-list,
+.points-ledger,
+.sw-item-list {
+  scroll-padding: 18px;
+}
+
+.task-item {
+  transform-origin: center;
+}
+
+.task-item.overdue {
+  animation: danger-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes danger-pulse {
+  0%,
+  100% {
+    box-shadow: 0 22px 46px rgba(127, 29, 29, 0.28);
+  }
+
+  50% {
+    box-shadow: 0 26px 58px rgba(220, 38, 38, 0.42);
+  }
+}
+
+.points-hero {
+  background:
+    radial-gradient(circle at top right, rgba(251, 191, 36, 0.28), transparent 34%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.86), rgba(255, 247, 237, 0.66));
+}
+
+:root[data-theme='dark'] .points-hero {
+  background:
+    radial-gradient(circle at top right, rgba(251, 191, 36, 0.18), transparent 34%),
+    linear-gradient(145deg, rgba(17, 24, 39, 0.9), rgba(30, 41, 59, 0.66));
+}
+
+.points-balance {
+  letter-spacing: -0.06em;
+  text-shadow: 0 16px 34px rgba(245, 158, 11, 0.22);
+}
+
+.points-reward-card,
+.points-rule-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.points-reward-card::before,
+.points-rule-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 5px;
+  background: linear-gradient(180deg, #f59e0b, #fb7185);
+  opacity: 0.75;
+}
+
+.sw-realm-portal,
+.sw-floor-card,
+.sw-item-card {
+  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.09);
+}
+
+.sw-realm-portal.active {
+  transform: translateY(-2px);
+}
+
+.sw-floor-jump {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.24);
+}
+
+@media (min-width: 900px) {
+  .topbar.safe-top {
+    margin-top: -12px;
+    padding-top: 12px;
+  }
+
+  .points-page,
+  .sw-page,
+  .settings-page {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .points-rule-grid,
+  .points-reward-group-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .points-ledger {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .points-transaction {
+    min-height: 104px;
+  }
+
+  .sw-realm-portals,
+  .sw-floor-stack {
+    gap: 16px;
+  }
+}
+
+@media (max-width: 480px) {
+  .topbar.safe-top {
+    margin-left: -4px;
+    margin-right: -4px;
+  }
+
+  .box-daily-sentence {
+    min-height: 94px;
+  }
+
+  .box-daily-sentence p {
+    font-size: 14px;
+  }
+
+  .points-hero-actions .btn,
+  .sw-realm-portal-actions .btn,
+  .sw-floor-actions .btn {
+    flex: 1 1 auto;
   }
 }
 

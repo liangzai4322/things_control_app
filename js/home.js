@@ -1,7 +1,7 @@
 import { getBoxes, getTasks, addTask, addBox, pullDataFromCloud } from './db.js';
 import { navigate, openSheet, showToast } from './app.js';
-import { bindDailyQuote, renderDailyQuote } from './daily-quote.js';
 import { getPointsSummary, getTaskPointValue } from './points-store.js';
+import { getBoxDailySentence, isTaskOverdue } from './task-utils.js';
 
 const BOX_FALLBACK_COPY = {
   important: '把最高优先级的事情放到最显眼的位置。',
@@ -46,9 +46,7 @@ function formatToday(now = new Date()) {
 }
 
 function getBoxDescription(box) {
-  const description = String(box.description || '').trim();
-  if (description) return description;
-  return BOX_FALLBACK_COPY[box.color] || '把相关任务装进一个盒子，减少注意力切换。';
+  return getBoxDailySentence(box, BOX_FALLBACK_COPY[box.color] || '把相关任务装进一个盒子，减少注意力切换。');
 }
 
 function getProgressLabel(boxTasks, pendingTasks, finished) {
@@ -108,7 +106,7 @@ export function renderHome(app) {
   const doneTasks = tasks.filter((task) => task.isCompleted);
   const openTasks = tasks.filter((task) => !task.isCompleted);
   const actionableTasks = openTasks.filter((task) => isActionableBox(boxMap.get(task.boxId)));
-  const overdueTasks = actionableTasks.filter((task) => task.dueDate && new Date(task.dueDate) < now);
+  const overdueTasks = actionableTasks.filter((task) => isTaskOverdue(task, now));
   const focusBox = boxes.find((box) => isActionableBox(box)) || boxes[0];
 
   app.innerHTML = `
@@ -119,7 +117,6 @@ export function renderHome(app) {
             <p class="eyebrow">${escapeHtml(formatToday(now))}</p>
             <h1 class="hero-title">${escapeHtml(getGreeting(now))}</h1>
             <p class="hero-subtitle">把任务拆进盒子，按场景推进，每次只盯住下一件事。</p>
-            ${renderDailyQuote({ editable: true })}
           </div>
           <div class="row gap8 hero-tools">
             <button class="icon-btn icon-btn-ghost" id="homePullBtn" aria-label="拉取盒子数据">↻</button>
@@ -178,7 +175,10 @@ export function renderHome(app) {
                 <span class="box-progress-label">${percent}%</span>
               </div>
 
-              <p class="box-desc">${escapeHtml(getBoxDescription(box))}</p>
+              <div class="box-desc box-daily-sentence">
+                <span>每日一句</span>
+                <p>${escapeHtml(getBoxDescription(box))}</p>
+              </div>
               ${renderBoxPreview(box, pendingTasks)}
 
               <div class="box-meta">
@@ -231,8 +231,6 @@ export function renderHome(app) {
   });
   app.querySelector('#settingsBtn').addEventListener('click', () => navigate('#settings'));
   app.querySelector('#aiTopBtn').addEventListener('click', openAIExtractSheetLazy);
-  bindDailyQuote(app, { editable: true, onSaved: () => renderHome(app) });
-
   const fabWrap = app.querySelector('#fabWrap');
   app.querySelector('#fabMain').addEventListener('click', () => fabWrap.classList.toggle('open'));
   app.querySelector('#fabAI').addEventListener('click', openAIExtractSheetLazy);
@@ -302,7 +300,7 @@ function openAddBoxSheet() {
       <h3>添加新盒子</h3>
       <p class="sheet-lead">给一组相似任务一个固定容器，首页会更清晰。</p>
       <label>盒子名称<input id="newBoxName" class="input" placeholder="例如：运动盒"></label>
-      <label>盒子介绍<textarea id="newBoxDesc" class="input" rows="4" placeholder="写一句这个盒子主要做什么"></textarea></label>
+      <label>每日一句 / 盒子介绍<textarea id="newBoxDesc" class="input" rows="4" placeholder="写两三句话，作为这个盒子的每日一句"></textarea></label>
       <div class="sheet-actions">
         <button class="btn" id="cancelBoxBtn">取消</button>
         <button class="btn primary" id="saveBoxBtn">创建盒子</button>

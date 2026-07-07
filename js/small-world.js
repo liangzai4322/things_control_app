@@ -1,5 +1,4 @@
 import { navigate, openSheet, showToast } from './app.js';
-import { bindDailyQuote, renderDailyQuote } from './daily-quote.js';
 import { getSettings, setSettings } from './db.js';
 import { openWeightedWheel } from './lucky-wheel.js';
 
@@ -682,7 +681,6 @@ export async function renderSmallWorldMap(app) {
         <h2>小世界</h2>
         <button class="icon-btn icon-btn-ghost" id="swSettingsBtn" aria-label="小世界设置">⚙</button>
       </header>
-      ${renderDailyQuote()}
       <section class="panel sw-world-loading" id="swContent">
         <p class="eyebrow">Loading</p>
         <h3>正在读取小世界地图</h3>
@@ -693,7 +691,6 @@ export async function renderSmallWorldMap(app) {
 
   app.querySelector('#swBack').addEventListener('click', () => navigate('#home'));
   app.querySelector('#swSettingsBtn').addEventListener('click', () => navigate('#sw-settings'));
-  bindDailyQuote(app);
 
   const [pavilionResult, towerResult] = await Promise.allSettled([
     loadSmallWorldSource('pavilion'),
@@ -800,8 +797,6 @@ export function renderSmallWorldSettings(app) {
         <h2>小世界设置</h2>
         <span class="topbar-spacer"></span>
       </header>
-      ${renderDailyQuote()}
-
       <section class="panel sw-settings-hero">
         <p class="eyebrow">Server Database</p>
         <h3>小世界统一使用服务器数据库</h3>
@@ -853,7 +848,6 @@ export function renderSmallWorldSettings(app) {
 
   app.querySelector('#swSettingsBackBtn').addEventListener('click', () => navigate('#smallworld'));
   app.querySelector('#swMapBtn').addEventListener('click', () => navigate('#smallworld'));
-  bindDailyQuote(app);
   app.querySelector('#swFlomoWebhook').addEventListener('input', (event) => {
     setSettings({ flomoWebhook: event.target.value.trim() });
   });
@@ -1075,8 +1069,6 @@ export async function renderSmallWorldFloor(app, type, floorId) {
         <h2>${escapeHtml(getRealmMeta(type).shortTitle)}</h2>
         <button class="icon-btn icon-btn-ghost" id="swMapBtn" aria-label="返回地图">⌂</button>
       </header>
-      ${renderDailyQuote()}
-
       ${renderFloorHero(type, floor, items, loaded, isPavilion)}
 
       <section class="section-heading">
@@ -1097,7 +1089,6 @@ export async function renderSmallWorldFloor(app, type, floorId) {
 
   app.querySelector('#swBack').addEventListener('click', () => navigate('#smallworld'));
   app.querySelector('#swMapBtn').addEventListener('click', () => navigate('#smallworld'));
-  bindDailyQuote(app);
   app.querySelector('#infoBtn').addEventListener('click', () => openFloorInfoSheet(type, floor, loaded, isPavilion));
   app.querySelector('#spinBtn').addEventListener('click', () => openSpin(items, isPavilion, async () => {
     await commitFloorChanges({ app, type, floorId, raw, rawFloor, floor, isPavilion, items });

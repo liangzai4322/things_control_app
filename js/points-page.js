@@ -1,5 +1,4 @@
 import { navigate, openSheet, showToast } from './app.js';
-import { bindDailyQuote, renderDailyQuote } from './daily-quote.js';
 import {
   ensurePointsData,
   getFilteredTransactions,
@@ -276,8 +275,6 @@ export async function renderPointsPage(app, viewState = {}) {
         </div>
       </header>
 
-      ${renderDailyQuote()}
-
       <section class="panel points-hero">
         <div class="points-hero-head">
           <div>
@@ -381,7 +378,6 @@ export async function renderPointsPage(app, viewState = {}) {
   `;
 
   app.querySelector('#pointsBackBtn').addEventListener('click', () => navigate('#home'));
-  bindDailyQuote(app);
   app.querySelector('#pointsPullBtn').addEventListener('click', async () => {
     await refreshPointsFromCloud(app, filters);
   });

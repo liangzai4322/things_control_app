@@ -1,4 +1,4 @@
-import { getBoxes, getSettings, pullDailyQuoteFromCloud, pullDataFromCloud } from './db.js';
+import { getBoxes, getSettings, pullDataFromCloud } from './db.js';
 import { renderHome } from './home.js';
 
 const app = document.getElementById('app');
@@ -193,7 +193,6 @@ async function tryCloudPullAndRefresh() {
   try {
     const [taskResult] = await Promise.allSettled([
       pullDataFromCloud(),
-      pullDailyQuoteFromCloud(),
     ]);
     if (taskResult.status === 'fulfilled' && taskResult.value === 'merged') {
       route();
@@ -214,12 +213,6 @@ function warmupCriticalModules() {
     import('./points-store.js')
       .then(async ({ prewarmPointsData }) => {
         await prewarmPointsData?.({ forceSource: true });
-        if ((location.hash || '#home') === '#home') renderHome(app);
-      })
-      .catch(() => {});
-
-    pullDailyQuoteFromCloud()
-      .then(() => {
         if ((location.hash || '#home') === '#home') renderHome(app);
       })
       .catch(() => {});
