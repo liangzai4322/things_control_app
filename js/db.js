@@ -36,6 +36,7 @@ const SOUND_CACHE = new Map();
 const BOX_COLOR_POOL = ['important', 'relax', 'reward', 'misc', 'punish', 'study', 'health'];
 const DEFAULT_API_ENDPOINT = 'https://liangzai666.com/taskbox-api/v1';
 const DEFAULT_FLOMO_WEBHOOK = '';
+export const DEFAULT_DAILY_QUOTE = '把任务放进盒子，把注意力还给当下。';
 
 export function uid() {
   return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -76,6 +77,9 @@ function normalize(data = {}) {
       apiEnabled: true,
       apiEndpoint: data.settings?.apiEndpoint || DEFAULT_API_ENDPOINT,
       apiToken: data.settings?.apiToken || '',
+      dailyQuote: data.settings?.dailyQuote || DEFAULT_DAILY_QUOTE,
+      dailyQuoteUpdatedAt: data.settings?.dailyQuoteUpdatedAt || data.meta?.updatedAt || new Date().toISOString(),
+      dailyQuoteHistory: Array.isArray(data.settings?.dailyQuoteHistory) ? data.settings.dailyQuoteHistory : [],
     },
     meta: {
       updatedAt: data.meta?.updatedAt || new Date().toISOString(),
@@ -124,6 +128,9 @@ function seed() {
       apiEnabled: true,
       apiEndpoint: DEFAULT_API_ENDPOINT,
       apiToken: '',
+      dailyQuote: DEFAULT_DAILY_QUOTE,
+      dailyQuoteUpdatedAt: now,
+      dailyQuoteHistory: [{ text: DEFAULT_DAILY_QUOTE, updatedAt: now }],
     },
     meta: { updatedAt: now, lastDailyReset: '', lastSummaryExportAt: null },
   });
@@ -133,21 +140,38 @@ function seed() {
 
 
 
-function dedupeByContentPerBox(data) {
-  const map = new Map();
-  data.tasks.forEach((t) => {
-    const key = `${t.boxId}::${(t.content || '').trim()}`;
-    const prev = map.get(key);
-    if (!prev) {
-      map.set(key, t);
-      return;
-    }
-    const chosen = prev.deleted && !t.deleted ? t : (!prev.deleted && t.deleted ? prev : (new Date(prev.updatedAt) >= new Date(t.updatedAt) ? prev : t));
-    chosen.isCompleted = Boolean(prev.isCompleted || t.isCompleted || chosen.isCompleted);
-    chosen.progress = Math.max(Number(prev.progress) || 0, Number(t.progress) || 0, Number(chosen.progress) || 0);
-    map.set(key, chosen);
+function taskTime(value) {
+  const date = new Date(value || 0);
+  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+}
+
+function chooseTaskCopy(current, candidate) {
+  if (!current) return { ...candidate };
+  const currentTime = Math.max(taskTime(current.updatedAt), taskTime(current.deletedAt), taskTime(current.createdAt));
+  const candidateTime = Math.max(taskTime(candidate.updatedAt), taskTime(candidate.deletedAt), taskTime(candidate.createdAt));
+  return candidateTime >= currentTime ? { ...current, ...candidate } : current;
+}
+
+function dedupeTasksByIdentity(tasks = []) {
+  const byId = new Map();
+  const noIdTasks = [];
+
+  tasks.forEach((task) => {
+    if (task.id) byId.set(task.id, chooseTaskCopy(byId.get(task.id), task));
+    else noIdTasks.push(task);
   });
-  data.tasks = Array.from(map.values());
+
+  const bySyncKey = new Map();
+  [...byId.values(), ...noIdTasks].forEach((task) => {
+    if (task.syncKey) bySyncKey.set(task.syncKey, chooseTaskCopy(bySyncKey.get(task.syncKey), task));
+    else bySyncKey.set(`no-sync::${task.boxId || ''}::${task.createdAt || ''}::${task.content || ''}::${Math.random()}`, task);
+  });
+
+  return Array.from(bySyncKey.values());
+}
+
+function dedupeLocalTasks(data) {
+  data.tasks = dedupeTasksByIdentity(data.tasks);
   return data;
 }
 
@@ -183,7 +207,7 @@ export function getData() {
   if (!raw) return seed();
   try {
     const normalized = normalize(JSON.parse(raw));
-    const refreshed = enforceUniqueBoxColors(dedupeByContentPerBox(applyDailyTaskRefresh(normalized)));
+    const refreshed = enforceUniqueBoxColors(dedupeLocalTasks(applyDailyTaskRefresh(normalized)));
     localStorage.setItem(STORAGE_KEY, JSON.stringify(refreshed));
     return refreshed;
   } catch {
@@ -207,6 +231,108 @@ export function updateData(updater, options = {}) {
 export const getBoxes = () => getData().boxes.sort((a, b) => a.sortOrder - b.sortOrder);
 export const getTasks = () => getData().tasks.filter((t) => !t.deleted);
 export const getSettings = () => getData().settings;
+
+function normalizeDailyQuoteHistory(history = []) {
+  const seen = new Set();
+  return history
+    .map((item) => ({
+      text: String(item?.text || '').trim(),
+      updatedAt: item?.updatedAt || new Date().toISOString(),
+    }))
+    .filter((item) => item.text)
+    .sort((a, b) => taskTime(b.updatedAt) - taskTime(a.updatedAt))
+    .filter((item) => {
+      const key = `${item.updatedAt}::${item.text}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 365);
+}
+
+function normalizeDailyQuoteRecord(record = {}) {
+  const text = String(record.current || record.text || record.dailyQuote || '').trim() || DEFAULT_DAILY_QUOTE;
+  const updatedAt = record.updatedAt || record.dailyQuoteUpdatedAt || new Date().toISOString();
+  const history = normalizeDailyQuoteHistory([
+    { text, updatedAt },
+    ...(Array.isArray(record.history) ? record.history : []),
+    ...(Array.isArray(record.dailyQuoteHistory) ? record.dailyQuoteHistory : []),
+  ]);
+  return { current: text, updatedAt, history };
+}
+
+export function getDailyQuote() {
+  const settings = getSettings();
+  return normalizeDailyQuoteRecord({
+    current: settings.dailyQuote,
+    updatedAt: settings.dailyQuoteUpdatedAt,
+    history: settings.dailyQuoteHistory,
+  });
+}
+
+function saveDailyQuoteLocal(record) {
+  const normalized = normalizeDailyQuoteRecord(record);
+  setSettings({
+    dailyQuote: normalized.current,
+    dailyQuoteUpdatedAt: normalized.updatedAt,
+    dailyQuoteHistory: normalized.history,
+  });
+  return normalized;
+}
+
+export function saveDailyQuote(text) {
+  const cleanText = String(text || '').trim() || DEFAULT_DAILY_QUOTE;
+  const updatedAt = new Date().toISOString();
+  const current = getDailyQuote();
+  const record = normalizeDailyQuoteRecord({
+    current: cleanText,
+    updatedAt,
+    history: [{ text: cleanText, updatedAt }, ...current.history],
+  });
+  saveDailyQuoteLocal(record);
+  scheduleApiRequest('/daily-quote', {
+    method: 'PATCH',
+    body: JSON.stringify(record),
+  });
+  return record;
+}
+
+export async function pullDailyQuoteFromCloud() {
+  try {
+    const record = await apiRequest('/daily-quote');
+    if (!record) return getDailyQuote();
+    return saveDailyQuoteLocal(record);
+  } catch {
+    return getDailyQuote();
+  }
+}
+
+export function exportDailyQuoteArchive() {
+  const quote = getDailyQuote();
+  const lines = [
+    '# 每日一句',
+    '',
+    `当前：${quote.current}`,
+    `更新时间：${quote.updatedAt}`,
+    '',
+    '## 历史记录',
+    '',
+    ...quote.history.map((item) => `- ${item.updatedAt} ${item.text}`),
+    '',
+  ];
+  const blob = new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = '每日一句.md';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+export function getDeletedTasksByBox(boxId) {
+  return getData().tasks
+    .filter((t) => t.boxId === boxId && t.deleted)
+    .sort((a, b) => taskTime(b.deletedAt || b.updatedAt) - taskTime(a.deletedAt || a.updatedAt));
+}
 
 export function getTasksByBox(boxId) {
   return getTasks()
@@ -294,7 +420,7 @@ export async function addBox({ name, description = '' }) {
 export function restoreTask(task) {
   let restored = null;
   updateData((data) => {
-    const existing = data.tasks.find((t) => t.id === task.id || t.syncKey === task.syncKey);
+    const existing = data.tasks.find((t) => t.id === task.id) || (!task.id && task.syncKey ? data.tasks.find((t) => t.syncKey === task.syncKey) : null);
     if (existing) {
       Object.assign(existing, { ...task, deleted: false, deletedAt: null, updatedAt: new Date().toISOString() });
       restored = { ...existing };
@@ -320,9 +446,6 @@ export function updateTask(taskId, patch) {
     const t = data.tasks.find((x) => x.id === taskId);
     if (t) {
       Object.assign(t, patch);
-      if (Object.prototype.hasOwnProperty.call(patch, 'content')) {
-        t.syncKey = `${t.createdAt}::${t.content}`;
-      }
       t.updatedAt = new Date().toISOString();
       updated = { ...t };
     }
@@ -584,28 +707,7 @@ export async function pushDataToCloud(options = {}) {
 
 
 function dedupeTasks(tasks) {
-  const map = new Map();
-
-  tasks.forEach((t) => {
-    const key = t.syncKey || [t.createdAt || '', t.content?.trim()].join('::');
-    const current = map.get(key);
-
-    if (!current) {
-      map.set(key, { ...t });
-      return;
-    }
-
-    current.deleted = Boolean(current.deleted || t.deleted);
-    current.deletedAt = current.deletedAt || t.deletedAt || null;
-    current.isCompleted = Boolean(current.isCompleted || t.isCompleted);
-    current.completedAt = current.completedAt || t.completedAt || null;
-    current.weight = Math.max(Number(current.weight) || 1, Number(t.weight) || 1);
-    current.progress = Math.max(Number(current.progress) || 0, Number(t.progress) || 0);
-    current.sortOrder = Math.min(Number(current.sortOrder) || 0, Number(t.sortOrder) || 0);
-    map.set(key, current);
-  });
-
-  return Array.from(map.values());
+  return dedupeTasksByIdentity(tasks);
 }
 
 function mergeData(local, cloud) {

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'taskbox-v20-detail-api-sync';
+const CACHE_NAME = 'taskbox-v21-daily-quote-trash';
 const CACHE_FILES = [
   './',
   './index.html',
@@ -8,6 +8,7 @@ const CACHE_FILES = [
   './js/points-store.js',
   './js/points-ai.js',
   './js/db.js',
+  './js/daily-quote.js',
   './js/home.js',
   './js/box-detail.js',
   './js/lucky-wheel.js',

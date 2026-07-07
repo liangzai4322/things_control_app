@@ -1,5 +1,6 @@
-import { getBoxes, getTasksByBox, updateTask, deleteTask, reorderTasks, updateBox, addTask, playSound, restoreTask } from './db.js';
+import { getBoxes, getDeletedTasksByBox, getTasksByBox, updateTask, deleteTask, reorderTasks, updateBox, addTask, playSound, restoreTask } from './db.js';
 import { navigate, openSheet, showToast } from './app.js';
+import { bindDailyQuote, renderDailyQuote } from './daily-quote.js';
 import { openLuckyWheel } from './lucky-wheel.js';
 import { getTaskPointValue, reconcileCompletedTaskPoints, syncTaskCompletionPoints } from './points-store.js';
 
@@ -126,6 +127,27 @@ function renderCompletedTaskGroups(tasks, box) {
         ${group.tasks.map((task) => taskItem(task, box)).join('')}
       </div>
     </section>
+  `).join('');
+}
+
+function renderDeletedTasks(tasks, box) {
+  return tasks.map((task) => `
+    <article class="task-item deleted-task" data-id="${task.id}" style="${getBoxPinStyle(box)}">
+      <div class="task-main" data-main="1">
+        <span class="deleted-mark">×</span>
+        <div class="task-content">
+          <div class="task-title-row">
+            <span class="task-title">${escapeHtml(task.content)}</span>
+            <span class="task-note-badge">已删除</span>
+          </div>
+          <div class="task-meta">
+            <span class="task-chip">${task.deletedAt ? escapeHtml(formatDueLabel(task.deletedAt).replace('截止', '删除')) : '已删除'}</span>
+            <span class="task-chip">${escapeHtml(getPriorityLabel(task.priority ?? 0))}</span>
+          </div>
+        </div>
+        <button class="btn subtle compact restore-task-btn" data-restore="${task.id}">还原</button>
+      </div>
+    </article>
   `).join('');
 }
 
@@ -262,6 +284,7 @@ export function renderBoxDetail(app, boxId) {
   if (!box) return navigate('#home');
 
   const tasks = getTasksByBox(boxId);
+  const deletedTasks = getDeletedTasksByBox(boxId);
   const quickSwitchBoxes = getQuickSwitchBoxes(box, boxes);
   const taskMap = new Map(tasks.map((task) => [task.id, task]));
   const openTasks = tasks.filter((task) => !task.isCompleted);
@@ -278,6 +301,8 @@ export function renderBoxDetail(app, boxId) {
           <button class="icon-btn icon-btn-ghost" id="settingsBtn" aria-label="设置">⚙</button>
         </div>
       </header>
+
+      ${renderDailyQuote()}
 
       <section class="detail-hero panel ${box.color}">
         <div class="detail-hero-head">
@@ -330,6 +355,11 @@ export function renderBoxDetail(app, boxId) {
           <button class="completed-toggle" id="toggleDone">已完成 ${doneTasks.length} 项 ▸</button>
           <div id="doneTasks" class="completed-timeline collapsed">${renderCompletedTaskGroups(doneTasks, box)}</div>
         ` : ''}
+
+        ${deletedTasks.length ? `
+          <button class="completed-toggle deleted-toggle" id="toggleDeleted">已删除 ${deletedTasks.length} 项 ▸</button>
+          <div id="deletedTasks" class="deleted-timeline collapsed">${renderDeletedTasks(deletedTasks, box)}</div>
+        ` : ''}
       </section>
 
       <footer class="safe-bottom footer-fixed">
@@ -344,6 +374,7 @@ export function renderBoxDetail(app, boxId) {
   });
   app.querySelector('#wheelBtn').addEventListener('click', () => openLuckyWheel(box));
   app.querySelector('#settingsBtn').addEventListener('click', () => navigate('#settings'));
+  bindDailyQuote(app);
   app.querySelector('#boxNameInput').addEventListener('blur', (event) => {
     const name = event.target.value.trim();
     if (name) updateBox(box.id, { name });
@@ -361,6 +392,25 @@ export function renderBoxDetail(app, boxId) {
       toggle.textContent = `已完成 ${doneTasks.length} 项 ${doneList.classList.contains('collapsed') ? '▸' : '▾'}`;
     });
   }
+
+  const deletedToggle = app.querySelector('#toggleDeleted');
+  if (deletedToggle) {
+    const deletedList = app.querySelector('#deletedTasks');
+    deletedToggle.addEventListener('click', () => {
+      deletedList.classList.toggle('collapsed');
+      deletedToggle.textContent = `已删除 ${deletedTasks.length} 项 ${deletedList.classList.contains('collapsed') ? '▸' : '▾'}`;
+    });
+  }
+
+  app.querySelectorAll('[data-restore]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const task = deletedTasks.find((item) => item.id === button.dataset.restore);
+      if (!task) return;
+      restoreTask(task);
+      showToast('任务已还原');
+      renderBoxDetail(app, box.id);
+    });
+  });
 
   bindTaskEvents(app, box, taskMap);
 }
@@ -399,15 +449,18 @@ function taskItem(task, box) {
 }
 
 function bindTaskEvents(app, box, taskMap) {
-  app.querySelectorAll('.task-item').forEach((item) => {
+  app.querySelectorAll('.task-item:not(.deleted-task)').forEach((item) => {
     const taskId = item.dataset.id;
+    const task = taskMap.get(taskId);
+    const checkButton = item.querySelector('.check');
+    const editButton = item.querySelector('[data-action="edit"]');
+    if (!task || !checkButton || !editButton) return;
 
-    item.querySelector('.check').addEventListener('click', (event) => {
+    checkButton.addEventListener('click', (event) => {
       event.stopPropagation();
       const checked = item.classList.contains('done');
-      const currentTask = taskMap.get(taskId);
       const nextTask = {
-        ...currentTask,
+        ...task,
         isCompleted: !checked,
         progress: checked ? 80 : 100,
         completedAt: checked ? null : new Date().toISOString(),
@@ -425,16 +478,15 @@ function bindTaskEvents(app, box, taskMap) {
       setTimeout(() => renderBoxDetail(app, box.id), 220);
     });
 
-    item.querySelector('[data-action="edit"]').addEventListener('click', () => {
+    editButton.addEventListener('click', () => {
       openTaskEditor({ taskId, boxId: box.id }, () => renderBoxDetail(app, box.id));
     });
 
     item.addEventListener('contextmenu', (event) => {
-      const task = taskMap.get(taskId);
       if (task) openTaskContextMenu(event, app, box, task);
     });
 
-    bindSwipeDelete(item, box.id, app, taskMap.get(taskId));
+    bindSwipeDelete(item, box.id, app, task);
   });
 
   enableLongPressReorder(app, box.id);

@@ -1,5 +1,6 @@
 import { getBoxes, getTasks, addTask, addBox, pullDataFromCloud } from './db.js';
 import { navigate, openSheet, showToast } from './app.js';
+import { bindDailyQuote, renderDailyQuote } from './daily-quote.js';
 import { getPointsSummary, getTaskPointValue } from './points-store.js';
 
 const BOX_FALLBACK_COPY = {
@@ -118,6 +119,7 @@ export function renderHome(app) {
             <p class="eyebrow">${escapeHtml(formatToday(now))}</p>
             <h1 class="hero-title">${escapeHtml(getGreeting(now))}</h1>
             <p class="hero-subtitle">把任务拆进盒子，按场景推进，每次只盯住下一件事。</p>
+            ${renderDailyQuote({ editable: true })}
           </div>
           <div class="row gap8 hero-tools">
             <button class="icon-btn icon-btn-ghost" id="homePullBtn" aria-label="拉取盒子数据">↻</button>
@@ -229,6 +231,7 @@ export function renderHome(app) {
   });
   app.querySelector('#settingsBtn').addEventListener('click', () => navigate('#settings'));
   app.querySelector('#aiTopBtn').addEventListener('click', openAIExtractSheetLazy);
+  bindDailyQuote(app, { editable: true, onSaved: () => renderHome(app) });
 
   const fabWrap = app.querySelector('#fabWrap');
   app.querySelector('#fabMain').addEventListener('click', () => fabWrap.classList.toggle('open'));

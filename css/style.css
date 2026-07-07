@@ -275,6 +275,86 @@ h4 {
   line-height: 1.55;
 }
 
+.daily-quote-strip {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.5);
+  border: 1px solid var(--stroke);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.hero-copy .daily-quote-strip {
+  margin-top: 14px;
+}
+
+:root[data-theme='dark'] .daily-quote-strip {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.daily-quote-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.daily-quote-copy span {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.daily-quote-copy strong {
+  display: block;
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.daily-quote-input {
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 750;
+  line-height: 1.45;
+}
+
+.daily-quote-input:focus {
+  outline: none;
+}
+
+.daily-quote-export {
+  flex-shrink: 0;
+  min-height: 34px;
+  min-width: 48px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.44);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 800;
+  box-shadow: none;
+}
+
+:root[data-theme='dark'] .daily-quote-export {
+  background: rgba(255, 255, 255, 0.07);
+}
+
 .hero-tools {
   flex-shrink: 0;
 }
@@ -1054,6 +1134,12 @@ h4 {
   gap: 14px;
 }
 
+.deleted-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .completed-group {
   display: flex;
   flex-direction: column;
@@ -1133,6 +1219,37 @@ h4 {
 
 .task-context-menu button.danger {
   color: #dc2626;
+}
+
+.deleted-toggle {
+  margin-top: 2px;
+  color: var(--text-tertiary);
+}
+
+.deleted-task {
+  opacity: 0.72;
+}
+
+.deleted-task .task-main {
+  grid-template-columns: 42px 1fr auto;
+}
+
+.deleted-mark {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: rgba(148, 163, 184, 0.16);
+  color: var(--text-tertiary);
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.restore-task-btn {
+  min-width: 58px;
+  min-height: 38px;
+  padding: 0 12px;
 }
 
 .collapsed {
@@ -2817,6 +2934,10 @@ select:focus {
     padding: 22px;
   }
 
+  .home-hero .daily-quote-strip {
+    max-width: 560px;
+  }
+
   .home-topline {
     grid-area: copy;
   }
@@ -2917,6 +3038,7 @@ select:focus {
     grid-template-columns: minmax(290px, 340px) minmax(0, 1fr);
     grid-template-areas:
       "topbar topbar"
+      "quote quote"
       "hero tasks-head"
       "hero tasks";
     align-items: start;
@@ -2928,6 +3050,10 @@ select:focus {
     grid-area: topbar;
     margin-bottom: 0;
     padding-bottom: 2px;
+  }
+
+  .detail-page > .daily-quote-strip {
+    grid-area: quote;
   }
 
   .detail-hero {
@@ -3051,7 +3177,8 @@ select:focus {
   }
 
   #openTasks,
-  .completed-group-list {
+  .completed-group-list,
+  .deleted-timeline {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 14px;
