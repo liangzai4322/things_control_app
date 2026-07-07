@@ -3,6 +3,8 @@ import { navigate, showToast } from './app.js';
 import { pullPointsFromCloud } from './points-store.js';
 
 const DEFAULT_API_ENDPOINT = 'https://liangzai666.com/taskbox-api/v1';
+let lastAutoPullSignature = '';
+let autoPullPromise = null;
 
 function escapeHtml(value = '') {
   return String(value)
@@ -27,6 +29,46 @@ function persistServerSettings(app) {
     pavilionDataUrl: '',
     towerDataUrl: '',
   });
+}
+
+function getServerFormConfig(app) {
+  const endpoint = app.querySelector('#apiEndpoint').value.trim() || DEFAULT_API_ENDPOINT;
+  const token = app.querySelector('#apiToken').value.trim();
+  return {
+    endpoint,
+    token,
+    signature: `${endpoint.replace(/\/$/, '')}::${token}`,
+  };
+}
+
+async function autoPullServerData(app, { force = false } = {}) {
+  persistServerSettings(app);
+
+  const config = getServerFormConfig(app);
+  if (!config.endpoint || !config.token) return;
+  if (!force && config.signature === lastAutoPullSignature) return;
+  if (autoPullPromise) return autoPullPromise;
+
+  showToast('正在拉取服务器数据...');
+
+  autoPullPromise = Promise.allSettled([
+    pullDataFromCloud({ force: true }),
+    pullPointsFromCloud(),
+  ]).then(([boxResult, pointsResult]) => {
+    const boxOk = boxResult.status === 'fulfilled' && boxResult.value === 'merged';
+    const pointsOk = pointsResult.status === 'fulfilled' && pointsResult.value?.status === 'remote';
+
+    if (boxOk && pointsOk) showToast('已拉取盒子和积分数据');
+    else if (boxOk) showToast('已拉取盒子数据，积分拉取失败');
+    else if (pointsOk) showToast('已拉取积分数据，盒子拉取失败');
+    else showToast('服务器拉取失败，请检查 API Token');
+
+    lastAutoPullSignature = boxOk || pointsOk ? config.signature : '';
+  }).finally(() => {
+    autoPullPromise = null;
+  });
+
+  return autoPullPromise;
 }
 
 export function renderSettings(app) {
@@ -108,7 +150,7 @@ export function renderSettings(app) {
           <label>服务器 API Token（只保存在本机）
             <input id="apiToken" class="input" type="password" value="${escapeHtml(settings.apiToken || '')}" placeholder="填写服务器 TASKBOX_API_TOKEN">
           </label>
-          <p class="panel-note">${hasToken ? 'Token 已保存在本机，进入页面会默认从服务器拉取最新数据。' : '缺少 Token 时只能使用本地缓存，无法读写服务器数据库。'}</p>
+          <p class="panel-note">${hasToken ? 'Token 已保存在本机，填写或更新 Token 后会自动拉取盒子和积分数据。' : '缺少 Token 时只能使用本地缓存，无法读写服务器数据库。'}</p>
         </div>
 
         <div class="action-grid">
@@ -160,8 +202,14 @@ export function renderSettings(app) {
     setSettings({ soundEnabled: event.target.checked });
   });
 
-  app.querySelector('#apiEndpoint').addEventListener('input', () => persistServerSettings(app));
-  app.querySelector('#apiToken').addEventListener('input', () => persistServerSettings(app));
+  const apiEndpointInput = app.querySelector('#apiEndpoint');
+  const apiTokenInput = app.querySelector('#apiToken');
+  apiEndpointInput.addEventListener('input', () => persistServerSettings(app));
+  apiTokenInput.addEventListener('input', () => persistServerSettings(app));
+  apiEndpointInput.addEventListener('change', () => autoPullServerData(app));
+  apiEndpointInput.addEventListener('blur', () => autoPullServerData(app));
+  apiTokenInput.addEventListener('change', () => autoPullServerData(app));
+  apiTokenInput.addEventListener('blur', () => autoPullServerData(app));
 
   app.querySelector('#pullCloudBtn').addEventListener('click', async () => {
     persistServerSettings(app);

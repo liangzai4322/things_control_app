@@ -1,4 +1,4 @@
-const CACHE_NAME = 'taskbox-v19-desktop-density';
+const CACHE_NAME = 'taskbox-v20-detail-api-sync';
 const CACHE_FILES = [
   './',
   './index.html',
