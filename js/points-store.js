@@ -1,8 +1,8 @@
 export const POINTS_CACHE_KEY = 'taskbox_points_cache';
+const POINTS_PENDING_WRITES_KEY = 'taskbox_points_pending_api_writes';
 const DEFAULT_API_ENDPOINT = 'https://liangzai666.com/taskbox-api/v1';
 
 const TASKBOX_STORAGE_KEY = 'taskbox_data';
-const LOCAL_POINTS_FALLBACK_URL = 'mock-points.json';
 const DEFAULT_POINTS_TEMPLATE = {
   version: 1,
   account: {
@@ -37,12 +37,13 @@ const DEFAULT_POINTS_TEMPLATE = {
   meta: {
     createdAt: '',
     updatedAt: '',
-    sourceLabel: 'local-mock',
+    sourceLabel: 'server-cache',
     openingBalanceRecorded: false,
     dirty: false,
   },
 };
 let pointsSyncTimer = null;
+let pointsFlushPromise = null;
 
 function showPointsSyncToast(message) {
   window.TaskBoxApp?.showToast?.(message);
@@ -112,8 +113,64 @@ async function apiRequest(path, options = {}) {
 
 function scheduleApiRequest(path, options = {}) {
   if (!getApiConfig().enabled) return false;
-  apiRequest(path, options).catch(() => {});
+  const pending = readPendingApiWrites();
+  pending.push({
+    id: uid(),
+    path,
+    options: {
+      method: options.method || 'GET',
+      headers: options.headers || {},
+      body: options.body || null,
+    },
+    createdAt: nowIso(),
+  });
+  writePendingApiWrites(pending);
+  flushPendingApiWrites().catch(() => {});
   return true;
+}
+
+function readPendingApiWrites() {
+  const raw = localStorage.getItem(POINTS_PENDING_WRITES_KEY);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((item) => item?.path && item?.options) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writePendingApiWrites(items) {
+  localStorage.setItem(POINTS_PENDING_WRITES_KEY, JSON.stringify(items));
+}
+
+function markCacheSyncedIfIdle() {
+  if (readPendingApiWrites().length) return;
+  const cached = readCache();
+  if (cached?.meta?.dirty) writeCache(cached, { dirty: false });
+}
+
+async function flushPendingApiWrites() {
+  if (!getApiConfig().enabled) return false;
+  if (pointsFlushPromise) return pointsFlushPromise;
+
+  pointsFlushPromise = (async () => {
+    while (readPendingApiWrites().length) {
+      const [next] = readPendingApiWrites();
+      await apiRequest(next.path, next.options);
+      const latest = readPendingApiWrites();
+      const index = latest.findIndex((item) => item.id === next.id);
+      if (index >= 0) latest.splice(index, 1);
+      else latest.shift();
+      writePendingApiWrites(latest);
+    }
+    markCacheSyncedIfIdle();
+    return true;
+  })().finally(() => {
+    pointsFlushPromise = null;
+  });
+
+  return pointsFlushPromise;
 }
 
 function readTaskboxBoxes() {
@@ -144,7 +201,7 @@ function normalizeTransaction(transaction = {}) {
     note: String(transaction.note || '').trim(),
     delta,
     createdAt: transaction.createdAt || nowIso(),
-    status: transaction.status || 'posted',
+    status: transaction.status || 'active',
     reversedAt: transaction.reversedAt || null,
   };
 }
@@ -200,7 +257,7 @@ function normalizePointsData(data = {}) {
     meta: {
       createdAt,
       updatedAt,
-      sourceLabel: String(data.meta?.sourceLabel || 'local-mock').trim(),
+      sourceLabel: String(data.meta?.sourceLabel || 'server-cache').trim(),
       sourceUrl: String(data.meta?.sourceUrl || '').trim(),
       openingBalanceRecorded: Boolean(data.meta?.openingBalanceRecorded),
       dirty: Boolean(data.meta?.dirty),
@@ -231,7 +288,7 @@ function createFallbackPointsData() {
   const fallback = structuredClone(DEFAULT_POINTS_TEMPLATE);
   fallback.meta.createdAt = nowIso();
   fallback.meta.updatedAt = fallback.meta.createdAt;
-  fallback.meta.sourceUrl = LOCAL_POINTS_FALLBACK_URL;
+  fallback.meta.sourceUrl = '';
   return normalizePointsData(fallback);
 }
 
@@ -283,12 +340,15 @@ export async function pullPointsFromCloud() {
   const sourceChanged = cached && String(cached.meta?.sourceUrl || '').trim() !== url;
 
   if (!getApiConfig().enabled && cached?.meta?.dirty && !sourceChanged) {
+    return { status: 'dirty-cache', data: cached };
+  }
+
+  if (getApiConfig().enabled && readPendingApiWrites().length) {
     try {
-      const synced = await pushPointsToCloud({ force: true });
-      if (!synced) return { status: 'dirty-cache', data: cached };
+      await flushPendingApiWrites();
       cached = readCache() || cached;
     } catch {
-      return { status: 'dirty-cache', data: cached };
+      if (cached?.meta?.dirty && !sourceChanged) return { status: 'dirty-cache', data: cached };
     }
   }
 
@@ -333,6 +393,22 @@ function createTransaction(payload) {
     ...payload,
     id: payload.id || uid(),
     createdAt: payload.createdAt || nowIso(),
+  });
+}
+
+function queueTransactionCreate(transaction) {
+  if (!transaction?.id) return false;
+  return scheduleApiRequest('/points/transactions', {
+    method: 'POST',
+    body: JSON.stringify(transaction),
+  });
+}
+
+function queueTransactionUpdate(transaction) {
+  if (!transaction?.id) return false;
+  return scheduleApiRequest(`/points/transactions/${encodeURIComponent(transaction.id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(transaction),
   });
 }
 
@@ -482,10 +558,7 @@ export function recordPointsTransaction({
     if (sourceType === 'historical_balance') data.meta.openingBalanceRecorded = true;
     return data;
   });
-  scheduleApiRequest('/points/transactions', {
-    method: 'POST',
-    body: JSON.stringify(created),
-  });
+  queueTransactionCreate(created);
   return created;
 }
 
@@ -579,6 +652,8 @@ export function syncTaskCompletionPoints({ task, box, completed }) {
   if (!completed && !nextPoints) return { changed: false, delta: 0 };
 
   let result = { changed: false, delta: 0 };
+  const transactionsToCreate = [];
+  const transactionsToUpdate = [];
   updatePointsData((data) => {
     const activeCompletion = [...data.transactions]
       .reverse()
@@ -598,6 +673,7 @@ export function syncTaskCompletionPoints({ task, box, completed }) {
         sourceKey: String(task.id),
       });
       data.transactions.push(created);
+      transactionsToCreate.push(created);
       result = { changed: true, delta: created.delta };
       return data;
     }
@@ -606,6 +682,7 @@ export function syncTaskCompletionPoints({ task, box, completed }) {
 
     activeCompletion.status = 'reversed';
     activeCompletion.reversedAt = nowIso();
+    transactionsToUpdate.push({ ...activeCompletion });
     const reversal = createTransaction({
       delta: -Math.abs(toNumber(activeCompletion.delta, 0)),
       title: `撤销任务积分：${task.content}`,
@@ -615,10 +692,13 @@ export function syncTaskCompletionPoints({ task, box, completed }) {
       sourceKey: String(task.id),
     });
     data.transactions.push(reversal);
+    transactionsToCreate.push(reversal);
     result = { changed: true, delta: reversal.delta };
     return data;
   });
 
+  transactionsToUpdate.forEach(queueTransactionUpdate);
+  transactionsToCreate.forEach(queueTransactionCreate);
   return result;
 }
 

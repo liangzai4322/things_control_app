@@ -1,4 +1,4 @@
-const CACHE_NAME = 'taskbox-v23-box-sentence-refresh';
+const CACHE_NAME = 'taskbox-v24-server-points-pin-levels';
 const CACHE_FILES = [
   './',
   './index.html',
@@ -16,8 +16,6 @@ const CACHE_FILES = [
   './js/settings.js',
   './js/small-world.js',
   './manifest.json',
-  './mock-points.json',
-  './data/mock-points.json',
   './sw-v11.js'
 ];
 

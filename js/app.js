@@ -85,14 +85,18 @@ function resetViewPosition() {
   });
 }
 
-function route() {
+function maybeResetViewPosition(options = {}) {
+  if (!options.preserveScroll) requestAnimationFrame(resetViewPosition);
+}
+
+function route(options = {}) {
   applyTheme();
   const parts = (location.hash || '#home').replace('#', '').split('/').filter(Boolean);
   const [path, param, subParam] = parts;
 
   if (path === 'home') {
     renderHome(app);
-    requestAnimationFrame(resetViewPosition);
+    maybeResetViewPosition(options);
     return;
   }
 
@@ -101,7 +105,7 @@ function route() {
     ROUTE_MODULE_CACHE.box = load;
     load.then(({ renderBoxDetail }) => {
       renderBoxDetail(app, param);
-      requestAnimationFrame(resetViewPosition);
+      maybeResetViewPosition(options);
     });
     return;
   }
@@ -111,7 +115,7 @@ function route() {
     ROUTE_MODULE_CACHE.settings = load;
     load.then(({ renderSettings }) => {
       renderSettings(app);
-      requestAnimationFrame(resetViewPosition);
+      maybeResetViewPosition(options);
     });
     return;
   }
@@ -120,7 +124,7 @@ function route() {
     const load = ROUTE_MODULE_CACHE.points || import('./points-page.js');
     ROUTE_MODULE_CACHE.points = load;
     load.then(({ renderPointsPage }) => {
-      renderPointsPage(app, { refreshRemote: true }).then(() => requestAnimationFrame(resetViewPosition));
+      renderPointsPage(app, { refreshRemote: true }).then(() => maybeResetViewPosition(options));
     });
     return;
   }
@@ -131,12 +135,12 @@ function route() {
     load.then(({ renderSmallWorldMap, renderSmallWorldFloor, renderSmallWorldSettings }) => {
       if (path === 'smallworld') {
         renderSmallWorldMap(app);
-        requestAnimationFrame(resetViewPosition);
+        maybeResetViewPosition(options);
         return;
       }
       if (path === 'sw-settings') {
         renderSmallWorldSettings(app);
-        requestAnimationFrame(resetViewPosition);
+        maybeResetViewPosition(options);
         return;
       }
       renderSmallWorldFloor(app, param, subParam)
@@ -144,7 +148,7 @@ function route() {
           showToast('Floor data failed to load');
           location.hash = '#smallworld';
         })
-        .then(() => requestAnimationFrame(resetViewPosition));
+        .then(() => maybeResetViewPosition(options));
     });
     return;
   }
@@ -228,6 +232,11 @@ function warmupCriticalModules() {
 }
 
 window.addEventListener('hashchange', route);
+window.addEventListener('storage', (event) => {
+  if (event.key === 'taskbox_data' || event.key === 'taskbox_points_cache') {
+    route({ preserveScroll: true });
+  }
+});
 window.addEventListener('DOMContentLoaded', async () => {
   getBoxes();
   setupAudioUnlock();

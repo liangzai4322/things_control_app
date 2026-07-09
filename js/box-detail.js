@@ -1,4 +1,4 @@
-import { getBoxes, getDeletedTasksByBox, getTasksByBox, updateTask, deleteTask, reorderTasks, updateBox, addTask, playSound, restoreTask } from './db.js';
+import { getBoxes, getDeletedTasksByBox, getTasksByBox, updateTask, deleteTask, reorderTasks, updateBox, addTask, playSound, restoreTask, pullDataFromCloud } from './db.js';
 import { navigate, openSheet, showToast } from './app.js';
 import { openLuckyWheel } from './lucky-wheel.js';
 import { getTaskPointValue, reconcileCompletedTaskPoints, syncTaskCompletionPoints } from './points-store.js';
@@ -12,6 +12,11 @@ const QUICK_SWITCH_LABELS = {
   misc: '待办',
   relax: '放松',
 };
+const PIN_LEVELS = [
+  { value: 1, label: '第一', hint: '最高优先' },
+  { value: 2, label: '第二', hint: '紧跟其后' },
+  { value: 3, label: '第三', hint: '保留提醒' },
+];
 const BOX_PIN_THEMES = {
   important: { start: '#f9734e', end: '#ff9a5a', soft: 'rgba(249, 115, 78, 0.15)', border: 'rgba(249, 115, 78, 0.46)', shadow: 'rgba(249, 115, 78, 0.16)', text: '#c2410c' },
   misc: { start: '#2f6df6', end: '#22c3dd', soft: 'rgba(47, 109, 246, 0.14)', border: 'rgba(47, 109, 246, 0.42)', shadow: 'rgba(47, 109, 246, 0.14)', text: '#1d4ed8' },
@@ -187,6 +192,17 @@ function getBoxPinStyle(box) {
   ].join(';');
 }
 
+function getTaskPinLevel(task) {
+  const level = Number(task?.pinLevel ?? (task?.pinned ? 1 : 0));
+  return level >= 1 && level <= 3 ? level : 0;
+}
+
+function getTaskPinLabel(task) {
+  const level = getTaskPinLevel(task);
+  const option = PIN_LEVELS.find((item) => item.value === level);
+  return option ? `置顶${option.label}` : '';
+}
+
 function showUndo(task, onUndo, onExpire) {
   clearTimeout(undoTimer);
   document.querySelector('.undo-banner')?.remove();
@@ -225,12 +241,16 @@ function deleteTaskWithUndo(app, boxId, taskSnapshot) {
   });
 }
 
-function toggleTaskPinned(app, box, task) {
+function setTaskPinLevel(app, box, task, level) {
   if (!task?.id) return;
   closeTaskContextMenu();
-  const pinned = !task.pinned;
-  updateTask(task.id, { pinned });
-  showToast(pinned ? '已置顶任务' : '已取消置顶');
+  const pinLevel = Number(level);
+  const normalizedLevel = pinLevel >= 1 && pinLevel <= 3 ? pinLevel : null;
+  updateTask(task.id, {
+    pinLevel: normalizedLevel,
+    pinned: Boolean(normalizedLevel),
+  });
+  showToast(normalizedLevel ? `已设为置顶第 ${normalizedLevel} 档` : '已取消置顶');
   renderBoxDetail(app, box.id);
 }
 
@@ -241,8 +261,19 @@ function openTaskContextMenu(event, app, box, task) {
 
   const menu = document.createElement('div');
   menu.className = 'task-context-menu';
+  menu.style.cssText = getBoxPinStyle(box);
+  const currentPinLevel = getTaskPinLevel(task);
   menu.innerHTML = `
-    <button type="button" data-action="pin">${task.pinned ? '取消置顶' : '置顶任务'}</button>
+    <div class="task-context-title">置顶位置</div>
+    <div class="pin-level-grid">
+      ${PIN_LEVELS.map((option) => `
+        <button type="button" data-action="pin-level" data-pin-level="${option.value}" class="${currentPinLevel === option.value ? 'active' : ''}">
+          <strong>${option.label}</strong>
+          <small>${option.hint}</small>
+        </button>
+      `).join('')}
+    </div>
+    ${currentPinLevel ? '<button type="button" data-action="unpin">取消置顶</button>' : ''}
     <button type="button" data-action="delete" class="danger">删除任务</button>
   `;
   document.body.appendChild(menu);
@@ -254,8 +285,10 @@ function openTaskContextMenu(event, app, box, task) {
   menu.style.top = `${Math.max(12, y)}px`;
 
   menu.addEventListener('click', (clickEvent) => {
-    const action = clickEvent.target?.dataset?.action;
-    if (action === 'pin') toggleTaskPinned(app, box, task);
+    const button = clickEvent.target?.closest?.('button[data-action]');
+    const action = button?.dataset?.action;
+    if (action === 'pin-level') setTaskPinLevel(app, box, task, button.dataset.pinLevel);
+    if (action === 'unpin') setTaskPinLevel(app, box, task, null);
     if (action === 'delete') deleteTaskWithUndo(app, box.id, task);
   });
 
@@ -289,7 +322,7 @@ export function renderBoxDetail(app, boxId) {
   const taskMap = new Map(tasks.map((task) => [task.id, task]));
   const openTasks = tasks.filter((task) => !task.isCompleted);
   const doneTasks = tasks.filter((task) => task.isCompleted);
-  const progress = tasks.length ? Math.round((doneTasks.length / tasks.length) * 100) : 0;
+  const overdueTasks = openTasks.filter((task) => isTaskOverdue(task));
 
   app.innerHTML = `
     <main id="box-detail" class="page detail-page">
@@ -297,6 +330,7 @@ export function renderBoxDetail(app, boxId) {
         <button class="icon-btn icon-btn-ghost" id="backBtn">←</button>
         <div class="row gap8 detail-actions">
           ${renderQuickSwitches(quickSwitchBoxes)}
+          <button class="icon-btn icon-btn-ghost" id="detailPullBtn" aria-label="拉取最新盒子数据">↻</button>
           <button class="icon-btn icon-btn-ghost" id="wheelBtn" aria-label="随机抽取">🎡</button>
           <button class="icon-btn icon-btn-ghost" id="settingsBtn" aria-label="设置">⚙</button>
         </div>
@@ -326,12 +360,10 @@ export function renderBoxDetail(app, boxId) {
             <strong>${doneTasks.length}</strong>
           </article>
           <article class="summary-chip">
-            <span>完成率</span>
-            <strong>${progress}%</strong>
+            <span>已逾期</span>
+            <strong>${overdueTasks.length}</strong>
           </article>
         </div>
-
-        <section class="box-progress ${box.color} detail-progress"><span style="width:${progress}%"></span></section>
       </section>
 
       <section class="task-section-header">
@@ -374,11 +406,23 @@ export function renderBoxDetail(app, boxId) {
   app.querySelectorAll('[data-quick-box]').forEach((button) => {
     button.addEventListener('click', () => navigate(`#box/${button.dataset.quickBox}`));
   });
+  app.querySelector('#detailPullBtn').addEventListener('click', async () => {
+    try {
+      const result = await pullDataFromCloud({ force: true });
+      showToast(result === 'merged' ? '已拉取最新盒子数据' : '本地已是最新');
+      renderBoxDetail(app, box.id);
+    } catch {
+      showToast('盒子数据拉取失败，请检查 API Token 或网络');
+    }
+  });
   app.querySelector('#wheelBtn').addEventListener('click', () => openLuckyWheel(box));
   app.querySelector('#settingsBtn').addEventListener('click', () => navigate('#settings'));
   app.querySelector('#boxNameInput').addEventListener('blur', (event) => {
     const name = event.target.value.trim();
     if (name) updateBox(box.id, { name });
+  });
+  app.querySelector('#boxNameInput').addEventListener('keydown', (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') event.target.blur();
   });
   app.querySelector('#boxSentenceInput').addEventListener('blur', (event) => {
     const description = event.target.value.trim();
@@ -431,9 +475,10 @@ function taskItem(task, box) {
   const hasNote = Boolean((task.note || '').trim());
   const notePreview = hasNote ? escapeHtml(String(task.note).trim().slice(0, 40)) : '';
   const pointsValue = getTaskPointValue(task, box);
+  const pinLevel = getTaskPinLevel(task);
 
   return `
-    <article class="task-item ${task.isCompleted ? 'done' : ''} ${task.pinned ? 'pinned' : ''} ${overdue ? 'overdue' : ''}" data-id="${task.id}" style="${getBoxPinStyle(box)}">
+    <article class="task-item ${task.isCompleted ? 'done' : ''} ${pinLevel ? 'pinned' : ''} ${overdue ? 'overdue' : ''}" data-id="${task.id}" style="${getBoxPinStyle(box)}">
       <div class="task-main" data-main="1">
         <button class="check ${task.isCompleted ? 'checked' : ''}" style="--check-color:${color}">${task.isCompleted ? '✓' : ''}</button>
         <button class="task-content" data-action="edit">
@@ -442,7 +487,7 @@ function taskItem(task, box) {
             ${hasNote ? '<span class="task-note-badge">备注</span>' : ''}
           </div>
           <div class="task-meta">
-            ${task.pinned ? '<span class="task-chip pin-chip">置顶</span>' : ''}
+            ${pinLevel ? `<span class="task-chip pin-chip">${escapeHtml(getTaskPinLabel(task))}</span>` : ''}
             <span class="task-chip">${escapeHtml(getPriorityLabel(task.priority ?? 0))}</span>
             ${task.dueDate ? `<span class="task-chip ${overdue ? 'overdue-chip' : ''}">${escapeHtml(formatDueDateLabel(task.dueDate))}</span>` : ''}
             <span class="task-chip">${taskProgress}%</span>
@@ -668,7 +713,7 @@ function openTaskEditor({ taskId, boxId }, onDone) {
   });
 
   root.querySelector('#cancelBtn').addEventListener('click', close);
-  root.querySelector('#saveBtn').addEventListener('click', () => {
+  const saveTask = () => {
     const content = root.querySelector('#taskContent').value.trim();
     if (!content) {
       showToast('先填写任务内容');
@@ -717,5 +762,12 @@ function openTaskEditor({ taskId, boxId }, onDone) {
 
     close();
     onDone();
+  };
+  root.querySelector('#saveBtn').addEventListener('click', saveTask);
+  root.addEventListener('keydown', (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+      event.preventDefault();
+      saveTask();
+    }
   });
 }

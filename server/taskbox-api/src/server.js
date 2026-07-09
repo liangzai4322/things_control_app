@@ -328,11 +328,16 @@ app.get('/v1/points', (req, res) => {
 
 app.post('/v1/points/transactions', (req, res) => {
   const tx = { ...req.body, id: req.body.id || uid(), createdAt: req.body.createdAt || now(), status: req.body.status || 'active' };
-  db.prepare(`
-    INSERT INTO points_transactions (id, bucket, source_type, source_key, title, note, delta, created_at, status, reversed_at, raw_json, updated_at)
-    VALUES (@id, @bucket, @source_type, @source_key, @title, @note, @delta, @created_at, @status, @reversed_at, @raw_json, @updated_at)
-  `).run(transactionParams(tx));
+  upsertTransaction(tx);
   res.status(201).json(tx);
+});
+
+app.patch('/v1/points/transactions/:id', (req, res) => {
+  const current = db.prepare('SELECT * FROM points_transactions WHERE id=?').get(req.params.id);
+  if (!current) return res.status(404).json({ error: 'transaction_not_found' });
+  const next = mergeRaw(current.raw_json, { ...req.body, id: req.params.id });
+  upsertTransaction(next);
+  res.json(next);
 });
 
 app.post('/v1/points/rewards', (req, res) => {
@@ -364,6 +369,17 @@ function transactionParams(tx) {
     raw_json: json(tx),
     updated_at: now(),
   };
+}
+
+function upsertTransaction(tx) {
+  db.prepare(`
+    INSERT INTO points_transactions (id, bucket, source_type, source_key, title, note, delta, created_at, status, reversed_at, raw_json, updated_at)
+    VALUES (@id, @bucket, @source_type, @source_key, @title, @note, @delta, @created_at, @status, @reversed_at, @raw_json, @updated_at)
+    ON CONFLICT(id) DO UPDATE SET bucket=excluded.bucket, source_type=excluded.source_type,
+      source_key=excluded.source_key, title=excluded.title, note=excluded.note, delta=excluded.delta,
+      created_at=excluded.created_at, status=excluded.status, reversed_at=excluded.reversed_at,
+      raw_json=excluded.raw_json, updated_at=excluded.updated_at
+  `).run(transactionParams(tx));
 }
 
 function upsertReward(reward) {

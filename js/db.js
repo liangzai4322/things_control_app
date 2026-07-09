@@ -47,20 +47,25 @@ function normalize(data = {}) {
     boxes: (Array.isArray(data.boxes) ? data.boxes : []).map((b) => {
       const renamed = b.name === '杂事盒' ? '待办盒' : (b.name === '重要事项' ? '重要盒' : b.name);
       const orderMap = { '重要盒': 0, '待办盒': 1, '放松盒': 2, '奖励盒': 3, '惩罚盒': 4, '碎片学习盒': 5, '健康盒': 6 };
-      return { ...b, name: renamed, sortOrder: orderMap[renamed] ?? b.sortOrder ?? 99, color: b.color || BOX_COLOR_POOL[orderMap[renamed] ?? 0] };
+      return { ...b, name: renamed, sortOrder: orderMap[renamed] ?? b.sortOrder ?? 99, color: b.color || BOX_COLOR_POOL[orderMap[renamed] ?? 0], updatedAt: b.updatedAt || b.createdAt || data.meta?.updatedAt || new Date().toISOString() };
     }),
-    tasks: (Array.isArray(data.tasks) ? data.tasks : []).map((t) => ({
-      ...t,
-      weight: t.weight ?? 1,
-      pointsValue: t.pointsValue !== undefined && t.pointsValue !== null && Number.isFinite(Number(t.pointsValue)) ? Number(t.pointsValue) : null,
-      progress: t.progress ?? (t.isCompleted ? 100 : 0),
-      pinned: Boolean(t.pinned),
-      deleted: t.deleted ?? false,
-      deletedAt: t.deletedAt ?? null,
-      note: t.note ?? [t.reflection, t.review, t.summaryText].filter(Boolean).join('\n').trim(),
-      syncKey: t.syncKey || `${t.createdAt || ''}::${t.content || ''}`,
-      updatedAt: t.updatedAt || t.createdAt || new Date().toISOString()
-    })),
+    tasks: (Array.isArray(data.tasks) ? data.tasks : []).map((t) => {
+      const rawPinLevel = Number(t.pinLevel ?? (t.pinned ? 1 : 0));
+      const pinLevel = rawPinLevel >= 1 && rawPinLevel <= 3 ? rawPinLevel : null;
+      return {
+        ...t,
+        weight: t.weight ?? 1,
+        pointsValue: t.pointsValue !== undefined && t.pointsValue !== null && Number.isFinite(Number(t.pointsValue)) ? Number(t.pointsValue) : null,
+        progress: t.progress ?? (t.isCompleted ? 100 : 0),
+        pinLevel,
+        pinned: Boolean(pinLevel),
+        deleted: t.deleted ?? false,
+        deletedAt: t.deletedAt ?? null,
+        note: t.note ?? [t.reflection, t.review, t.summaryText].filter(Boolean).join('\n').trim(),
+        syncKey: t.syncKey || `${t.createdAt || ''}::${t.content || ''}`,
+        updatedAt: t.updatedAt || t.createdAt || new Date().toISOString()
+      };
+    }),
     settings: {
       deepseekApiKey: data.settings?.deepseekApiKey || '',
       themeMode: data.settings?.themeMode || 'system',
@@ -335,9 +340,14 @@ export function getDeletedTasksByBox(boxId) {
 }
 
 export function getTasksByBox(boxId) {
+  const pinRank = (task) => {
+    const level = Number(task.pinLevel ?? (task.pinned ? 1 : 0));
+    return level >= 1 && level <= 3 ? level : 99;
+  };
+
   return getTasks()
     .filter((t) => t.boxId === boxId)
-    .sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned))
+    .sort((a, b) => pinRank(a) - pinRank(b)
       || (Number(b.weight)||1) - (Number(a.weight)||1)
       || (Number(b.priority)||0) - (Number(a.priority)||0)
       || (Number(b.progress)||0) - (Number(a.progress)||0)
@@ -357,7 +367,8 @@ export function addTask(task) {
       weight: task.weight ?? 1,
       pointsValue: task.pointsValue ?? null,
       progress: task.progress ?? 0,
-      pinned: Boolean(task.pinned),
+      pinLevel: task.pinLevel ?? null,
+      pinned: Boolean(task.pinLevel ?? task.pinned),
       dueDate: task.dueDate ?? null,
       isCompleted: task.isCompleted ?? false,
       deleted: false,
@@ -404,6 +415,7 @@ export async function addBox({ name, description = '' }) {
       sortOrder: data.boxes.length,
       isDefault: false,
       createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     };
     data.boxes.push(created);
     return data;
@@ -439,7 +451,7 @@ export function restoreTask(task) {
 }
 
 export function updateTask(taskId, patch) {
-  const cloudCriticalKeys = new Set(['content', 'boxId', 'priority', 'weight', 'pointsValue', 'progress', 'pinned', 'dueDate', 'isCompleted', 'deleted', 'deletedAt', 'sortOrder', 'completedAt', 'note']);
+  const cloudCriticalKeys = new Set(['content', 'boxId', 'priority', 'weight', 'pointsValue', 'progress', 'pinLevel', 'pinned', 'dueDate', 'isCompleted', 'deleted', 'deletedAt', 'sortOrder', 'completedAt', 'note']);
   const shouldCloudPush = Object.keys(patch || {}).some((k) => cloudCriticalKeys.has(k));
   let updated = null;
   updateData((data) => {
@@ -495,6 +507,7 @@ export function updateBox(boxId, patch) {
     const box = data.boxes.find((b) => b.id === boxId);
     if (box) {
       Object.assign(box, patch);
+      box.updatedAt = new Date().toISOString();
       updated = { ...box };
     }
     return data;
@@ -710,6 +723,13 @@ function dedupeTasks(tasks) {
   return dedupeTasksByIdentity(tasks);
 }
 
+function chooseBoxCopy(current, candidate) {
+  if (!current) return { ...candidate };
+  const currentTime = Math.max(taskTime(current.updatedAt), taskTime(current.createdAt));
+  const candidateTime = Math.max(taskTime(candidate.updatedAt), taskTime(candidate.createdAt));
+  return candidateTime >= currentTime ? { ...current, ...candidate } : current;
+}
+
 function mergeData(local, cloud) {
   const merged = normalize({
     ...local,
@@ -718,14 +738,18 @@ function mergeData(local, cloud) {
     meta: { updatedAt: new Date().toISOString() },
   });
 
-  const chosenByName = new Map();
+  const boxesByName = new Map();
   const idRemap = new Map();
   merged.boxes.forEach((b) => {
-    if (!chosenByName.has(b.name)) chosenByName.set(b.name, b);
-    idRemap.set(b.id, chosenByName.get(b.name).id);
+    if (!boxesByName.has(b.name)) boxesByName.set(b.name, []);
+    boxesByName.get(b.name).push(b);
   });
 
-  merged.boxes = Array.from(chosenByName.values()).map((b, i) => ({ ...b, sortOrder: i }));
+  merged.boxes = Array.from(boxesByName.values()).map((group) => {
+    const chosen = group.reduce((current, candidate) => chooseBoxCopy(current, candidate), null);
+    group.forEach((box) => idRemap.set(box.id, chosen.id));
+    return chosen;
+  }).map((b, i) => ({ ...b, sortOrder: i }));
   const validBoxIds = new Set(merged.boxes.map((b) => b.id));
 
   merged.tasks = dedupeTasks(

@@ -278,7 +278,7 @@ function openAddTaskSheet(boxes) {
   });
 
   root.querySelector('#cancelTaskBtn').addEventListener('click', close);
-  root.querySelector('#saveTaskBtn').addEventListener('click', () => {
+  const saveTask = () => {
     const content = root.querySelector('#newTaskContent').value.trim();
     const boxId = root.querySelector('#newTaskBox').value;
     const pointsValue = Math.max(0, Number(root.querySelector('#newTaskPoints').value) || 0);
@@ -289,6 +289,13 @@ function openAddTaskSheet(boxes) {
     addTask({ content, boxId, pointsValue });
     close();
     renderHome(document.getElementById('app'));
+  };
+  root.querySelector('#saveTaskBtn').addEventListener('click', saveTask);
+  root.addEventListener('keydown', (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+      event.preventDefault();
+      saveTask();
+    }
   });
 }
 
@@ -309,7 +316,7 @@ function openAddBoxSheet() {
   `, { height: '58vh' });
 
   root.querySelector('#cancelBoxBtn').addEventListener('click', close);
-  root.querySelector('#saveBoxBtn').addEventListener('click', async () => {
+  const saveBox = async () => {
     const name = root.querySelector('#newBoxName').value.trim();
     const description = root.querySelector('#newBoxDesc').value.trim();
     if (!name) {
@@ -323,6 +330,13 @@ function openAddBoxSheet() {
       renderHome(document.getElementById('app'));
     } catch (err) {
       showToast(err?.message === 'box exists' ? '盒子名称已存在' : '创建失败，请重试');
+    }
+  };
+  root.querySelector('#saveBoxBtn').addEventListener('click', saveBox);
+  root.addEventListener('keydown', (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+      event.preventDefault();
+      saveBox();
     }
   });
 }
