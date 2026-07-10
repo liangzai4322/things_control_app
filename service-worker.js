@@ -1,4 +1,4 @@
-const CACHE_NAME = 'taskbox-v24-server-points-pin-levels';
+const CACHE_NAME = 'taskbox-v25-points-palette-task-move';
 const CACHE_FILES = [
   './',
   './index.html',

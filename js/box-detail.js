@@ -254,6 +254,25 @@ function setTaskPinLevel(app, box, task, level) {
   renderBoxDetail(app, box.id);
 }
 
+function getTaskMoveTarget(box, boxes) {
+  if (box?.color === 'important') return boxes.find((item) => item.color === 'misc') || null;
+  if (box?.color === 'misc') return boxes.find((item) => item.color === 'important') || null;
+  return null;
+}
+
+function moveTaskToBox(app, currentBox, task, targetBox) {
+  if (!task?.id || !targetBox?.id || targetBox.id === currentBox.id) return;
+  closeTaskContextMenu();
+  const targetTasks = getTasksByBox(targetBox.id);
+  const nextSortOrder = targetTasks.reduce((max, item) => Math.max(max, Number(item.sortOrder) || 0), -1) + 1;
+  updateTask(task.id, {
+    boxId: targetBox.id,
+    sortOrder: nextSortOrder,
+  });
+  showToast(`已移动到${getQuickSwitchLabel(targetBox)}盒`);
+  renderBoxDetail(app, currentBox.id);
+}
+
 function openTaskContextMenu(event, app, box, task) {
   event.preventDefault();
   event.stopPropagation();
@@ -263,6 +282,7 @@ function openTaskContextMenu(event, app, box, task) {
   menu.className = 'task-context-menu';
   menu.style.cssText = getBoxPinStyle(box);
   const currentPinLevel = getTaskPinLevel(task);
+  const moveTarget = getTaskMoveTarget(box, getBoxes());
   menu.innerHTML = `
     <div class="task-context-title">置顶位置</div>
     <div class="pin-level-grid">
@@ -274,6 +294,13 @@ function openTaskContextMenu(event, app, box, task) {
       `).join('')}
     </div>
     ${currentPinLevel ? '<button type="button" data-action="unpin">取消置顶</button>' : ''}
+    ${moveTarget ? `
+      <div class="task-context-divider" aria-hidden="true"></div>
+      <button type="button" data-action="move" class="move-task" style="${getBoxPinStyle(moveTarget)}">
+        <span class="task-context-action-icon" aria-hidden="true">⇄</span>
+        <span>移动到${escapeHtml(getQuickSwitchLabel(moveTarget))}盒</span>
+      </button>
+    ` : ''}
     <button type="button" data-action="delete" class="danger">删除任务</button>
   `;
   document.body.appendChild(menu);
@@ -289,6 +316,7 @@ function openTaskContextMenu(event, app, box, task) {
     const action = button?.dataset?.action;
     if (action === 'pin-level') setTaskPinLevel(app, box, task, button.dataset.pinLevel);
     if (action === 'unpin') setTaskPinLevel(app, box, task, null);
+    if (action === 'move') moveTaskToBox(app, box, task, moveTarget);
     if (action === 'delete') deleteTaskWithUndo(app, box.id, task);
   });
 

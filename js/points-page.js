@@ -79,11 +79,29 @@ function groupRewardsByCategory(rewards = []) {
     .sort((a, b) => a.category.localeCompare(b.category, 'zh-CN'));
 }
 
-function renderRuleCard(item) {
+const RULE_CARD_TONES = ['mint', 'blue', 'amber', 'coral', 'gold', 'cyan'];
+
+function getRuleCardTone(item, index) {
+  const toneById = {
+    quick: 'mint',
+    normal: 'blue',
+    important: 'amber',
+    deep: 'coral',
+    'growth-session': 'gold',
+    'growth-review': 'cyan',
+  };
+  return toneById[item.id] || RULE_CARD_TONES[index % RULE_CARD_TONES.length];
+}
+
+function renderRuleCard(item, index) {
+  const tone = getRuleCardTone(item, index);
   return `
-    <article class="points-rule-card">
-      <strong>${escapeHtml(item.label)}</strong>
-      <span>${Math.round(Number(item.points) || 0)} 分</span>
+    <article class="points-rule-card tone-${tone}">
+      <div class="points-rule-card-head">
+        <i class="points-rule-signal" aria-hidden="true"></i>
+        <strong>${escapeHtml(item.label)}</strong>
+      </div>
+      <span class="points-rule-score">+${Math.round(Number(item.points) || 0)} 分</span>
       ${item.description ? `<p>${escapeHtml(item.description)}</p>` : ''}
     </article>
   `;
@@ -323,8 +341,7 @@ export async function renderPointsPage(app, viewState = {}) {
       </section>
 
       <section class="points-rule-grid">
-        ${pointPresets.map(renderRuleCard).join('')}
-        ${milestoneBonuses.map(renderRuleCard).join('')}
+        ${[...pointPresets, ...milestoneBonuses].map(renderRuleCard).join('')}
       </section>
 
       <section class="section-heading">

@@ -1377,6 +1377,38 @@ h4 {
   color: #dc2626;
 }
 
+.task-context-divider {
+  height: 1px;
+  margin: 7px 4px;
+  background: color-mix(in srgb, var(--pin-border) 58%, transparent);
+}
+
+.task-context-menu button.move-task {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--pin-text);
+  background: linear-gradient(135deg, var(--pin-soft), rgba(255, 255, 255, 0.5));
+  border: 1px solid var(--pin-border);
+  font-weight: 750;
+}
+
+:root[data-theme='dark'] .task-context-menu button.move-task {
+  background: linear-gradient(135deg, var(--pin-soft), rgba(255, 255, 255, 0.04));
+}
+
+.task-context-action-icon {
+  display: inline-grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border-radius: 9px;
+  color: #fff;
+  background: linear-gradient(135deg, var(--pin-start), var(--pin-end));
+  box-shadow: 0 6px 14px var(--pin-shadow);
+  font-size: 15px;
+}
+
 .deleted-toggle {
   margin-top: 2px;
   color: var(--text-tertiary);
@@ -2664,7 +2696,82 @@ select:focus {
 }
 
 .points-rule-card {
-  padding: 16px;
+  --rule-accent: #2dd4bf;
+  --rule-accent-strong: #0f766e;
+  --rule-soft: rgba(45, 212, 191, 0.14);
+  --rule-glow: rgba(45, 212, 191, 0.18);
+  min-height: 142px;
+  padding: 17px 17px 16px 20px;
+  background:
+    radial-gradient(circle at 96% 4%, var(--rule-glow), transparent 44%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.88), var(--rule-soft));
+  border-color: color-mix(in srgb, var(--rule-accent) 30%, rgba(255, 255, 255, 0.5));
+  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+}
+
+.points-rule-card.tone-blue {
+  --rule-accent: #60a5fa;
+  --rule-accent-strong: #1d4ed8;
+  --rule-soft: rgba(96, 165, 250, 0.14);
+  --rule-glow: rgba(59, 130, 246, 0.19);
+}
+
+.points-rule-card.tone-amber {
+  --rule-accent: #f59e0b;
+  --rule-accent-strong: #b45309;
+  --rule-soft: rgba(251, 191, 36, 0.16);
+  --rule-glow: rgba(245, 158, 11, 0.2);
+}
+
+.points-rule-card.tone-coral {
+  --rule-accent: #fb7185;
+  --rule-accent-strong: #be123c;
+  --rule-soft: rgba(251, 113, 133, 0.14);
+  --rule-glow: rgba(244, 63, 94, 0.19);
+}
+
+.points-rule-card.tone-gold {
+  --rule-accent: #f6c453;
+  --rule-accent-strong: #a16207;
+  --rule-soft: rgba(250, 204, 21, 0.15);
+  --rule-glow: rgba(234, 179, 8, 0.2);
+}
+
+.points-rule-card.tone-cyan {
+  --rule-accent: #22c3dd;
+  --rule-accent-strong: #0e7490;
+  --rule-soft: rgba(34, 195, 221, 0.14);
+  --rule-glow: rgba(6, 182, 212, 0.19);
+}
+
+:root[data-theme='dark'] .points-rule-card {
+  background:
+    radial-gradient(circle at 96% 4%, var(--rule-glow), transparent 44%),
+    linear-gradient(145deg, rgba(30, 41, 59, 0.88), rgba(15, 23, 42, 0.76));
+  border-color: color-mix(in srgb, var(--rule-accent) 36%, rgba(255, 255, 255, 0.1));
+}
+
+@media (hover: hover) {
+  .points-rule-card:hover {
+    transform: translateY(-3px);
+    border-color: color-mix(in srgb, var(--rule-accent) 52%, rgba(255, 255, 255, 0.42));
+    box-shadow: 0 16px 34px var(--rule-glow);
+  }
+}
+
+.points-rule-card-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.points-rule-signal {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--rule-accent);
+  box-shadow: 0 0 0 5px var(--rule-soft), 0 0 18px var(--rule-accent);
 }
 
 .points-rule-card strong,
@@ -2673,21 +2780,22 @@ select:focus {
   font-size: 16px;
 }
 
-.points-rule-card span {
+.points-rule-card .points-rule-score {
   display: inline-flex;
   align-items: center;
   min-height: 30px;
   margin-top: 10px;
   padding: 0 12px;
   border-radius: 999px;
-  background: rgba(15, 23, 42, 0.06);
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 700;
+  background: var(--rule-soft);
+  color: var(--rule-accent-strong);
+  border: 1px solid color-mix(in srgb, var(--rule-accent) 30%, transparent);
+  font-size: 13px;
+  font-weight: 800;
 }
 
-:root[data-theme='dark'] .points-rule-card span {
-  background: rgba(255, 255, 255, 0.08);
+:root[data-theme='dark'] .points-rule-card .points-rule-score {
+  color: color-mix(in srgb, var(--rule-accent) 78%, white);
 }
 
 .points-rule-card p {
@@ -3750,8 +3858,8 @@ select:focus {
   position: absolute;
   inset: 0 auto 0 0;
   width: 5px;
-  background: linear-gradient(180deg, #f59e0b, #fb7185);
-  opacity: 0.75;
+  background: linear-gradient(180deg, var(--rule-accent), var(--rule-accent-strong));
+  opacity: 0.9;
 }
 
 .sw-realm-portal,
