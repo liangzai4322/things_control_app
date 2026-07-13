@@ -13,6 +13,9 @@ const readJson = (name) => JSON.parse(fs.readFileSync(path.join(sourceDir, name)
 const db = new Database(dbPath);
 db.pragma('foreign_keys = ON');
 db.exec(fs.readFileSync(path.join(root, 'schema.sql'), 'utf8'));
+if (!db.prepare("PRAGMA table_info('tasks')").all().some((column) => column.name === 'scheduled_at')) {
+  db.exec('ALTER TABLE tasks ADD COLUMN scheduled_at TEXT');
+}
 
 const upsertMeta = db.prepare(`
   INSERT INTO app_meta (key, value_json, updated_at)
@@ -32,16 +35,16 @@ const upsertBox = db.prepare(`
 const upsertTask = db.prepare(`
   INSERT INTO tasks (
     id, box_id, content, is_completed, sort_order, priority, weight, points_value, progress,
-    due_date, deleted, deleted_at, note, sync_key, completed_at, created_at, updated_at, raw_json
+    scheduled_at, due_date, deleted, deleted_at, note, sync_key, completed_at, created_at, updated_at, raw_json
   )
   VALUES (
     @id, @box_id, @content, @is_completed, @sort_order, @priority, @weight, @points_value, @progress,
-    @due_date, @deleted, @deleted_at, @note, @sync_key, @completed_at, @created_at, @updated_at, @raw_json
+    @scheduled_at, @due_date, @deleted, @deleted_at, @note, @sync_key, @completed_at, @created_at, @updated_at, @raw_json
   )
   ON CONFLICT(id) DO UPDATE SET
     box_id=excluded.box_id, content=excluded.content, is_completed=excluded.is_completed,
     sort_order=excluded.sort_order, priority=excluded.priority, weight=excluded.weight,
-    points_value=excluded.points_value, progress=excluded.progress, due_date=excluded.due_date,
+    points_value=excluded.points_value, progress=excluded.progress, scheduled_at=excluded.scheduled_at, due_date=excluded.due_date,
     deleted=excluded.deleted, deleted_at=excluded.deleted_at, note=excluded.note,
     sync_key=excluded.sync_key, completed_at=excluded.completed_at, created_at=excluded.created_at,
     updated_at=excluded.updated_at, raw_json=excluded.raw_json
@@ -153,6 +156,7 @@ function importTaskbox() {
       weight: Number(task.weight ?? 1),
       points_value: task.pointsValue === null || task.pointsValue === undefined ? null : Number(task.pointsValue),
       progress: Number(task.progress ?? 0),
+      scheduled_at: task.scheduledAt || null,
       due_date: task.dueDate || null,
       deleted: bool(task.deleted),
       deleted_at: task.deletedAt || null,

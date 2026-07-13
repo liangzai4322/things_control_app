@@ -2,7 +2,7 @@ import { getBoxes, getDeletedTasksByBox, getTasksByBox, updateTask, deleteTask, 
 import { navigate, openSheet, showToast } from './app.js';
 import { openLuckyWheel } from './lucky-wheel.js';
 import { getTaskPointValue, reconcileCompletedTaskPoints, syncTaskCompletionPoints } from './points-store.js';
-import { formatDueLabel as formatDueDateLabel, fromDateTimeLocalValue, getBoxDailySentence, isTaskOverdue, toDateTimeLocalValue } from './task-utils.js';
+import { formatDueLabel as formatDueDateLabel, formatScheduledLabel, fromDateTimeLocalValue, getBoxDailySentence, getSchedulePresetValue, isTaskNeedsReschedule, isTaskOverdue, toDateTimeLocalValue } from './task-utils.js';
 
 const LONG_PRESS_MS = 500;
 const DELETE_SWIPE_THRESHOLD = 120;
@@ -16,6 +16,13 @@ const PIN_LEVELS = [
   { value: 1, label: '第一', hint: '最高优先' },
   { value: 2, label: '第二', hint: '紧跟其后' },
   { value: 3, label: '第三', hint: '保留提醒' },
+];
+const SCHEDULE_PRESETS = [
+  { value: 'today', label: '今天' },
+  { value: 'tonight', label: '今晚' },
+  { value: 'tomorrow', label: '明天' },
+  { value: 'weekend', label: '周末' },
+  { value: 'clear', label: '不安排' },
 ];
 const BOX_PIN_THEMES = {
   important: { start: '#f9734e', end: '#ff9a5a', soft: 'rgba(249, 115, 78, 0.15)', border: 'rgba(249, 115, 78, 0.46)', shadow: 'rgba(249, 115, 78, 0.16)', text: '#c2410c' },
@@ -498,6 +505,7 @@ export function renderBoxDetail(app, boxId) {
 
 function taskItem(task, box) {
   const overdue = isTaskOverdue(task);
+  const needsReschedule = isTaskNeedsReschedule(task);
   const color = getPriorityColor(task.priority ?? 0);
   const taskProgress = Math.max(0, Math.min(100, Number(task.progress) || 0));
   const hasNote = Boolean((task.note || '').trim());
@@ -506,7 +514,7 @@ function taskItem(task, box) {
   const pinLevel = getTaskPinLevel(task);
 
   return `
-    <article class="task-item ${task.isCompleted ? 'done' : ''} ${pinLevel ? 'pinned' : ''} ${overdue ? 'overdue' : ''}" data-id="${task.id}" style="${getBoxPinStyle(box)}">
+    <article class="task-item ${task.isCompleted ? 'done' : ''} ${pinLevel ? 'pinned' : ''} ${overdue ? 'overdue' : ''} ${needsReschedule ? 'needs-reschedule' : ''}" data-id="${task.id}" style="${getBoxPinStyle(box)}">
       <div class="task-main" data-main="1">
         <button class="check ${task.isCompleted ? 'checked' : ''}" style="--check-color:${color}">${task.isCompleted ? '✓' : ''}</button>
         <button class="task-content" data-action="edit">
@@ -517,6 +525,7 @@ function taskItem(task, box) {
           <div class="task-meta">
             ${pinLevel ? `<span class="task-chip pin-chip">${escapeHtml(getTaskPinLabel(task))}</span>` : ''}
             <span class="task-chip">${escapeHtml(getPriorityLabel(task.priority ?? 0))}</span>
+            ${task.scheduledAt ? `<span class="task-chip planned-chip ${needsReschedule ? 'reschedule-chip' : ''}">${escapeHtml(needsReschedule ? `待重新安排 · ${formatScheduledLabel(task.scheduledAt)}` : `计划 ${formatScheduledLabel(task.scheduledAt)}`)}</span>` : ''}
             ${task.dueDate ? `<span class="task-chip ${overdue ? 'overdue-chip' : ''}">${escapeHtml(formatDueDateLabel(task.dueDate))}</span>` : ''}
             <span class="task-chip">${taskProgress}%</span>
             ${pointsValue > 0 ? `<span class="task-chip points-chip">+${pointsValue} 分</span>` : ''}
@@ -694,7 +703,13 @@ function openTaskEditor({ taskId, boxId }, onDone) {
         </div>
       </label>
 
-      <label>截止日期<input id="taskDate" class="input" type="datetime-local" value="${escapeHtml(toDateTimeLocalValue(task?.dueDate))}"></label>
+      <label>计划时间
+        <div class="schedule-presets" aria-label="快捷安排时间">
+          ${SCHEDULE_PRESETS.map((preset) => `<button class="schedule-preset" data-schedule-preset="${preset.value}">${preset.label}</button>`).join('')}
+        </div>
+        <input id="taskScheduledAt" class="input" type="datetime-local" value="${escapeHtml(toDateTimeLocalValue(task?.scheduledAt))}">
+      </label>
+      <label>截止时间<input id="taskDate" class="input" type="datetime-local" value="${escapeHtml(toDateTimeLocalValue(task?.dueDate))}"></label>
       <label>抽奖权重（选填，默认 1）<input id="taskWeight" class="input" type="number" min="1" step="1" placeholder="1" value="${task?.weight ?? ''}"></label>
       <label>完成奖励积分<input id="taskPointsValue" class="input" type="number" min="0" step="1" value="${initialPoints}"></label>
       <label>所属盒子
@@ -715,6 +730,17 @@ function openTaskEditor({ taskId, boxId }, onDone) {
   let progress = task?.progress ?? 0;
   const boxSelect = root.querySelector('#taskBox');
   const pointsInput = root.querySelector('#taskPointsValue');
+  const scheduledInput = root.querySelector('#taskScheduledAt');
+
+  root.querySelectorAll('[data-schedule-preset]').forEach((button) => {
+    button.addEventListener('click', () => {
+      scheduledInput.value = toDateTimeLocalValue(getSchedulePresetValue(button.dataset.schedulePreset));
+      root.querySelectorAll('[data-schedule-preset]').forEach((item) => item.classList.toggle('active', item === button));
+    });
+  });
+  scheduledInput.addEventListener('input', () => {
+    root.querySelectorAll('[data-schedule-preset]').forEach((item) => item.classList.remove('active'));
+  });
 
   root.querySelectorAll('.prio-dot').forEach((button) => {
     button.addEventListener('click', () => {
@@ -750,6 +776,7 @@ function openTaskEditor({ taskId, boxId }, onDone) {
 
     const nextBoxId = root.querySelector('#taskBox').value;
     const selectedBox = boxes.find((box) => box.id === nextBoxId) || null;
+    const scheduledAt = root.querySelector('#taskScheduledAt').value || null;
     const due = root.querySelector('#taskDate').value || null;
     const weight = Math.max(1, Number(root.querySelector('#taskWeight').value) || 1);
     const pointsValue = Math.max(0, Number(root.querySelector('#taskPointsValue').value) || 0);
@@ -760,6 +787,7 @@ function openTaskEditor({ taskId, boxId }, onDone) {
       progress,
       weight,
       pointsValue,
+      scheduledAt: fromDateTimeLocalValue(scheduledAt),
       dueDate: fromDateTimeLocalValue(due),
       boxId: nextBoxId,
       note: root.querySelector('#taskNote').value.trim(),

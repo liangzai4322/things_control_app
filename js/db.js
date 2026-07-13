@@ -61,6 +61,7 @@ function normalize(data = {}) {
         pinned: Boolean(pinLevel),
         deleted: t.deleted ?? false,
         deletedAt: t.deletedAt ?? null,
+        scheduledAt: t.scheduledAt ?? null,
         note: t.note ?? [t.reflection, t.review, t.summaryText].filter(Boolean).join('\n').trim(),
         syncKey: t.syncKey || `${t.createdAt || ''}::${t.content || ''}`,
         updatedAt: t.updatedAt || t.createdAt || new Date().toISOString()
@@ -369,6 +370,7 @@ export function addTask(task) {
       progress: task.progress ?? 0,
       pinLevel: task.pinLevel ?? null,
       pinned: Boolean(task.pinLevel ?? task.pinned),
+      scheduledAt: task.scheduledAt ?? null,
       dueDate: task.dueDate ?? null,
       isCompleted: task.isCompleted ?? false,
       deleted: false,
@@ -451,7 +453,7 @@ export function restoreTask(task) {
 }
 
 export function updateTask(taskId, patch) {
-  const cloudCriticalKeys = new Set(['content', 'boxId', 'priority', 'weight', 'pointsValue', 'progress', 'pinLevel', 'pinned', 'dueDate', 'isCompleted', 'deleted', 'deletedAt', 'sortOrder', 'completedAt', 'note']);
+  const cloudCriticalKeys = new Set(['content', 'boxId', 'priority', 'weight', 'pointsValue', 'progress', 'pinLevel', 'pinned', 'scheduledAt', 'dueDate', 'isCompleted', 'deleted', 'deletedAt', 'sortOrder', 'completedAt', 'note']);
   const shouldCloudPush = Object.keys(patch || {}).some((k) => cloudCriticalKeys.has(k));
   let updated = null;
   updateData((data) => {

@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const fs = require('fs');
 const path = require('path');
 const express = require('express');
 const Database = require('better-sqlite3');
@@ -15,6 +16,10 @@ const allowedOrigins = String(process.env.TASKBOX_ALLOWED_ORIGINS || 'https://li
 const app = express();
 const db = new Database(dbPath);
 db.pragma('foreign_keys = ON');
+db.exec(fs.readFileSync(path.join(root, 'schema.sql'), 'utf8'));
+if (!db.prepare("PRAGMA table_info('tasks')").all().some((column) => column.name === 'scheduled_at')) {
+  db.exec('ALTER TABLE tasks ADD COLUMN scheduled_at TEXT');
+}
 
 const now = () => new Date().toISOString();
 const parseJson = (value, fallback) => {
@@ -119,6 +124,7 @@ function rowToTask(row) {
     weight: row.weight,
     pointsValue: row.points_value,
     progress: row.progress,
+    scheduledAt: row.scheduled_at,
     dueDate: row.due_date,
     deleted: Boolean(row.deleted),
     deletedAt: row.deleted_at,
@@ -254,9 +260,9 @@ app.post('/v1/tasks', (req, res) => {
   const task = { ...req.body, id: req.body.id || uid(), createdAt: req.body.createdAt || now(), updatedAt: now() };
   db.prepare(`
     INSERT INTO tasks (id, box_id, content, is_completed, sort_order, priority, weight, points_value, progress,
-      due_date, deleted, deleted_at, note, sync_key, completed_at, created_at, updated_at, raw_json)
+      scheduled_at, due_date, deleted, deleted_at, note, sync_key, completed_at, created_at, updated_at, raw_json)
     VALUES (@id, @box_id, @content, @is_completed, @sort_order, @priority, @weight, @points_value, @progress,
-      @due_date, @deleted, @deleted_at, @note, @sync_key, @completed_at, @created_at, @updated_at, @raw_json)
+      @scheduled_at, @due_date, @deleted, @deleted_at, @note, @sync_key, @completed_at, @created_at, @updated_at, @raw_json)
   `).run(taskParams(task));
   res.status(201).json(task);
 });
@@ -267,7 +273,7 @@ app.patch('/v1/tasks/:id', (req, res) => {
   const next = mergeRaw(current.raw_json, { ...req.body, id: req.params.id, updatedAt: now() });
   db.prepare(`
     UPDATE tasks SET box_id=@box_id, content=@content, is_completed=@is_completed, sort_order=@sort_order,
-      priority=@priority, weight=@weight, points_value=@points_value, progress=@progress, due_date=@due_date,
+      priority=@priority, weight=@weight, points_value=@points_value, progress=@progress, scheduled_at=@scheduled_at, due_date=@due_date,
       deleted=@deleted, deleted_at=@deleted_at, note=@note, sync_key=@sync_key, completed_at=@completed_at,
       created_at=@created_at, updated_at=@updated_at, raw_json=@raw_json WHERE id=@id
   `).run(taskParams(next));
@@ -294,6 +300,7 @@ function taskParams(task) {
     weight: Number(task.weight ?? 1),
     points_value: task.pointsValue === null || task.pointsValue === undefined ? null : Number(task.pointsValue),
     progress: Number(task.progress ?? 0),
+    scheduled_at: task.scheduledAt || null,
     due_date: task.dueDate || null,
     deleted: bool(task.deleted),
     deleted_at: task.deletedAt || null,

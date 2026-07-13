@@ -1,4 +1,4 @@
-const CACHE_NAME = 'taskbox-v25-points-palette-task-move';
+const CACHE_NAME = 'taskbox-v26-weekly-rhythm';
 const CACHE_FILES = [
   './',
   './index.html',
