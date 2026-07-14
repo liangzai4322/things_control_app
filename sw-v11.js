@@ -1,4 +1,4 @@
-const CACHE_NAME = 'taskbox-v27-fast-box-controls';
+const CACHE_NAME = 'taskbox-v28-time-presets';
 const CACHE_FILES = [
   './',
   './index.html',

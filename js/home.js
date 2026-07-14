@@ -6,6 +6,7 @@ import {
   formatScheduledLabel,
   fromDateTimeLocalValue,
   getBoxDailySentence,
+  getDeadlinePresetValue,
   getLocalWeek,
   getSchedulePresetValue,
   isSameLocalDay,
@@ -43,6 +44,13 @@ const SCHEDULE_PRESETS = [
   { value: 'tomorrow', label: '明天' },
   { value: 'weekend', label: '周末' },
   { value: 'clear', label: '不安排' },
+];
+const DEADLINE_PRESETS = [
+  { value: 'today', label: '今天', time: '22:00' },
+  { value: 'tonight', label: '今晚', time: '24:00' },
+  { value: 'tomorrow', label: '明天', time: '22:00' },
+  { value: 'weekend', label: '周日', time: '22:00' },
+  { value: 'clear', label: '不设置', time: '' },
 ];
 
 let selectedHomeDateKey = localDateKey(new Date());
@@ -306,6 +314,10 @@ function renderSchedulePresets() {
   return SCHEDULE_PRESETS.map((preset) => `<button class="schedule-preset" data-schedule-preset="${preset.value}">${preset.label}</button>`).join('');
 }
 
+function renderDeadlinePresets() {
+  return DEADLINE_PRESETS.map((preset) => `<button class="schedule-preset deadline-preset" data-deadline-preset="${preset.value}"><strong>${preset.label}</strong>${preset.time ? `<small>${preset.time}</small>` : ''}</button>`).join('');
+}
+
 function bindSchedulePresets(root, input) {
   root.querySelectorAll('[data-schedule-preset]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -315,6 +327,18 @@ function bindSchedulePresets(root, input) {
   });
   input.addEventListener('input', () => {
     root.querySelectorAll('[data-schedule-preset]').forEach((item) => item.classList.remove('active'));
+  });
+}
+
+function bindDeadlinePresets(root, input) {
+  root.querySelectorAll('[data-deadline-preset]').forEach((button) => {
+    button.addEventListener('click', () => {
+      input.value = toDateTimeLocalValue(getDeadlinePresetValue(button.dataset.deadlinePreset));
+      root.querySelectorAll('[data-deadline-preset]').forEach((item) => item.classList.toggle('active', item === button));
+    });
+  });
+  input.addEventListener('input', () => {
+    root.querySelectorAll('[data-deadline-preset]').forEach((item) => item.classList.remove('active'));
   });
 }
 
@@ -578,18 +602,24 @@ function openAddTaskSheet(boxes, options = {}) {
         <div class="schedule-presets" aria-label="快捷安排时间">${renderSchedulePresets()}</div>
         <input id="newTaskScheduledAt" class="input" type="datetime-local" value="${escapeHtml(toDateTimeLocalValue(options.scheduledAt))}">
       </label>
+      <label>截止时间
+        <div class="schedule-presets deadline-presets" aria-label="快捷设置截止时间">${renderDeadlinePresets()}</div>
+        <input id="newTaskDueAt" class="input" type="datetime-local">
+      </label>
       <label>完成可得积分<input id="newTaskPoints" class="input" type="number" min="0" step="1" value="${defaultPoints}"></label>
       <div class="sheet-actions">
         <button class="btn" id="cancelTaskBtn">取消</button>
         <button class="btn primary" id="saveTaskBtn">保存任务</button>
       </div>
     </div>
-  `, { height: '66vh' });
+  `, { height: '80vh' });
 
   const boxSelect = root.querySelector('#newTaskBox');
   const pointsInput = root.querySelector('#newTaskPoints');
   const scheduledInput = root.querySelector('#newTaskScheduledAt');
+  const dueInput = root.querySelector('#newTaskDueAt');
   bindSchedulePresets(root, scheduledInput);
+  bindDeadlinePresets(root, dueInput);
   pointsInput.addEventListener('input', () => {
     pointsInput.dataset.touched = '1';
   });
@@ -613,6 +643,7 @@ function openAddTaskSheet(boxes, options = {}) {
       boxId,
       pointsValue,
       scheduledAt: fromDateTimeLocalValue(scheduledInput.value),
+      dueDate: fromDateTimeLocalValue(dueInput.value),
     });
     close();
     renderHome(document.getElementById('app'));

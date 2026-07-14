@@ -54,11 +54,18 @@ function nextUsefulTime(date, preferredHour) {
   return target;
 }
 
+function wholeHourPlus(date, hours) {
+  const target = new Date(date);
+  target.setMinutes(0, 0, 0);
+  target.setHours(target.getHours() + hours);
+  return target;
+}
+
 export function getSchedulePresetValue(preset, now = new Date()) {
   const current = toDate(now) || new Date();
   if (preset === 'clear') return null;
 
-  if (preset === 'today') return nextUsefulTime(current, 18).toISOString();
+  if (preset === 'today') return wholeHourPlus(current, 2).toISOString();
   if (preset === 'tonight') return nextUsefulTime(current, 20).toISOString();
 
   const target = startOfLocalDay(current);
@@ -72,6 +79,37 @@ export function getSchedulePresetValue(preset, now = new Date()) {
     const daysUntilSaturday = (6 - target.getDay() + 7) % 7 || 7;
     target.setDate(target.getDate() + daysUntilSaturday);
     target.setHours(10, 0, 0, 0);
+    return target.toISOString();
+  }
+
+  return null;
+}
+
+export function getDeadlinePresetValue(preset, now = new Date()) {
+  const current = toDate(now) || new Date();
+  if (preset === 'clear') return null;
+
+  const target = startOfLocalDay(current);
+  if (preset === 'today') {
+    target.setHours(22, 0, 0, 0);
+    return target.toISOString();
+  }
+  if (preset === 'tonight') {
+    target.setDate(target.getDate() + 1);
+    return target.toISOString();
+  }
+  if (preset === 'tomorrow') {
+    target.setDate(target.getDate() + 1);
+    target.setHours(22, 0, 0, 0);
+    return target.toISOString();
+  }
+  if (preset === 'weekend') {
+    let daysUntilSunday = (7 - target.getDay()) % 7;
+    const thisSundayDeadline = new Date(target);
+    thisSundayDeadline.setHours(22, 0, 0, 0);
+    if (daysUntilSunday === 0 && thisSundayDeadline <= current) daysUntilSunday = 7;
+    target.setDate(target.getDate() + daysUntilSunday);
+    target.setHours(22, 0, 0, 0);
     return target.toISOString();
   }
 

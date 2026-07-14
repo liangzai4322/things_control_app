@@ -2,7 +2,7 @@ import { getBoxes, getDeletedTasksByBox, getTasksByBox, updateTask, deleteTask, 
 import { navigate, openSheet, showToast } from './app.js';
 import { openLuckyWheel } from './lucky-wheel.js';
 import { getTaskPointValue, reconcileCompletedTaskPoints, syncTaskCompletionPoints } from './points-store.js';
-import { formatDueLabel as formatDueDateLabel, formatScheduledLabel, fromDateTimeLocalValue, getBoxDailySentence, getSchedulePresetValue, isTaskNeedsReschedule, isTaskOverdue, toDateTimeLocalValue } from './task-utils.js';
+import { formatDueLabel as formatDueDateLabel, formatScheduledLabel, fromDateTimeLocalValue, getBoxDailySentence, getDeadlinePresetValue, getSchedulePresetValue, isTaskNeedsReschedule, isTaskOverdue, toDateTimeLocalValue } from './task-utils.js';
 
 const LONG_PRESS_MS = 500;
 const DELETE_SWIPE_THRESHOLD = 120;
@@ -23,6 +23,13 @@ const SCHEDULE_PRESETS = [
   { value: 'tomorrow', label: '明天' },
   { value: 'weekend', label: '周末' },
   { value: 'clear', label: '不安排' },
+];
+const DEADLINE_PRESETS = [
+  { value: 'today', label: '今天', time: '22:00' },
+  { value: 'tonight', label: '今晚', time: '24:00' },
+  { value: 'tomorrow', label: '明天', time: '22:00' },
+  { value: 'weekend', label: '周日', time: '22:00' },
+  { value: 'clear', label: '不设置', time: '' },
 ];
 const BOX_PIN_THEMES = {
   important: { start: '#f9734e', end: '#ff9a5a', soft: 'rgba(249, 115, 78, 0.15)', border: 'rgba(249, 115, 78, 0.46)', shadow: 'rgba(249, 115, 78, 0.16)', text: '#c2410c' },
@@ -710,7 +717,12 @@ function openTaskEditor({ taskId, boxId }, onDone) {
         </div>
         <input id="taskScheduledAt" class="input" type="datetime-local" value="${escapeHtml(toDateTimeLocalValue(task?.scheduledAt))}">
       </label>
-      <label>截止时间<input id="taskDate" class="input" type="datetime-local" value="${escapeHtml(toDateTimeLocalValue(task?.dueDate))}"></label>
+      <label>截止时间
+        <div class="schedule-presets deadline-presets" aria-label="快捷设置截止时间">
+          ${DEADLINE_PRESETS.map((preset) => `<button class="schedule-preset deadline-preset" data-deadline-preset="${preset.value}"><strong>${preset.label}</strong>${preset.time ? `<small>${preset.time}</small>` : ''}</button>`).join('')}
+        </div>
+        <input id="taskDate" class="input" type="datetime-local" value="${escapeHtml(toDateTimeLocalValue(task?.dueDate))}">
+      </label>
       <label>抽奖权重（选填，默认 1）<input id="taskWeight" class="input" type="number" min="1" step="1" placeholder="1" value="${task?.weight ?? ''}"></label>
       <label>完成奖励积分<input id="taskPointsValue" class="input" type="number" min="0" step="1" value="${initialPoints}"></label>
       <label>所属盒子
@@ -732,6 +744,7 @@ function openTaskEditor({ taskId, boxId }, onDone) {
   const boxSelect = root.querySelector('#taskBox');
   const pointsInput = root.querySelector('#taskPointsValue');
   const scheduledInput = root.querySelector('#taskScheduledAt');
+  const dueInput = root.querySelector('#taskDate');
 
   root.querySelectorAll('[data-schedule-preset]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -741,6 +754,15 @@ function openTaskEditor({ taskId, boxId }, onDone) {
   });
   scheduledInput.addEventListener('input', () => {
     root.querySelectorAll('[data-schedule-preset]').forEach((item) => item.classList.remove('active'));
+  });
+  root.querySelectorAll('[data-deadline-preset]').forEach((button) => {
+    button.addEventListener('click', () => {
+      dueInput.value = toDateTimeLocalValue(getDeadlinePresetValue(button.dataset.deadlinePreset));
+      root.querySelectorAll('[data-deadline-preset]').forEach((item) => item.classList.toggle('active', item === button));
+    });
+  });
+  dueInput.addEventListener('input', () => {
+    root.querySelectorAll('[data-deadline-preset]').forEach((item) => item.classList.remove('active'));
   });
 
   root.querySelectorAll('.prio-dot').forEach((button) => {
