@@ -166,7 +166,7 @@ function registerServiceWorker() {
     window.location.reload();
   });
 
-  navigator.serviceWorker.register('sw-v11.js')
+  navigator.serviceWorker.register('service-worker.js')
     .then((registration) => registration.update().catch(() => {}))
     .catch(() => {});
 }

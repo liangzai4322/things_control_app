@@ -1,3 +1,12 @@
+import {
+  getFirstOccurrenceAt,
+  getNextOccurrenceAt,
+  getOccurrenceDueAt,
+  getRecurrenceKey,
+  getRecurringOccurrenceId,
+  normalizeRecurrenceRule,
+} from './recurrence.js';
+
 const STORAGE_KEY = 'taskbox_data';
 
 const DEFAULT_BOXES = [
@@ -36,6 +45,7 @@ let dataCache = null;
 let dataCacheDay = '';
 const apiMutationQueues = new Map();
 let apiMutationVersion = 0;
+let ensuringRecurringTasks = false;
 const SOUND_CACHE = new Map();
 const BOX_COLOR_POOL = ['important', 'relax', 'reward', 'misc', 'punish', 'study', 'health'];
 const FIXED_HOME_BOX_COLORS = new Set(['important', 'misc']);
@@ -75,6 +85,12 @@ function normalize(data = {}) {
         deleted: t.deleted ?? false,
         deletedAt: t.deletedAt ?? null,
         scheduledAt: t.scheduledAt ?? null,
+        isRecurringTemplate: Boolean(t.isRecurringTemplate),
+        recurrenceTemplateId: t.recurrenceTemplateId || null,
+        recurrenceKey: t.recurrenceKey || null,
+        recurrence: t.recurrence && typeof t.recurrence === 'object' ? t.recurrence : null,
+        nextRunAt: t.nextRunAt || null,
+        occurrenceStatus: t.occurrenceStatus || null,
         note: t.note ?? [t.reflection, t.review, t.summaryText].filter(Boolean).join('\n').trim(),
         syncKey: t.syncKey || `${t.createdAt || ''}::${t.content || ''}`,
         updatedAt: t.updatedAt || t.createdAt || new Date().toISOString()
@@ -188,7 +204,17 @@ function dedupeTasksByIdentity(tasks = []) {
     else bySyncKey.set(`no-sync::${task.boxId || ''}::${task.createdAt || ''}::${task.content || ''}::${Math.random()}`, task);
   });
 
-  return Array.from(bySyncKey.values());
+  const byRecurrenceKey = new Map();
+  const oneTimeTasks = [];
+  bySyncKey.forEach((task) => {
+    if (task.recurrenceKey) {
+      byRecurrenceKey.set(task.recurrenceKey, chooseTaskCopy(byRecurrenceKey.get(task.recurrenceKey), task));
+    } else {
+      oneTimeTasks.push(task);
+    }
+  });
+
+  return [...oneTimeTasks, ...byRecurrenceKey.values()];
 }
 
 function dedupeLocalTasks(data) {
@@ -272,7 +298,10 @@ export const getBoxes = () => [...getData().boxes].sort((a, b) => {
     || (Number(a.sortOrder) || 0) - (Number(b.sortOrder) || 0)
     || taskTime(a.createdAt) - taskTime(b.createdAt);
 });
-export const getTasks = () => getData().tasks.filter((t) => !t.deleted);
+export const getTasks = () => {
+  ensureRecurringTaskInstances();
+  return getData().tasks.filter((t) => !t.deleted && !t.isRecurringTemplate);
+};
 export const getSettings = () => getData().settings;
 
 function normalizeDailyQuoteHistory(history = []) {
@@ -373,7 +402,7 @@ export function exportDailyQuoteArchive() {
 
 export function getDeletedTasksByBox(boxId) {
   return getData().tasks
-    .filter((t) => t.boxId === boxId && t.deleted)
+    .filter((t) => t.boxId === boxId && t.deleted && !t.isRecurringTemplate)
     .sort((a, b) => taskTime(b.deletedAt || b.updatedAt) - taskTime(a.deletedAt || a.updatedAt));
 }
 
@@ -429,6 +458,254 @@ export function addTask(task) {
   return created;
 }
 
+function buildRecurringOccurrence(template, scheduledAt, data) {
+  const recurrence = normalizeRecurrenceRule(template.recurrence, scheduledAt, template.dueDate);
+  const recurrenceKey = getRecurrenceKey(template.id, scheduledAt);
+  const maxOrder = Math.max(-1, ...data.tasks
+    .filter((task) => task.boxId === template.boxId && !task.isCompleted && !task.isRecurringTemplate)
+    .map((task) => Number(task.sortOrder) || 0));
+  const createdAt = new Date().toISOString();
+
+  return {
+    id: getRecurringOccurrenceId(template.id, scheduledAt),
+    content: template.content,
+    boxId: template.boxId,
+    priority: template.priority ?? null,
+    weight: template.weight ?? 1,
+    pointsValue: template.pointsValue ?? null,
+    progress: 0,
+    pinLevel: template.pinLevel ?? null,
+    pinned: Boolean(template.pinLevel ?? template.pinned),
+    scheduledAt,
+    dueDate: getOccurrenceDueAt(recurrence, scheduledAt),
+    isCompleted: false,
+    deleted: false,
+    deletedAt: null,
+    note: template.note || '',
+    sortOrder: maxOrder + 1,
+    completedAt: null,
+    createdAt,
+    updatedAt: createdAt,
+    syncKey: recurrenceKey,
+    recurrenceTemplateId: template.id,
+    recurrenceKey,
+    recurrence,
+    occurrenceStatus: 'pending',
+  };
+}
+
+function getTemplateInstances(data, templateId) {
+  return data.tasks.filter((task) => task.recurrenceTemplateId === templateId && !task.isRecurringTemplate);
+}
+
+function advancePastUsedSlots(data, template, candidate) {
+  let next = candidate;
+  let attempts = 0;
+  while (next && attempts < 400) {
+    const key = getRecurrenceKey(template.id, next);
+    if (!data.tasks.some((task) => task.recurrenceKey === key)) return next;
+    next = getNextOccurrenceAt(template.recurrence, next);
+    attempts += 1;
+  }
+  return next;
+}
+
+export function ensureRecurringTaskInstances(referenceTime = new Date()) {
+  if (ensuringRecurringTasks) return [];
+  ensuringRecurringTasks = true;
+  const created = [];
+  const updated = [];
+
+  try {
+    const data = structuredClone(getData());
+      const currentTime = new Date(referenceTime).getTime();
+      data.tasks
+        .filter((task) => task.isRecurringTemplate && !task.deleted && !task.recurrence?.paused)
+        .forEach((template) => {
+          const instances = getTemplateInstances(data, template.id);
+          let pending = instances.find((task) => !task.deleted && !task.isCompleted);
+          const rule = normalizeRecurrenceRule(template.recurrence, template.scheduledAt, template.dueDate);
+          if (!rule) return;
+
+          if (pending && rule.missPolicy === 'skip') {
+            const following = getNextOccurrenceAt(rule, pending.scheduledAt);
+            if (following && new Date(following).getTime() <= currentTime) {
+              pending.deleted = true;
+              pending.deletedAt = new Date().toISOString();
+              pending.updatedAt = pending.deletedAt;
+              pending.occurrenceStatus = 'skipped';
+              updated.push({ ...pending });
+              pending = null;
+              template.nextRunAt = following;
+            }
+          }
+
+          if (pending) return;
+          let candidate = template.nextRunAt || (instances.length ? null : (template.scheduledAt || rule.anchorAt));
+          candidate = advancePastUsedSlots(data, template, candidate);
+          if (!candidate) return;
+
+          if (rule.missPolicy === 'skip') {
+            let following = getNextOccurrenceAt(rule, candidate);
+            while (following && new Date(following).getTime() <= currentTime) {
+              candidate = following;
+              following = getNextOccurrenceAt(rule, candidate);
+            }
+          }
+
+          const occurrence = buildRecurringOccurrence(template, candidate, data);
+          data.tasks.push(occurrence);
+          created.push(occurrence);
+          template.nextRunAt = rule.mode === 'completion' ? null : getNextOccurrenceAt(rule, candidate);
+          template.updatedAt = new Date().toISOString();
+          updated.push({ ...template });
+        });
+    if (created.length || updated.length) saveData(data, { skipCloud: true });
+  } finally {
+    ensuringRecurringTasks = false;
+  }
+
+  created.forEach((task) => scheduleApiRequest('/tasks', { method: 'POST', body: JSON.stringify(task) }));
+  updated.forEach((task) => scheduleApiRequest(`/tasks/${encodeURIComponent(task.id)}`, { method: 'PATCH', body: JSON.stringify(task) }));
+  return created;
+}
+
+export function addRecurringTask(task, recurrenceInput) {
+  const fallbackSchedule = task.scheduledAt || new Date().toISOString();
+  const recurrence = normalizeRecurrenceRule(recurrenceInput, fallbackSchedule, task.dueDate);
+  if (!recurrence) return addTask(task);
+  const firstRunAt = getFirstOccurrenceAt(recurrence, fallbackSchedule);
+  const createdAt = new Date().toISOString();
+  let template = null;
+
+  updateData((data) => {
+    const maxOrder = Math.max(-1, ...data.tasks.filter((item) => item.boxId === task.boxId).map((item) => Number(item.sortOrder) || 0));
+    template = {
+      id: uid(),
+      content: task.content,
+      boxId: task.boxId,
+      priority: task.priority ?? null,
+      weight: task.weight ?? 1,
+      pointsValue: task.pointsValue ?? null,
+      progress: 0,
+      pinLevel: task.pinLevel ?? null,
+      pinned: Boolean(task.pinLevel ?? task.pinned),
+      scheduledAt: firstRunAt,
+      dueDate: getOccurrenceDueAt(recurrence, firstRunAt),
+      isCompleted: false,
+      deleted: false,
+      deletedAt: null,
+      note: task.note || '',
+      sortOrder: maxOrder + 1,
+      completedAt: null,
+      createdAt,
+      updatedAt: createdAt,
+      syncKey: `recurring-template::${createdAt}::${task.content}`,
+      isRecurringTemplate: true,
+      recurrence,
+      nextRunAt: firstRunAt,
+    };
+    data.tasks.push(template);
+    return data;
+  }, { skipCloud: true });
+
+  scheduleApiRequest('/tasks', { method: 'POST', body: JSON.stringify(template) });
+  return ensureRecurringTaskInstances().find((item) => item.recurrenceTemplateId === template.id) || null;
+}
+
+export function getRecurringTemplates() {
+  ensureRecurringTaskInstances();
+  return getData().tasks
+    .filter((task) => task.isRecurringTemplate && !task.deleted)
+    .sort((left, right) => taskTime(left.nextRunAt || left.scheduledAt) - taskTime(right.nextRunAt || right.scheduledAt));
+}
+
+export function setRecurringTemplatePaused(templateId, paused) {
+  let updated = null;
+  updateData((data) => {
+    const template = data.tasks.find((task) => task.id === templateId && task.isRecurringTemplate);
+    if (!template) return data;
+    template.recurrence = { ...template.recurrence, paused: Boolean(paused) };
+    template.updatedAt = new Date().toISOString();
+    updated = { ...template };
+    return data;
+  }, { skipCloud: true });
+  if (updated) {
+    scheduleApiRequest(`/tasks/${encodeURIComponent(templateId)}`, { method: 'PATCH', body: JSON.stringify(updated) });
+    if (!paused) ensureRecurringTaskInstances();
+  }
+  return updated;
+}
+
+export function updateRecurringTemplate(templateId, patch = {}) {
+  const changed = [];
+  let result = null;
+  const data = structuredClone(getData());
+  const template = data.tasks.find((task) => task.id === templateId && task.isRecurringTemplate && !task.deleted);
+  if (!template) return null;
+  const current = getTemplateInstances(data, templateId)
+    .filter((task) => !task.deleted && !task.isCompleted)
+    .sort((left, right) => taskTime(left.scheduledAt) - taskTime(right.scheduledAt))[0] || null;
+  const anchorAt = patch.scheduledAt || current?.scheduledAt || template.scheduledAt || template.recurrence?.anchorAt;
+  const dueDate = patch.dueDate !== undefined ? patch.dueDate : (current?.dueDate || template.dueDate);
+  const recurrenceInput = {
+    ...template.recurrence,
+    ...(patch.recurrence || {}),
+    paused: Boolean(template.recurrence?.paused),
+  };
+  if (patch.dueDate !== undefined) recurrenceInput.deadlineOffsetMinutes = null;
+  const recurrence = normalizeRecurrenceRule(recurrenceInput, anchorAt, dueDate);
+  const sharedFields = ['content', 'boxId', 'priority', 'weight', 'pointsValue', 'note', 'pinLevel', 'pinned'];
+  sharedFields.forEach((key) => {
+    if (patch[key] !== undefined) template[key] = patch[key];
+  });
+  template.recurrence = recurrence;
+  template.scheduledAt = anchorAt;
+  template.dueDate = getOccurrenceDueAt(recurrence, anchorAt);
+  template.updatedAt = new Date().toISOString();
+
+  if (current) {
+    sharedFields.forEach((key) => {
+      if (patch[key] !== undefined) current[key] = patch[key];
+    });
+    current.scheduledAt = anchorAt;
+    current.dueDate = getOccurrenceDueAt(recurrence, anchorAt);
+    current.recurrence = recurrence;
+    current.recurrenceKey = getRecurrenceKey(templateId, anchorAt);
+    current.syncKey = current.recurrenceKey;
+    current.updatedAt = template.updatedAt;
+    changed.push({ ...current });
+  }
+
+  template.nextRunAt = recurrence?.mode === 'completion'
+    ? null
+    : getNextOccurrenceAt(recurrence, current?.scheduledAt || anchorAt);
+  changed.push({ ...template });
+  result = { ...template };
+  saveData(data, { skipCloud: true });
+  changed.forEach((task) => scheduleApiRequest(`/tasks/${encodeURIComponent(task.id)}`, { method: 'PATCH', body: JSON.stringify(task) }));
+  return result;
+}
+
+export function deleteRecurringSeries(templateId) {
+  const deleted = [];
+  updateData((data) => {
+    const timestamp = new Date().toISOString();
+    data.tasks.forEach((task) => {
+      const belongsToSeries = task.id === templateId || task.recurrenceTemplateId === templateId;
+      if (!belongsToSeries || task.isCompleted || task.deleted) return;
+      task.deleted = true;
+      task.deletedAt = timestamp;
+      task.updatedAt = timestamp;
+      if (!task.isRecurringTemplate) task.occurrenceStatus = 'cancelled';
+      deleted.push({ ...task });
+    });
+    return data;
+  }, { skipCloud: true });
+  deleted.forEach((task) => scheduleApiRequest(`/tasks/${encodeURIComponent(task.id)}`, { method: 'DELETE' }));
+  return deleted.length;
+}
+
 function nextUniqueBoxColor(boxes) {
   const used = new Set(boxes.map((b) => b.color));
   const available = BOX_COLOR_POOL.find((c) => !used.has(c));
@@ -470,6 +747,8 @@ export async function addBox({ name, description = '' }) {
 
 export function restoreTask(task) {
   let restored = null;
+  const superseded = [];
+  let recurringTemplate = null;
   updateData((data) => {
     const existing = data.tasks.find((t) => t.id === task.id) || (!task.id && task.syncKey ? data.tasks.find((t) => t.syncKey === task.syncKey) : null);
     if (existing) {
@@ -479,6 +758,28 @@ export function restoreTask(task) {
       restored = { ...task, deleted: false, deletedAt: null, updatedAt: new Date().toISOString() };
       data.tasks.push(restored);
     }
+    if (restored?.recurrenceTemplateId) {
+      const otherPending = data.tasks
+        .filter((item) => item.id !== restored.id
+          && item.recurrenceTemplateId === restored.recurrenceTemplateId
+          && !item.deleted
+          && !item.isCompleted)
+        .sort((left, right) => taskTime(left.scheduledAt) - taskTime(right.scheduledAt));
+      const timestamp = new Date().toISOString();
+      otherPending.forEach((item) => {
+        item.deleted = true;
+        item.deletedAt = timestamp;
+        item.updatedAt = timestamp;
+        item.occurrenceStatus = 'cancelled';
+        superseded.push({ ...item });
+      });
+      const template = data.tasks.find((item) => item.id === restored.recurrenceTemplateId && item.isRecurringTemplate && !item.deleted);
+      if (template && otherPending[0]?.scheduledAt) {
+        template.nextRunAt = otherPending[0].scheduledAt;
+        template.updatedAt = timestamp;
+        recurringTemplate = { ...template };
+      }
+    }
     return data;
   });
   if (restored) {
@@ -487,15 +788,21 @@ export function restoreTask(task) {
       body: JSON.stringify(restored),
     });
   }
+  superseded.forEach((item) => scheduleApiRequest(`/tasks/${encodeURIComponent(item.id)}`, { method: 'DELETE' }));
+  if (recurringTemplate) {
+    scheduleApiRequest(`/tasks/${encodeURIComponent(recurringTemplate.id)}`, { method: 'PATCH', body: JSON.stringify(recurringTemplate) });
+  }
 }
 
 export function updateTask(taskId, patch) {
-  const cloudCriticalKeys = new Set(['content', 'boxId', 'priority', 'weight', 'pointsValue', 'progress', 'pinLevel', 'pinned', 'scheduledAt', 'dueDate', 'isCompleted', 'deleted', 'deletedAt', 'sortOrder', 'completedAt', 'note']);
+  const cloudCriticalKeys = new Set(['content', 'boxId', 'priority', 'weight', 'pointsValue', 'progress', 'pinLevel', 'pinned', 'scheduledAt', 'dueDate', 'isCompleted', 'deleted', 'deletedAt', 'sortOrder', 'completedAt', 'note', 'recurrence', 'nextRunAt', 'occurrenceStatus']);
   const shouldCloudPush = Object.keys(patch || {}).some((k) => cloudCriticalKeys.has(k));
   let updated = null;
+  let previous = null;
   updateData((data) => {
     const t = data.tasks.find((x) => x.id === taskId);
     if (t) {
+      previous = { ...t };
       Object.assign(t, patch);
       t.updatedAt = new Date().toISOString();
       updated = { ...t };
@@ -508,6 +815,21 @@ export function updateTask(taskId, patch) {
       body: JSON.stringify(updated),
     });
   }
+  if (updated?.recurrenceTemplateId && !previous?.isCompleted && updated.isCompleted) {
+    const templateId = updated.recurrenceTemplateId;
+    updateData((data) => {
+      const template = data.tasks.find((task) => task.id === templateId && task.isRecurringTemplate && !task.deleted);
+      if (!template) return data;
+      const rule = normalizeRecurrenceRule(template.recurrence, updated.scheduledAt, updated.dueDate);
+      if (rule?.mode === 'completion') {
+        template.nextRunAt = getNextOccurrenceAt(rule, updated.scheduledAt, updated.completedAt);
+        template.updatedAt = new Date().toISOString();
+        scheduleApiRequest(`/tasks/${encodeURIComponent(template.id)}`, { method: 'PATCH', body: JSON.stringify(template) });
+      }
+      return data;
+    }, { skipCloud: true });
+    ensureRecurringTaskInstances();
+  }
   return updated;
 }
 
@@ -519,6 +841,7 @@ export function deleteTask(taskId) {
       t.deleted = true;
       t.deletedAt = new Date().toISOString();
       t.updatedAt = new Date().toISOString();
+      if (t.recurrenceTemplateId) t.occurrenceStatus = 'skipped';
       deleted = { ...t };
     }
     return data;
@@ -527,6 +850,18 @@ export function deleteTask(taskId) {
     scheduleApiRequest(`/tasks/${encodeURIComponent(taskId)}`, {
       method: 'DELETE',
     });
+  }
+  if (deleted?.recurrenceTemplateId) {
+    updateData((data) => {
+      const template = data.tasks.find((task) => task.id === deleted.recurrenceTemplateId && task.isRecurringTemplate && !task.deleted);
+      if (template?.recurrence?.mode === 'completion' && !template.nextRunAt) {
+        template.nextRunAt = getNextOccurrenceAt(template.recurrence, deleted.scheduledAt);
+        template.updatedAt = new Date().toISOString();
+        scheduleApiRequest(`/tasks/${encodeURIComponent(template.id)}`, { method: 'PATCH', body: JSON.stringify(template) });
+      }
+      return data;
+    }, { skipCloud: true });
+    ensureRecurringTaskInstances();
   }
 }
 
@@ -894,5 +1229,6 @@ export async function pullDataFromCloud(options = {}) {
   const merged = mergeData(local, cloudData);
   merged.settings = preserveLocalOnlySettings(merged.settings, local.settings);
   saveData(merged, { skipCloud: true });
+  ensureRecurringTaskInstances();
   return 'merged';
 }

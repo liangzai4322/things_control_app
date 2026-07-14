@@ -1,4 +1,4 @@
-const CACHE_NAME = 'taskbox-v28-time-presets';
+const CACHE_NAME = 'taskbox-v29-recurring-tasks';
 const CACHE_FILES = [
   './',
   './index.html',
@@ -7,10 +7,12 @@ const CACHE_FILES = [
   './js/points-store.js',
   './js/db.js',
   './js/task-utils.js',
+  './js/recurrence.js',
+  './js/recurrence-ui.js',
   './js/home.js',
   './js/box-detail.js',
   './manifest.json',
-  './sw-v11.js'
+  './service-worker.js'
 ];
 
 self.addEventListener('install', (e) => {

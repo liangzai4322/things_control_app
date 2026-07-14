@@ -1,6 +1,8 @@
-import { addBox, addTask, deleteBox, getBoxes, getTasks, playSound, pullDataFromCloud, setHomePinnedBox, updateTask } from './db.js';
+import { addBox, addRecurringTask, addTask, deleteBox, deleteRecurringSeries, getBoxes, getRecurringTemplates, getTasks, playSound, pullDataFromCloud, setHomePinnedBox, setRecurringTemplatePaused, updateRecurringTemplate, updateTask } from './db.js';
 import { navigate, openSheet, showToast } from './app.js';
 import { getPointsSummary, getTaskPointValue, syncTaskCompletionPoints } from './points-store.js';
+import { getRecurrenceLabel } from './recurrence.js';
+import { bindRecurrenceEditor, renderRecurrenceEditor } from './recurrence-ui.js';
 import {
   formatDueLabel,
   formatScheduledLabel,
@@ -203,7 +205,7 @@ function renderAgendaTask(task, box, now) {
         <span class="day-task-title">${escapeHtml(task.content)}</span>
         <span class="day-task-meta">
           <i class="day-box-mark ${escapeHtml(box?.color || 'important')}"></i>
-          ${escapeHtml(box?.name || '未分类')}${timing ? ` · ${escapeHtml(timing)}` : ''}
+          ${escapeHtml(box?.name || '未分类')}${task.recurrence ? ` · ↻ ${escapeHtml(getRecurrenceLabel(task.recurrence))}` : ''}${timing ? ` · ${escapeHtml(timing)}` : ''}
         </span>
       </button>
     </article>
@@ -364,6 +366,7 @@ function enterSmallWorld(app) {
 export function renderHome(app) {
   const boxes = getBoxes();
   const tasks = getTasks();
+  const recurringTemplates = getRecurringTemplates();
   const pointsSummary = getPointsSummary();
   const boxMap = new Map(boxes.map((box) => [box.id, box]));
   const taskMap = new Map(tasks.map((task) => [task.id, task]));
@@ -435,7 +438,10 @@ export function renderHome(app) {
               <h3>${escapeHtml(formatSelectedDay(agenda.selectedDate, now))}</h3>
               <p>${agenda.open.length} 项行动${agenda.completed.length ? ` · 已完成 ${agenda.completed.length}` : ''}</p>
             </div>
-            <button class="agenda-add-btn" id="agendaAddBtn">＋ 安排</button>
+            <div class="day-agenda-actions">
+              <button class="recurring-manager-btn" id="recurringManagerBtn">↻ 周期 ${recurringTemplates.length}</button>
+              <button class="agenda-add-btn" id="agendaAddBtn">＋ 安排</button>
+            </div>
           </div>
           <div class="day-task-list">
             ${visibleAgenda.length
@@ -536,6 +542,7 @@ export function renderHome(app) {
   app.querySelector('#agendaAddBtn').addEventListener('click', () => {
     openAddTaskSheet(boxes, { scheduledAt: getScheduleForDate(selectedHomeDateKey, now) });
   });
+  app.querySelector('#recurringManagerBtn').addEventListener('click', () => openRecurringManager(app, boxes));
   app.querySelector('#agendaExpandBtn')?.addEventListener('click', () => {
     showAllAgendaTasks = !showAllAgendaTasks;
     renderHome(app);
@@ -585,6 +592,154 @@ async function openAIExtractSheetLazy() {
   openAIExtractSheet();
 }
 
+function openRecurringManager(app, boxes) {
+  const templates = getRecurringTemplates();
+  const tasks = getTasks();
+  const boxMap = new Map(boxes.map((box) => [box.id, box]));
+  const { root, close } = openSheet(`
+    <div class="sheet-handle"></div>
+    <div class="sheet-content recurring-manager-sheet">
+      <p class="eyebrow">Recurring Tasks</p>
+      <div class="recurring-manager-head">
+        <div><h3>周期任务</h3><p class="sheet-lead">每一期独立记录，暂停不会删除历史。</p></div>
+        <button class="btn subtle compact" id="newRecurringTaskBtn">＋ 新建</button>
+      </div>
+      <div class="recurring-template-list">
+        ${templates.length ? templates.map((template) => {
+          const current = tasks.find((task) => task.recurrenceTemplateId === template.id && !task.isCompleted && !task.deleted);
+          const nextAt = current?.scheduledAt || template.nextRunAt || template.scheduledAt;
+          const paused = Boolean(template.recurrence?.paused);
+          return `
+            <article class="recurring-template-card ${paused ? 'is-paused' : ''}" data-recurring-template="${template.id}">
+              <div class="recurring-template-main">
+                <span class="recurring-mark">↻</span>
+                <div>
+                  <strong>${escapeHtml(template.content)}</strong>
+                  <p>${escapeHtml(boxMap.get(template.boxId)?.name || '未分类')} · ${escapeHtml(getRecurrenceLabel(template.recurrence))}</p>
+                  <small>${paused ? '已暂停，不会生成下一期' : `当前/下次：${escapeHtml(formatScheduledLabel(nextAt))}`}</small>
+                </div>
+              </div>
+              <div class="recurring-template-actions">
+                <button type="button" data-recurring-edit="${template.id}">编辑</button>
+                <button type="button" data-recurring-pause="${template.id}">${paused ? '恢复' : '暂停'}</button>
+                <button type="button" class="danger" data-recurring-stop="${template.id}">停止周期</button>
+              </div>
+            </article>
+          `;
+        }).join('') : `
+          <div class="recurring-empty-state"><span>↻</span><strong>还没有周期任务</strong><p>适合每天上新、间隔发朋友圈、周复盘和月复盘。</p></div>
+        `}
+      </div>
+      <button class="btn" id="closeRecurringManagerBtn">关闭</button>
+    </div>
+  `, { height: '78vh' });
+
+  root.querySelector('#closeRecurringManagerBtn').addEventListener('click', close);
+  root.querySelector('#newRecurringTaskBtn').addEventListener('click', () => {
+    close();
+    setTimeout(() => openAddTaskSheet(boxes, { focusRecurrence: true }), 240);
+  });
+  root.querySelectorAll('[data-recurring-edit]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const template = templates.find((item) => item.id === button.dataset.recurringEdit);
+      if (!template) return;
+      close();
+      setTimeout(() => openRecurringTemplateEditor(app, boxes, template), 240);
+    });
+  });
+  root.querySelectorAll('[data-recurring-pause]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const template = templates.find((item) => item.id === button.dataset.recurringPause);
+      if (!template) return;
+      setRecurringTemplatePaused(template.id, !template.recurrence?.paused);
+      showToast(template.recurrence?.paused ? '周期任务已恢复' : '周期任务已暂停');
+      close();
+      renderHome(app);
+      setTimeout(() => openRecurringManager(app, boxes), 240);
+    });
+  });
+  root.querySelectorAll('[data-recurring-stop]').forEach((button) => {
+    button.addEventListener('click', () => {
+      if (button.dataset.confirm !== '1') {
+        button.dataset.confirm = '1';
+        button.textContent = '再点一次确认';
+        setTimeout(() => {
+          if (!button.isConnected) return;
+          button.dataset.confirm = '';
+          button.textContent = '停止周期';
+        }, 2600);
+        return;
+      }
+      deleteRecurringSeries(button.dataset.recurringStop);
+      showToast('周期已停止，历史记录仍然保留');
+      close();
+      renderHome(app);
+      setTimeout(() => openRecurringManager(app, boxes), 240);
+    });
+  });
+}
+
+function openRecurringTemplateEditor(app, boxes, template) {
+  const current = getTasks().find((task) => task.recurrenceTemplateId === template.id && !task.isCompleted && !task.deleted);
+  const scheduledAt = current?.scheduledAt || template.scheduledAt || template.recurrence?.anchorAt;
+  const dueDate = current?.dueDate || template.dueDate;
+  const { root, close } = openSheet(`
+    <div class="sheet-handle"></div>
+    <div class="sheet-content recurring-series-editor">
+      <p class="eyebrow">Edit Series</p>
+      <h3>修改本次及以后</h3>
+      <p class="sheet-lead">已完成的历史不会变化；当前未完成的一期会同步采用新设置。</p>
+      <label>任务内容<input id="seriesContent" class="input" value="${escapeHtml(template.content)}"></label>
+      <label>所属盒子
+        <select id="seriesBox" class="input">${boxes.map((box) => `<option value="${box.id}" ${box.id === template.boxId ? 'selected' : ''}>${escapeHtml(box.name)}</option>`).join('')}</select>
+      </label>
+      <label>当前/下次计划时间<input id="seriesScheduledAt" class="input" type="datetime-local" value="${escapeHtml(toDateTimeLocalValue(scheduledAt))}"></label>
+      <label>当前/下次截止时间<input id="seriesDueAt" class="input" type="datetime-local" value="${escapeHtml(toDateTimeLocalValue(dueDate))}"></label>
+      ${renderRecurrenceEditor('series-edit', template.recurrence)}
+      <label>每期完成积分<input id="seriesPoints" class="input" type="number" min="0" step="1" value="${Math.max(0, Number(template.pointsValue) || 0)}"></label>
+      <div class="sheet-actions">
+        <button class="btn" id="cancelSeriesEdit">取消</button>
+        <button class="btn primary" id="saveSeriesEdit">保存本次及以后</button>
+      </div>
+    </div>
+  `, { height: '84vh' });
+  const scheduledInput = root.querySelector('#seriesScheduledAt');
+  const recurrenceEditor = bindRecurrenceEditor(root, {
+    prefix: 'series-edit',
+    scheduledInput,
+    initialRule: template.recurrence,
+  });
+  const noRepeatButton = root.querySelector('[data-recurrence-type="none"]');
+  noRepeatButton.disabled = true;
+  noRepeatButton.title = '如需停止，请返回周期任务列表选择“停止周期”';
+  root.querySelector('#cancelSeriesEdit').addEventListener('click', close);
+  const save = () => {
+    const content = root.querySelector('#seriesContent').value.trim();
+    if (!content) {
+      showToast('先填写任务内容');
+      return;
+    }
+    updateRecurringTemplate(template.id, {
+      content,
+      boxId: root.querySelector('#seriesBox').value,
+      scheduledAt: fromDateTimeLocalValue(scheduledInput.value),
+      dueDate: fromDateTimeLocalValue(root.querySelector('#seriesDueAt').value),
+      pointsValue: Math.max(0, Number(root.querySelector('#seriesPoints').value) || 0),
+      recurrence: recurrenceEditor.getValue(),
+    });
+    close();
+    showToast('周期任务已更新');
+    renderHome(app);
+  };
+  root.querySelector('#saveSeriesEdit').addEventListener('click', save);
+  root.addEventListener('keydown', (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+      event.preventDefault();
+      save();
+    }
+  });
+}
+
 function openAddTaskSheet(boxes, options = {}) {
   const defaultBox = boxes[0] || null;
   const defaultPoints = defaultBox ? getTaskPointValue({ boxId: defaultBox.id }, defaultBox) : 5;
@@ -606,6 +761,7 @@ function openAddTaskSheet(boxes, options = {}) {
         <div class="schedule-presets deadline-presets" aria-label="快捷设置截止时间">${renderDeadlinePresets()}</div>
         <input id="newTaskDueAt" class="input" type="datetime-local">
       </label>
+      ${renderRecurrenceEditor('new-task')}
       <label>完成可得积分<input id="newTaskPoints" class="input" type="number" min="0" step="1" value="${defaultPoints}"></label>
       <div class="sheet-actions">
         <button class="btn" id="cancelTaskBtn">取消</button>
@@ -620,6 +776,8 @@ function openAddTaskSheet(boxes, options = {}) {
   const dueInput = root.querySelector('#newTaskDueAt');
   bindSchedulePresets(root, scheduledInput);
   bindDeadlinePresets(root, dueInput);
+  const recurrenceEditor = bindRecurrenceEditor(root, { prefix: 'new-task', scheduledInput });
+  if (options.focusRecurrence) root.querySelector('[data-recurrence-type="daily"]')?.focus();
   pointsInput.addEventListener('input', () => {
     pointsInput.dataset.touched = '1';
   });
@@ -638,14 +796,18 @@ function openAddTaskSheet(boxes, options = {}) {
       showToast('先输入任务内容');
       return;
     }
-    addTask({
+    const payload = {
       content,
       boxId,
       pointsValue,
       scheduledAt: fromDateTimeLocalValue(scheduledInput.value),
       dueDate: fromDateTimeLocalValue(dueInput.value),
-    });
+    };
+    const recurrence = recurrenceEditor.getValue();
+    if (recurrence) addRecurringTask(payload, recurrence);
+    else addTask(payload);
     close();
+    showToast(recurrence ? '周期任务已创建' : '任务已创建');
     renderHome(document.getElementById('app'));
   };
   root.querySelector('#saveTaskBtn').addEventListener('click', saveTask);

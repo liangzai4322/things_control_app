@@ -1,8 +1,10 @@
-import { getBoxes, getDeletedTasksByBox, getTasksByBox, updateTask, deleteTask, reorderTasks, updateBox, addTask, playSound, restoreTask, pullDataFromCloud } from './db.js';
+import { getBoxes, getDeletedTasksByBox, getTasksByBox, updateTask, deleteTask, deleteRecurringSeries, reorderTasks, updateBox, addRecurringTask, addTask, playSound, restoreTask, pullDataFromCloud } from './db.js';
 import { navigate, openSheet, showToast } from './app.js';
 import { openLuckyWheel } from './lucky-wheel.js';
 import { getTaskPointValue, reconcileCompletedTaskPoints, syncTaskCompletionPoints } from './points-store.js';
 import { formatDueLabel as formatDueDateLabel, formatScheduledLabel, fromDateTimeLocalValue, getBoxDailySentence, getDeadlinePresetValue, getSchedulePresetValue, isTaskNeedsReschedule, isTaskOverdue, toDateTimeLocalValue } from './task-utils.js';
+import { getRecurrenceLabel } from './recurrence.js';
+import { bindRecurrenceEditor, renderRecurrenceEditor } from './recurrence-ui.js';
 
 const LONG_PRESS_MS = 500;
 const DELETE_SWIPE_THRESHOLD = 120;
@@ -255,6 +257,29 @@ function deleteTaskWithUndo(app, boxId, taskSnapshot) {
   });
 }
 
+function confirmStopRecurringSeries(app, box, task) {
+  closeTaskContextMenu();
+  const { root, close } = openSheet(`
+    <div class="sheet-handle"></div>
+    <div class="sheet-content recurring-stop-sheet">
+      <p class="eyebrow">Stop Recurring</p>
+      <h3>停止这个周期？</h3>
+      <p class="sheet-lead">“${escapeHtml(task.content)}”以后不再生成新一期，已经完成的历史和积分都会保留。</p>
+      <div class="sheet-actions">
+        <button class="btn" id="cancelStopRecurring">继续保留</button>
+        <button class="btn danger" id="confirmStopRecurring">停止周期</button>
+      </div>
+    </div>
+  `, { height: '40vh' });
+  root.querySelector('#cancelStopRecurring').addEventListener('click', close);
+  root.querySelector('#confirmStopRecurring').addEventListener('click', () => {
+    deleteRecurringSeries(task.recurrenceTemplateId);
+    close();
+    showToast('周期已停止，历史记录仍然保留');
+    renderBoxDetail(app, box.id);
+  });
+}
+
 function setTaskPinLevel(app, box, task, level) {
   if (!task?.id) return;
   closeTaskContextMenu();
@@ -283,7 +308,8 @@ function moveTaskToBox(app, currentBox, task, targetBox) {
     boxId: targetBox.id,
     sortOrder: nextSortOrder,
   });
-  showToast(`已移动到${getQuickSwitchLabel(targetBox)}盒`);
+  if (task.recurrenceTemplateId) updateTask(task.recurrenceTemplateId, { boxId: targetBox.id });
+  showToast(`已移动到${getQuickSwitchLabel(targetBox)}盒${task.recurrenceTemplateId ? '，以后也放这里' : ''}`);
   renderBoxDetail(app, currentBox.id);
 }
 
@@ -312,10 +338,11 @@ function openTaskContextMenu(event, app, box, task) {
       <div class="task-context-divider" aria-hidden="true"></div>
       <button type="button" data-action="move" class="move-task" style="${getBoxPinStyle(moveTarget)}">
         <span class="task-context-action-icon" aria-hidden="true">⇄</span>
-        <span>移动到${escapeHtml(getQuickSwitchLabel(moveTarget))}盒</span>
+        <span>移动到${escapeHtml(getQuickSwitchLabel(moveTarget))}盒${task.recurrenceTemplateId ? '（本次及以后）' : ''}</span>
       </button>
     ` : ''}
-    <button type="button" data-action="delete" class="danger">删除任务</button>
+    ${task.recurrenceTemplateId ? '<button type="button" data-action="stop-series" class="danger subtle-danger">停止整个周期</button>' : ''}
+    <button type="button" data-action="delete" class="danger">${task.recurrenceTemplateId ? '跳过本次' : '删除任务'}</button>
   `;
   document.body.appendChild(menu);
 
@@ -331,6 +358,7 @@ function openTaskContextMenu(event, app, box, task) {
     if (action === 'pin-level') setTaskPinLevel(app, box, task, button.dataset.pinLevel);
     if (action === 'unpin') setTaskPinLevel(app, box, task, null);
     if (action === 'move') moveTaskToBox(app, box, task, moveTarget);
+    if (action === 'stop-series') confirmStopRecurringSeries(app, box, task);
     if (action === 'delete') deleteTaskWithUndo(app, box.id, task);
   });
 
@@ -534,6 +562,7 @@ function taskItem(task, box) {
             <span class="task-chip">${escapeHtml(getPriorityLabel(task.priority ?? 0))}</span>
             ${task.scheduledAt ? `<span class="task-chip planned-chip ${needsReschedule ? 'reschedule-chip' : ''}">${escapeHtml(needsReschedule ? `待重新安排 · ${formatScheduledLabel(task.scheduledAt)}` : `计划 ${formatScheduledLabel(task.scheduledAt)}`)}</span>` : ''}
             ${task.dueDate ? `<span class="task-chip ${overdue ? 'overdue-chip' : ''}">${escapeHtml(formatDueDateLabel(task.dueDate))}</span>` : ''}
+            ${task.recurrence ? `<span class="task-chip recurrence-chip">↻ ${escapeHtml(getRecurrenceLabel(task.recurrence))}</span>` : ''}
             <span class="task-chip">${taskProgress}%</span>
             ${pointsValue > 0 ? `<span class="task-chip points-chip">+${pointsValue} 分</span>` : ''}
           </div>
@@ -723,6 +752,9 @@ function openTaskEditor({ taskId, boxId }, onDone) {
         </div>
         <input id="taskDate" class="input" type="datetime-local" value="${escapeHtml(toDateTimeLocalValue(task?.dueDate))}">
       </label>
+      ${task?.recurrenceTemplateId
+        ? `<div class="recurrence-readonly"><span>↻</span><div><strong>${escapeHtml(getRecurrenceLabel(task.recurrence))}</strong><small>这里修改的内容只影响本次；整个周期可在首页“周期任务”中暂停或停止。</small></div></div>`
+        : renderRecurrenceEditor('detail-task')}
       <label>抽奖权重（选填，默认 1）<input id="taskWeight" class="input" type="number" min="1" step="1" placeholder="1" value="${task?.weight ?? ''}"></label>
       <label>完成奖励积分<input id="taskPointsValue" class="input" type="number" min="0" step="1" value="${initialPoints}"></label>
       <label>所属盒子
@@ -745,6 +777,9 @@ function openTaskEditor({ taskId, boxId }, onDone) {
   const pointsInput = root.querySelector('#taskPointsValue');
   const scheduledInput = root.querySelector('#taskScheduledAt');
   const dueInput = root.querySelector('#taskDate');
+  const recurrenceEditor = task?.recurrenceTemplateId
+    ? { getValue: () => null }
+    : bindRecurrenceEditor(root, { prefix: 'detail-task', scheduledInput });
 
   root.querySelectorAll('[data-schedule-preset]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -832,11 +867,13 @@ function openTaskEditor({ taskId, boxId }, onDone) {
         showToast(pointsResult.delta > 0 ? `积分已调整 +${pointsResult.delta}` : `积分已调整 ${pointsResult.delta}`);
       }
     } else {
-      const created = addTask(payload);
+      const recurrence = recurrenceEditor.getValue();
+      const created = recurrence ? addRecurringTask(payload, recurrence) : addTask(payload);
       if (created?.isCompleted) {
         const pointsResult = syncTaskCompletionPoints({ task: created, box: selectedBox, completed: true });
         if (pointsResult.changed) showToast(`已获得 +${pointsResult.delta} 积分`);
       }
+      if (recurrence) showToast('周期任务已创建');
     }
 
     close();
