@@ -516,7 +516,7 @@ function taskItem(task, box) {
   return `
     <article class="task-item ${task.isCompleted ? 'done' : ''} ${pinLevel ? 'pinned' : ''} ${overdue ? 'overdue' : ''} ${needsReschedule ? 'needs-reschedule' : ''}" data-id="${task.id}" style="${getBoxPinStyle(box)}">
       <div class="task-main" data-main="1">
-        <button class="check ${task.isCompleted ? 'checked' : ''}" style="--check-color:${color}">${task.isCompleted ? '✓' : ''}</button>
+        <button class="check task-check-control ${task.isCompleted ? 'checked' : ''}" style="--check-color:${color}" aria-label="${task.isCompleted ? '取消完成' : '完成'} ${escapeHtml(task.content)}"></button>
         <button class="task-content" data-action="edit">
           <div class="task-title-row">
             <span class="task-title">${escapeHtml(task.content)}</span>
@@ -550,6 +550,7 @@ function bindTaskEvents(app, box, taskMap) {
     checkButton.addEventListener('click', (event) => {
       event.stopPropagation();
       const checked = item.classList.contains('done');
+      checkButton.classList.toggle('checked', !checked);
       const nextTask = {
         ...task,
         isCompleted: !checked,

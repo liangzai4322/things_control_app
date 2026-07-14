@@ -4423,6 +4423,227 @@ select:focus {
   }
 }
 
+/* Box position menu and the shared physical checkbox language. */
+.box-card-status {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.box-pinned-mark {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  padding: 0 9px;
+  border: 1px solid rgba(255, 255, 255, 0.26);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+
+.box-card.home-pinned {
+  outline: 2px solid rgba(255, 255, 255, 0.28);
+  outline-offset: -5px;
+}
+
+.box-context-menu {
+  min-width: 232px;
+}
+
+.box-context-menu .pin-box-action {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid color-mix(in srgb, var(--box-accent) 34%, transparent);
+  background: color-mix(in srgb, var(--box-accent) 10%, transparent);
+  color: var(--box-accent);
+}
+
+.box-context-menu .task-context-action-icon {
+  background: var(--box-accent);
+  box-shadow: 0 6px 14px color-mix(in srgb, var(--box-accent) 26%, transparent);
+}
+
+.box-position-lock {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid var(--stroke);
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.045);
+}
+
+:root[data-theme='dark'] .box-position-lock {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.box-position-lock > span {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--box-accent) 12%, transparent);
+  color: var(--box-accent);
+}
+
+.box-position-lock strong,
+.box-position-lock small {
+  display: block;
+}
+
+.box-position-lock strong {
+  font-size: 13px;
+}
+
+.box-position-lock small {
+  margin-top: 3px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.task-context-menu button.is-disabled {
+  color: var(--text-tertiary);
+  cursor: not-allowed;
+}
+
+.box-delete-confirm {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+}
+
+.box-delete-confirm .sheet-actions {
+  margin-top: auto;
+}
+
+.btn.danger {
+  background: linear-gradient(135deg, #dc2626, #f05252);
+  color: #fff;
+  box-shadow: 0 12px 24px rgba(220, 38, 38, 0.2);
+}
+
+.task-check-control {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  width: 46px;
+  min-width: 46px;
+  height: 46px;
+  min-height: 46px;
+  place-items: center;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--check-color) 42%, rgba(255, 255, 255, 0.7));
+  border-radius: 15px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.62)),
+    color-mix(in srgb, var(--check-color) 8%, transparent);
+  color: #fff;
+  box-shadow:
+    0 9px 18px color-mix(in srgb, var(--check-color) 14%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    inset 0 -1px 0 rgba(15, 23, 42, 0.08);
+  transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+
+:root[data-theme='dark'] .task-check-control {
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.035)),
+    color-mix(in srgb, var(--check-color) 10%, transparent);
+  box-shadow:
+    0 9px 18px rgba(0, 0, 0, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16);
+}
+
+.task-check-control::before {
+  content: '';
+  position: absolute;
+  inset: 8px;
+  border: 2px solid color-mix(in srgb, var(--check-color) 74%, white 12%);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--check-color) 5%, transparent);
+  transition: transform 160ms ease, opacity 160ms ease;
+}
+
+.task-check-control::after {
+  content: '✓';
+  position: relative;
+  z-index: 1;
+  opacity: 0;
+  font-size: 22px;
+  font-weight: 950;
+  line-height: 1;
+  transform: scale(0.55) rotate(-10deg);
+  transition: opacity 140ms ease, transform 180ms cubic-bezier(0.2, 0.9, 0.2, 1.25);
+}
+
+.task-check-control.checked {
+  border-color: color-mix(in srgb, var(--check-color) 74%, white 12%);
+  border-radius: 15px;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--check-color) 78%, white 22%), var(--check-color));
+  box-shadow:
+    0 11px 22px color-mix(in srgb, var(--check-color) 28%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.34);
+}
+
+.task-check-control.checked::before {
+  opacity: 0;
+  transform: scale(1.5);
+}
+
+.task-check-control.checked::after {
+  opacity: 1;
+  transform: scale(1) rotate(0);
+}
+
+.day-task-check.task-check-control {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  border-radius: 12px;
+}
+
+.day-task-check.task-check-control::before {
+  inset: 6px;
+  border-radius: 7px;
+}
+
+.day-task-check.task-check-control::after {
+  font-size: 17px;
+}
+
+.day-task-row.is-overdue .task-check-control {
+  --check-color: #fff !important;
+  border-color: rgba(255, 255, 255, 0.58);
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+.task-check-control:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--check-color) 26%, transparent);
+  outline-offset: 3px;
+}
+
+@media (hover: hover) {
+  .task-check-control:hover {
+    transform: translateY(-1px);
+    box-shadow:
+      0 12px 22px color-mix(in srgb, var(--check-color) 22%, transparent),
+      inset 0 1px 0 rgba(255, 255, 255, 0.86);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

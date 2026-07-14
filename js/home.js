@@ -1,4 +1,4 @@
-import { addBox, addTask, getBoxes, getTasks, playSound, pullDataFromCloud, updateTask } from './db.js';
+import { addBox, addTask, deleteBox, getBoxes, getTasks, playSound, pullDataFromCloud, setHomePinnedBox, updateTask } from './db.js';
 import { navigate, openSheet, showToast } from './app.js';
 import { getPointsSummary, getTaskPointValue, syncTaskCompletionPoints } from './points-store.js';
 import {
@@ -26,6 +26,16 @@ const BOX_FALLBACK_COPY = {
   health: '每天推进一点，身体状态会稳定很多。',
 };
 const NON_TODO_BOX_COLORS = new Set(['relax', 'reward', 'punish', 'study']);
+const FIXED_HOME_BOX_COLORS = new Set(['important', 'misc']);
+const BOX_ACCENTS = {
+  important: '#f9734e',
+  misc: '#2f6df6',
+  relax: '#0ea5a4',
+  reward: '#f6c445',
+  punish: '#334155',
+  study: '#22c55e',
+  health: '#0f9bd7',
+};
 const WEEKDAY_LABELS = ['一', '二', '三', '四', '五', '六', '日'];
 const SCHEDULE_PRESETS = [
   { value: 'today', label: '今天' },
@@ -37,6 +47,7 @@ const SCHEDULE_PRESETS = [
 
 let selectedHomeDateKey = localDateKey(new Date());
 let showAllAgendaTasks = false;
+let boxContextMenuCleanup = null;
 
 function cardSizeClass(box) {
   if (box.sortOrder === 0) return 'large';
@@ -179,7 +190,7 @@ function renderAgendaTask(task, box, now) {
 
   return `
     <article class="day-task-row ${overdue ? 'is-overdue' : ''} ${needsReschedule ? 'needs-reschedule' : ''}" data-agenda-task="${task.id}">
-      <button class="day-task-check" data-agenda-complete="${task.id}" aria-label="完成 ${escapeHtml(task.content)}"></button>
+      <button class="day-task-check task-check-control" style="--check-color:${BOX_ACCENTS[box?.color] || BOX_ACCENTS.important}" data-agenda-complete="${task.id}" aria-label="完成 ${escapeHtml(task.content)}"></button>
       <button class="day-task-open" data-agenda-open="${task.id}">
         <span class="day-task-title">${escapeHtml(task.content)}</span>
         <span class="day-task-meta">
@@ -189,6 +200,106 @@ function renderAgendaTask(task, box, now) {
       </button>
     </article>
   `;
+}
+
+function closeBoxContextMenu() {
+  boxContextMenuCleanup?.();
+  boxContextMenuCleanup = null;
+  document.querySelector('.box-context-menu')?.remove();
+}
+
+function openDeleteBoxSheet(app, box, activeCount) {
+  closeBoxContextMenu();
+  if (FIXED_HOME_BOX_COLORS.has(box.color)) {
+    showToast('重要盒和待办盒属于核心盒，不能删除');
+    return;
+  }
+  if (activeCount > 0) {
+    showToast(`盒内还有 ${activeCount} 条内容，清空后才能删除`);
+    return;
+  }
+
+  const { root, close } = openSheet(`
+    <div class="sheet-handle"></div>
+    <div class="sheet-content box-delete-confirm">
+      <p class="eyebrow">Delete Box</p>
+      <h3>删除“${escapeHtml(box.name)}”？</h3>
+      <p class="sheet-lead">这个盒子已经清空。删除后将从首页移除，操作不可撤销。</p>
+      <div class="sheet-actions">
+        <button class="btn" id="cancelBoxDeleteBtn">保留盒子</button>
+        <button class="btn danger" id="confirmBoxDeleteBtn">确认删除</button>
+      </div>
+    </div>
+  `, { height: '38vh' });
+  root.querySelector('#cancelBoxDeleteBtn').addEventListener('click', close);
+  root.querySelector('#confirmBoxDeleteBtn').addEventListener('click', () => {
+    try {
+      deleteBox(box.id);
+      close();
+      showToast('盒子已删除');
+      renderHome(app);
+    } catch (error) {
+      showToast(error?.message === 'box_not_empty' ? '盒内仍有内容，暂时不能删除' : '盒子删除失败');
+    }
+  });
+}
+
+function openBoxContextMenu(event, app, box, tasks) {
+  event.preventDefault();
+  event.stopPropagation();
+  closeBoxContextMenu();
+  const fixed = FIXED_HOME_BOX_COLORS.has(box.color);
+  const activeCount = tasks.filter((task) => task.boxId === box.id).length;
+  const menu = document.createElement('div');
+  menu.className = 'task-context-menu box-context-menu';
+  menu.style.setProperty('--box-accent', BOX_ACCENTS[box.color] || BOX_ACCENTS.important);
+  menu.innerHTML = `
+    <div class="task-context-title">${escapeHtml(box.name)}</div>
+    ${fixed ? `
+      <div class="box-position-lock">
+        <span aria-hidden="true">⌂</span>
+        <div><strong>固定在第${box.color === 'important' ? '一' : '二'}位</strong><small>核心盒无需置顶</small></div>
+      </div>
+    ` : `
+      <button type="button" data-action="pin" class="pin-box-action">
+        <span class="task-context-action-icon" aria-hidden="true">${box.homePinned ? '↓' : '↑'}</span>
+        <span>${box.homePinned ? '取消第三位置顶' : '置顶到第三位'}</span>
+      </button>
+    `}
+    <div class="task-context-divider" aria-hidden="true"></div>
+    <button type="button" data-action="delete" class="danger ${fixed ? 'is-disabled' : ''}">${fixed ? '核心盒不可删除' : '删除盒子'}</button>
+  `;
+  document.body.appendChild(menu);
+
+  const rect = menu.getBoundingClientRect();
+  const x = Math.min(event.clientX, window.innerWidth - rect.width - 12);
+  const y = Math.min(event.clientY, window.innerHeight - rect.height - 12);
+  menu.style.left = `${Math.max(12, x)}px`;
+  menu.style.top = `${Math.max(12, y)}px`;
+
+  menu.addEventListener('click', (clickEvent) => {
+    const action = clickEvent.target?.closest?.('button[data-action]')?.dataset?.action;
+    if (action === 'pin' && !fixed) {
+      const pinned = setHomePinnedBox(box.id);
+      closeBoxContextMenu();
+      showToast(pinned ? `${box.name}已置顶到第三位` : `${box.name}已取消置顶`);
+      renderHome(app);
+    }
+    if (action === 'delete') openDeleteBoxSheet(app, box, activeCount);
+  });
+
+  const onPointerDown = (pointerEvent) => {
+    if (!menu.contains(pointerEvent.target)) closeBoxContextMenu();
+  };
+  const onKeyDown = (keyEvent) => {
+    if (keyEvent.key === 'Escape') closeBoxContextMenu();
+  };
+  setTimeout(() => document.addEventListener('pointerdown', onPointerDown), 0);
+  document.addEventListener('keydown', onKeyDown);
+  boxContextMenuCleanup = () => {
+    document.removeEventListener('pointerdown', onPointerDown);
+    document.removeEventListener('keydown', onKeyDown);
+  };
 }
 
 function renderSchedulePresets() {
@@ -324,13 +435,13 @@ export function renderHome(app) {
           const percent = boxTasks.length ? Math.round((finished / boxTasks.length) * 100) : 0;
 
           return `
-            <button class="box-card ${cardSizeClass(box)} ${box.color}" data-box-id="${box.id}">
+            <button class="box-card ${cardSizeClass(box)} ${box.color} ${box.homePinned ? 'home-pinned' : ''}" data-box-id="${box.id}">
               <div class="box-head">
                 <div class="box-title-group">
                   <span class="box-icon">${escapeHtml(box.icon)}</span>
                   <div class="box-title-block"><strong>${escapeHtml(box.name)}</strong><small>${escapeHtml(getProgressLabel(boxTasks, pendingTasks, finished))}</small></div>
                 </div>
-                <span class="box-progress-label">${percent}%</span>
+                <span class="box-card-status">${box.homePinned ? '<i class="box-pinned-mark">第三位</i>' : ''}<span class="box-progress-label">${percent}%</span></span>
               </div>
               <div class="box-desc box-daily-sentence"><span>每日一句</span><p>${escapeHtml(getBoxDescription(box))}</p></div>
               ${renderBoxPreview(box, pendingTasks)}
@@ -351,7 +462,30 @@ export function renderHome(app) {
   `;
 
   app.querySelectorAll('.box-card').forEach((element) => {
-    element.addEventListener('click', () => navigate(`#box/${element.dataset.boxId}`));
+    const box = boxes.find((item) => item.id === element.dataset.boxId);
+    let longPressTimer = null;
+    let suppressClick = false;
+    element.addEventListener('click', (event) => {
+      if (suppressClick) {
+        suppressClick = false;
+        event.preventDefault();
+        return;
+      }
+      navigate(`#box/${element.dataset.boxId}`);
+    });
+    element.addEventListener('contextmenu', (event) => {
+      if (box) openBoxContextMenu(event, app, box, tasks);
+    });
+    element.addEventListener('pointerdown', (event) => {
+      if (event.pointerType !== 'touch' || !box) return;
+      longPressTimer = setTimeout(() => {
+        suppressClick = true;
+        openBoxContextMenu(event, app, box, tasks);
+      }, 520);
+    });
+    ['pointerup', 'pointercancel', 'pointermove'].forEach((eventName) => {
+      element.addEventListener(eventName, () => clearTimeout(longPressTimer));
+    });
   });
   app.querySelectorAll('[data-home-date]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -393,6 +527,7 @@ export function renderHome(app) {
       const task = taskMap.get(button.dataset.agendaComplete);
       const box = task ? boxMap.get(task.boxId) : null;
       if (!task || !box) return;
+      button.classList.add('checked');
       const nextTask = { ...task, isCompleted: true, progress: 100, completedAt: new Date().toISOString() };
       updateTask(task.id, { isCompleted: true, progress: 100, completedAt: nextTask.completedAt });
       const pointsResult = syncTaskCompletionPoints({ task: nextTask, box, completed: true });

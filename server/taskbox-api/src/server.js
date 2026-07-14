@@ -256,6 +256,22 @@ app.patch('/v1/boxes/:id', (req, res) => {
   res.json(next);
 });
 
+app.delete('/v1/boxes/:id', (req, res) => {
+  const box = db.prepare('SELECT * FROM boxes WHERE id=?').get(req.params.id);
+  if (!box) return res.status(404).json({ error: 'box_not_found' });
+  if (box.color === 'important' || box.color === 'misc') {
+    return res.status(409).json({ error: 'box_fixed' });
+  }
+  const activeCount = db.prepare('SELECT COUNT(*) AS count FROM tasks WHERE box_id=? AND deleted=0').get(req.params.id).count;
+  if (activeCount > 0) return res.status(409).json({ error: 'box_not_empty', count: activeCount });
+
+  db.transaction(() => {
+    db.prepare('DELETE FROM tasks WHERE box_id=?').run(req.params.id);
+    db.prepare('DELETE FROM boxes WHERE id=?').run(req.params.id);
+  })();
+  return res.status(204).end();
+});
+
 app.post('/v1/tasks', (req, res) => {
   const task = { ...req.body, id: req.body.id || uid(), createdAt: req.body.createdAt || now(), updatedAt: now() };
   db.prepare(`

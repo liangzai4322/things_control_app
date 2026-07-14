@@ -1,4 +1,4 @@
-import { getBoxes, getSettings, pullDataFromCloud } from './db.js';
+import { getBoxes, getSettings, invalidateDataCache, pullDataFromCloud } from './db.js';
 import { renderHome } from './home.js';
 
 const app = document.getElementById('app');
@@ -193,13 +193,15 @@ function setupKeyboardInsets() {
   update();
 }
 
-async function tryCloudPullAndRefresh() {
+async function syncCloudInBackground() {
   try {
+    const pointsModule = await import('./points-store.js');
     const [taskResult] = await Promise.allSettled([
       pullDataFromCloud(),
+      pointsModule.prewarmPointsData?.({ forceSource: true }),
     ]);
+    if ((location.hash || '#home') === '#home') renderHome(app);
     if (taskResult.status === 'fulfilled' && taskResult.value === 'merged') {
-      route();
       showToast('Cloud synced');
     }
   } catch {
@@ -209,31 +211,34 @@ async function tryCloudPullAndRefresh() {
 
 function warmupCriticalModules() {
   const runWarmup = () => {
-    ROUTE_MODULE_CACHE.smallworld = ROUTE_MODULE_CACHE.smallworld || import('./small-world.js');
-    ROUTE_MODULE_CACHE.smallworld
-      .then(({ prewarmSmallWorldData }) => prewarmSmallWorldData().catch(() => {}))
-      .catch(() => {});
-
-    import('./points-store.js')
-      .then(async ({ prewarmPointsData }) => {
-        await prewarmPointsData?.({ forceSource: true });
-        if ((location.hash || '#home') === '#home') renderHome(app);
-      })
-      .catch(() => {});
-
-    import('./ai-extract.js').catch(() => {});
+    ROUTE_MODULE_CACHE.box = ROUTE_MODULE_CACHE.box || import('./box-detail.js');
+    ROUTE_MODULE_CACHE.box.catch(() => {});
   };
 
   if ('requestIdleCallback' in window) {
-    window.requestIdleCallback(runWarmup, { timeout: 1800 });
+    window.requestIdleCallback(runWarmup, { timeout: 2400 });
   } else {
-    setTimeout(runWarmup, 600);
+    setTimeout(runWarmup, 1400);
+  }
+}
+
+function scheduleBackgroundWork() {
+  const run = () => {
+    registerServiceWorker();
+    syncCloudInBackground();
+    warmupCriticalModules();
+  };
+  if ('requestIdleCallback' in window) {
+    window.requestIdleCallback(run, { timeout: 1200 });
+  } else {
+    setTimeout(run, 320);
   }
 }
 
 window.addEventListener('hashchange', route);
 window.addEventListener('storage', (event) => {
   if (event.key === 'taskbox_data' || event.key === 'taskbox_points_cache') {
+    if (event.key === 'taskbox_data') invalidateDataCache();
     route({ preserveScroll: true });
   }
 });
@@ -241,10 +246,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   getBoxes();
   setupAudioUnlock();
   setupKeyboardInsets();
-  registerServiceWorker();
   route();
-  warmupCriticalModules();
-  tryCloudPullAndRefresh();
+  scheduleBackgroundWork();
 });
 
 window.TaskBoxApp = {

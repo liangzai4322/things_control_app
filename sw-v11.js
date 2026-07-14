@@ -1,20 +1,14 @@
-const CACHE_NAME = 'taskbox-v26-weekly-rhythm';
+const CACHE_NAME = 'taskbox-v27-fast-box-controls';
 const CACHE_FILES = [
   './',
   './index.html',
   './css/style.css',
   './js/app.js',
-  './js/points-page.js',
   './js/points-store.js',
-  './js/points-ai.js',
   './js/db.js',
   './js/task-utils.js',
   './js/home.js',
   './js/box-detail.js',
-  './js/lucky-wheel.js',
-  './js/ai-extract.js',
-  './js/settings.js',
-  './js/small-world.js',
   './manifest.json',
   './sw-v11.js'
 ];
@@ -62,18 +56,13 @@ self.addEventListener('fetch', (e) => {
   }
 
   if (isAppShellAsset) {
-    e.respondWith((async () => {
-      try {
-        const fresh = await fetch(request);
-        const cache = await caches.open(CACHE_NAME);
-        cache.put(request, fresh.clone());
-        return fresh;
-      } catch {
-        const cached = await caches.match(request);
-        if (cached) return cached;
-        throw new Error('app_shell_fetch_failed');
-      }
-    })());
+    const refresh = fetch(request).then(async (fresh) => {
+      const cache = await caches.open(CACHE_NAME);
+      await cache.put(request, fresh.clone());
+      return fresh;
+    });
+    e.waitUntil(refresh.then(() => undefined).catch(() => {}));
+    e.respondWith(caches.match(request).then((cached) => cached || refresh));
     return;
   }
 

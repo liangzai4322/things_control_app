@@ -32,8 +32,13 @@ const DEFAULT_TASKS = [
 
 
 let cloudSyncTimer = null;
+let dataCache = null;
+let dataCacheDay = '';
+const apiMutationQueues = new Map();
+let apiMutationVersion = 0;
 const SOUND_CACHE = new Map();
 const BOX_COLOR_POOL = ['important', 'relax', 'reward', 'misc', 'punish', 'study', 'health'];
+const FIXED_HOME_BOX_COLORS = new Set(['important', 'misc']);
 const DEFAULT_API_ENDPOINT = 'https://liangzai666.com/taskbox-api/v1';
 const DEFAULT_FLOMO_WEBHOOK = '';
 export const DEFAULT_DAILY_QUOTE = '把任务放进盒子，把注意力还给当下。';
@@ -47,7 +52,15 @@ function normalize(data = {}) {
     boxes: (Array.isArray(data.boxes) ? data.boxes : []).map((b) => {
       const renamed = b.name === '杂事盒' ? '待办盒' : (b.name === '重要事项' ? '重要盒' : b.name);
       const orderMap = { '重要盒': 0, '待办盒': 1, '放松盒': 2, '奖励盒': 3, '惩罚盒': 4, '碎片学习盒': 5, '健康盒': 6 };
-      return { ...b, name: renamed, sortOrder: orderMap[renamed] ?? b.sortOrder ?? 99, color: b.color || BOX_COLOR_POOL[orderMap[renamed] ?? 0], updatedAt: b.updatedAt || b.createdAt || data.meta?.updatedAt || new Date().toISOString() };
+      const color = b.color || BOX_COLOR_POOL[orderMap[renamed] ?? 0];
+      return {
+        ...b,
+        name: renamed,
+        sortOrder: orderMap[renamed] ?? b.sortOrder ?? 99,
+        color,
+        homePinned: FIXED_HOME_BOX_COLORS.has(color) ? false : Boolean(b.homePinned),
+        updatedAt: b.updatedAt || b.createdAt || data.meta?.updatedAt || new Date().toISOString(),
+      };
     }),
     tasks: (Array.isArray(data.tasks) ? data.tasks : []).map((t) => {
       const rawPinLevel = Number(t.pinLevel ?? (t.pinned ? 1 : 0));
@@ -141,6 +154,8 @@ function seed() {
     meta: { updatedAt: now, lastDailyReset: '', lastSummaryExportAt: null },
   });
   localStorage.setItem(STORAGE_KEY, JSON.stringify(initial));
+  dataCache = initial;
+  dataCacheDay = new Date().toDateString();
   return initial;
 }
 
@@ -209,21 +224,33 @@ function enforceUniqueBoxColors(data) {
 }
 
 export function getData() {
+  const today = new Date().toDateString();
+  if (dataCache && dataCacheDay === today) return dataCache;
   const raw = localStorage.getItem(STORAGE_KEY);
   if (!raw) return seed();
   try {
     const normalized = normalize(JSON.parse(raw));
     const refreshed = enforceUniqueBoxColors(dedupeLocalTasks(applyDailyTaskRefresh(normalized)));
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(refreshed));
+    const serialized = JSON.stringify(refreshed);
+    if (serialized !== raw) localStorage.setItem(STORAGE_KEY, serialized);
+    dataCache = refreshed;
+    dataCacheDay = today;
     return refreshed;
   } catch {
     return seed();
   }
 }
 
+export function invalidateDataCache() {
+  dataCache = null;
+  dataCacheDay = '';
+}
+
 export function saveData(data, { skipCloud = false } = {}) {
   const normalized = normalize(data);
   normalized.meta.updatedAt = new Date().toISOString();
+  dataCache = normalized;
+  dataCacheDay = new Date().toDateString();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
   if (!skipCloud) scheduleCloudPush();
 }
@@ -234,7 +261,17 @@ export function updateData(updater, options = {}) {
   return next;
 }
 
-export const getBoxes = () => getData().boxes.sort((a, b) => a.sortOrder - b.sortOrder);
+export const getBoxes = () => [...getData().boxes].sort((a, b) => {
+  const homeRank = (box) => {
+    if (box.color === 'important') return 0;
+    if (box.color === 'misc') return 1;
+    if (box.homePinned) return 2;
+    return 3;
+  };
+  return homeRank(a) - homeRank(b)
+    || (Number(a.sortOrder) || 0) - (Number(b.sortOrder) || 0)
+    || taskTime(a.createdAt) - taskTime(b.createdAt);
+});
 export const getTasks = () => getData().tasks.filter((t) => !t.deleted);
 export const getSettings = () => getData().settings;
 
@@ -520,6 +557,55 @@ export function updateBox(boxId, patch) {
       body: JSON.stringify(updated),
     });
   }
+  return updated;
+}
+
+export function setHomePinnedBox(boxId) {
+  const current = getData().boxes.find((box) => box.id === boxId);
+  if (!current || FIXED_HOME_BOX_COLORS.has(current.color)) return null;
+  const shouldPin = !current.homePinned;
+  const changed = [];
+  const timestamp = new Date().toISOString();
+
+  updateData((data) => {
+    data.boxes.forEach((box) => {
+      const nextPinned = FIXED_HOME_BOX_COLORS.has(box.color) ? false : (shouldPin && box.id === boxId);
+      if (Boolean(box.homePinned) === nextPinned) return;
+      box.homePinned = nextPinned;
+      box.updatedAt = timestamp;
+      changed.push({ ...box });
+    });
+    return data;
+  }, { skipCloud: true });
+
+  changed.forEach((box) => {
+    scheduleApiRequest(`/boxes/${encodeURIComponent(box.id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(box),
+    });
+  });
+  return shouldPin;
+}
+
+export function deleteBox(boxId) {
+  const snapshot = getData();
+  const box = snapshot.boxes.find((item) => item.id === boxId);
+  if (!box) throw new Error('box_not_found');
+  if (FIXED_HOME_BOX_COLORS.has(box.color)) throw new Error('box_fixed');
+  const activeCount = snapshot.tasks.filter((task) => task.boxId === boxId && !task.deleted).length;
+  if (activeCount) {
+    const error = new Error('box_not_empty');
+    error.count = activeCount;
+    throw error;
+  }
+
+  updateData((data) => {
+    data.boxes = data.boxes.filter((item) => item.id !== boxId);
+    data.tasks = data.tasks.filter((task) => task.boxId !== boxId);
+    return data;
+  }, { skipCloud: true });
+  scheduleApiRequest(`/boxes/${encodeURIComponent(boxId)}`, { method: 'DELETE' });
+  return box;
 }
 
 export function setSettings(patch) {
@@ -704,8 +790,36 @@ async function apiRequest(path, options = {}) {
 function scheduleApiRequest(path, options = {}) {
   const config = getApiConfig();
   if (!config.enabled) return false;
-  apiRequest(path, options).catch(() => {});
+  const body = (() => {
+    try {
+      return typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
+    } catch {
+      return null;
+    }
+  })();
+  const recordMatch = path.match(/^\/(tasks|boxes)\/([^/?]+)/);
+  const collectionMatch = path.match(/^\/(tasks|boxes)$/);
+  const queueKey = recordMatch
+    ? `${recordMatch[1]}:${decodeURIComponent(recordMatch[2])}`
+    : (collectionMatch && body?.id ? `${collectionMatch[1]}:${body.id}` : path);
+  const previous = apiMutationQueues.get(queueKey) || Promise.resolve();
+  const queued = previous
+    .catch(() => null)
+    .then(() => apiRequest(path, options));
+  apiMutationVersion += 1;
+  apiMutationQueues.set(queueKey, queued);
+  queued
+    .finally(() => {
+      if (apiMutationQueues.get(queueKey) === queued) apiMutationQueues.delete(queueKey);
+    })
+    .catch(() => {});
   return true;
+}
+
+async function waitForApiMutations() {
+  while (apiMutationQueues.size) {
+    await Promise.allSettled([...apiMutationQueues.values()]);
+  }
 }
 
 function preserveLocalOnlySettings(nextSettings = {}, localSettings = {}) {
@@ -764,12 +878,19 @@ function mergeData(local, cloud) {
 }
 
 export async function pullDataFromCloud(options = {}) {
-  const local = getData();
-  const apiConfig = getApiConfig(local.settings);
+  const apiConfig = getApiConfig();
 
   if (!apiConfig.enabled) return false;
 
-  const cloudData = normalize(await apiRequest('/taskbox'));
+  await waitForApiMutations();
+  const versionBeforePull = apiMutationVersion;
+  let cloudData = normalize(await apiRequest('/taskbox'));
+  if (apiMutationVersion !== versionBeforePull) {
+    await waitForApiMutations();
+    cloudData = normalize(await apiRequest('/taskbox'));
+  }
+  // Read after the request: the user may have edited records while the pull was in flight.
+  const local = getData();
   const merged = mergeData(local, cloudData);
   merged.settings = preserveLocalOnlySettings(merged.settings, local.settings);
   saveData(merged, { skipCloud: true });
