@@ -1,4 +1,4 @@
-const CACHE_NAME = 'taskbox-v30-box-types';
+const CACHE_NAME = 'taskbox-v31-mainlines-sync';
 const CACHE_FILES = [
   './',
   './index.html',
@@ -9,6 +9,9 @@ const CACHE_FILES = [
   './js/task-utils.js',
   './js/box-types.js',
   './js/box-type-sheet.js',
+  './js/core-box-nav.js',
+  './js/mainline-fields.js',
+  './js/mainline-page.js',
   './js/recurrence.js',
   './js/recurrence-ui.js',
   './js/home.js',

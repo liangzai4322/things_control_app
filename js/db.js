@@ -99,6 +99,8 @@ function normalize(data = {}) {
         recurrence: t.recurrence && typeof t.recurrence === 'object' ? t.recurrence : null,
         nextRunAt: t.nextRunAt || null,
         occurrenceStatus: t.occurrenceStatus || null,
+        mainlineId: t.mainlineId || null,
+        milestoneId: t.milestoneId || null,
         itemType: t.itemType || null,
         durationMinutes: Math.max(0, Number(t.durationMinutes) || 0),
         cooldownMinutes: Math.max(0, Number(t.cooldownMinutes) || 0),
@@ -114,6 +116,33 @@ function normalize(data = {}) {
         updatedAt: t.updatedAt || t.createdAt || new Date().toISOString()
       };
     }),
+    mainlines: (Array.isArray(data.mainlines) ? data.mainlines : []).map((mainline, index) => ({
+      ...mainline,
+      id: mainline.id || uid(),
+      name: String(mainline.name || '').trim(),
+      outcome: String(mainline.outcome || '').trim(),
+      currentPhase: String(mainline.currentPhase || '').trim(),
+      color: String(mainline.color || '#e66a4e'),
+      icon: String(mainline.icon || '◆'),
+      status: ['active', 'maintenance', 'paused', 'completed'].includes(mainline.status) ? mainline.status : 'active',
+      isWeeklyFocus: Boolean(mainline.isWeeklyFocus),
+      targetDate: mainline.targetDate || null,
+      sortOrder: Number(mainline.sortOrder ?? index),
+      createdAt: mainline.createdAt || new Date().toISOString(),
+      updatedAt: mainline.updatedAt || mainline.createdAt || new Date().toISOString(),
+    })).filter((mainline) => mainline.name),
+    milestones: (Array.isArray(data.milestones) ? data.milestones : []).map((milestone, index) => ({
+      ...milestone,
+      id: milestone.id || uid(),
+      mainlineId: milestone.mainlineId || null,
+      title: String(milestone.title || '').trim(),
+      status: milestone.status === 'completed' ? 'completed' : 'open',
+      targetDate: milestone.targetDate || null,
+      sortOrder: Number(milestone.sortOrder ?? index),
+      completedAt: milestone.status === 'completed' ? (milestone.completedAt || new Date().toISOString()) : null,
+      createdAt: milestone.createdAt || new Date().toISOString(),
+      updatedAt: milestone.updatedAt || milestone.createdAt || new Date().toISOString(),
+    })).filter((milestone) => milestone.mainlineId && milestone.title),
     usageLogs: (Array.isArray(data.usageLogs) ? data.usageLogs : []).map((log) => ({
       ...log,
       id: log.id || uid(),
@@ -176,6 +205,8 @@ function seed() {
   const initial = normalize({
     boxes,
     tasks,
+    mainlines: [],
+    milestones: [],
     usageLogs: [],
     settings: {
       deepseekApiKey: '',
@@ -326,6 +357,16 @@ export const getBoxes = () => [...getData().boxes].sort((a, b) => {
     || (Number(a.sortOrder) || 0) - (Number(b.sortOrder) || 0)
     || taskTime(a.createdAt) - taskTime(b.createdAt);
 });
+export const getMainlines = () => [...getData().mainlines].sort((left, right) => {
+  const statusRank = { active: 0, maintenance: 1, paused: 2, completed: 3 };
+  return Number(right.isWeeklyFocus) - Number(left.isWeeklyFocus)
+    || (statusRank[left.status] ?? 9) - (statusRank[right.status] ?? 9)
+    || Number(left.sortOrder || 0) - Number(right.sortOrder || 0)
+    || taskTime(left.createdAt) - taskTime(right.createdAt);
+});
+export const getMilestones = (mainlineId = null) => [...getData().milestones]
+  .filter((milestone) => !mainlineId || milestone.mainlineId === mainlineId)
+  .sort((left, right) => Number(left.sortOrder || 0) - Number(right.sortOrder || 0) || taskTime(left.createdAt) - taskTime(right.createdAt));
 export const getTasks = () => {
   ensureRecurringTaskInstances();
   return getData().tasks.filter((t) => !t.deleted && !t.isRecurringTemplate);
@@ -467,6 +508,8 @@ export function addTask(task) {
       pinned: Boolean(task.pinLevel ?? task.pinned),
       scheduledAt: task.scheduledAt ?? null,
       dueDate: task.dueDate ?? null,
+      mainlineId: task.mainlineId || null,
+      milestoneId: task.milestoneId || null,
       itemType: task.itemType || inferBoxType(box),
       durationMinutes: Math.max(0, Number(task.durationMinutes) || 0),
       cooldownMinutes: Math.max(0, Number(task.cooldownMinutes) || 0),
@@ -517,6 +560,8 @@ function buildRecurringOccurrence(template, scheduledAt, data) {
     pinned: Boolean(template.pinLevel ?? template.pinned),
     scheduledAt,
     dueDate: getOccurrenceDueAt(recurrence, scheduledAt),
+    mainlineId: template.mainlineId || null,
+    milestoneId: template.milestoneId || null,
     isCompleted: false,
     deleted: false,
     deletedAt: null,
@@ -631,6 +676,8 @@ export function addRecurringTask(task, recurrenceInput) {
       pinned: Boolean(task.pinLevel ?? task.pinned),
       scheduledAt: firstRunAt,
       dueDate: getOccurrenceDueAt(recurrence, firstRunAt),
+      mainlineId: task.mainlineId || null,
+      milestoneId: task.milestoneId || null,
       isCompleted: false,
       deleted: false,
       deletedAt: null,
@@ -694,7 +741,7 @@ export function updateRecurringTemplate(templateId, patch = {}) {
   };
   if (patch.dueDate !== undefined) recurrenceInput.deadlineOffsetMinutes = null;
   const recurrence = normalizeRecurrenceRule(recurrenceInput, anchorAt, dueDate);
-  const sharedFields = ['content', 'boxId', 'priority', 'weight', 'pointsValue', 'note', 'pinLevel', 'pinned'];
+  const sharedFields = ['content', 'boxId', 'priority', 'weight', 'pointsValue', 'note', 'pinLevel', 'pinned', 'mainlineId', 'milestoneId'];
   sharedFields.forEach((key) => {
     if (patch[key] !== undefined) template[key] = patch[key];
   });
@@ -786,6 +833,120 @@ export async function addBox({ name, description = '', boxType = 'task', typeCon
   return created;
 }
 
+export function addMainline(payload = {}) {
+  const name = String(payload.name || '').trim();
+  if (!name) throw new Error('mainline name required');
+  let created = null;
+  updateData((data) => {
+    if (data.mainlines.some((mainline) => mainline.name === name && mainline.status !== 'completed')) throw new Error('mainline exists');
+    const timestamp = new Date().toISOString();
+    created = {
+      id: uid(),
+      name,
+      outcome: String(payload.outcome || '').trim(),
+      currentPhase: String(payload.currentPhase || '').trim(),
+      color: payload.color || '#e66a4e',
+      icon: payload.icon || '◆',
+      status: payload.status || 'active',
+      isWeeklyFocus: Boolean(payload.isWeeklyFocus),
+      targetDate: payload.targetDate || null,
+      sortOrder: data.mainlines.length,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    data.mainlines.push(created);
+    return data;
+  }, { skipCloud: true });
+  scheduleApiRequest('/mainlines', { method: 'POST', body: JSON.stringify(created) });
+  return created;
+}
+
+export function updateMainline(mainlineId, patch = {}) {
+  let updated = null;
+  updateData((data) => {
+    const mainline = data.mainlines.find((item) => item.id === mainlineId);
+    if (!mainline) return data;
+    Object.assign(mainline, patch, { updatedAt: new Date().toISOString() });
+    updated = { ...mainline };
+    return data;
+  }, { skipCloud: true });
+  if (updated) scheduleApiRequest(`/mainlines/${encodeURIComponent(mainlineId)}`, { method: 'PATCH', body: JSON.stringify(updated) });
+  return updated;
+}
+
+export function deleteMainline(mainlineId) {
+  let removed = false;
+  updateData((data) => {
+    const before = data.mainlines.length;
+    data.mainlines = data.mainlines.filter((item) => item.id !== mainlineId);
+    data.milestones = data.milestones.filter((item) => item.mainlineId !== mainlineId);
+    data.tasks.forEach((task) => {
+      if (task.mainlineId !== mainlineId) return;
+      task.mainlineId = null;
+      task.milestoneId = null;
+      task.updatedAt = new Date().toISOString();
+    });
+    removed = data.mainlines.length !== before;
+    return data;
+  }, { skipCloud: true });
+  if (removed) scheduleApiRequest(`/mainlines/${encodeURIComponent(mainlineId)}`, { method: 'DELETE' });
+  return removed;
+}
+
+export function addMilestone(mainlineId, payload = {}) {
+  const title = String(payload.title || '').trim();
+  if (!mainlineId || !title) throw new Error('milestone required');
+  let created = null;
+  updateData((data) => {
+    const timestamp = new Date().toISOString();
+    const peers = data.milestones.filter((item) => item.mainlineId === mainlineId);
+    created = {
+      id: uid(),
+      mainlineId,
+      title,
+      status: payload.status === 'completed' ? 'completed' : 'open',
+      targetDate: payload.targetDate || null,
+      sortOrder: peers.length,
+      completedAt: payload.status === 'completed' ? timestamp : null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    data.milestones.push(created);
+    return data;
+  }, { skipCloud: true });
+  scheduleApiRequest('/milestones', { method: 'POST', body: JSON.stringify(created) });
+  return created;
+}
+
+export function updateMilestone(milestoneId, patch = {}) {
+  let updated = null;
+  updateData((data) => {
+    const milestone = data.milestones.find((item) => item.id === milestoneId);
+    if (!milestone) return data;
+    Object.assign(milestone, patch, { updatedAt: new Date().toISOString() });
+    milestone.completedAt = milestone.status === 'completed' ? (milestone.completedAt || new Date().toISOString()) : null;
+    updated = { ...milestone };
+    return data;
+  }, { skipCloud: true });
+  if (updated) scheduleApiRequest(`/milestones/${encodeURIComponent(milestoneId)}`, { method: 'PATCH', body: JSON.stringify(updated) });
+  return updated;
+}
+
+export function deleteMilestone(milestoneId) {
+  let removed = false;
+  updateData((data) => {
+    const before = data.milestones.length;
+    data.milestones = data.milestones.filter((item) => item.id !== milestoneId);
+    data.tasks.forEach((task) => {
+      if (task.milestoneId === milestoneId) task.milestoneId = null;
+    });
+    removed = data.milestones.length !== before;
+    return data;
+  }, { skipCloud: true });
+  if (removed) scheduleApiRequest(`/milestones/${encodeURIComponent(milestoneId)}`, { method: 'DELETE' });
+  return removed;
+}
+
 
 export function restoreTask(task) {
   let restored = null;
@@ -837,7 +998,7 @@ export function restoreTask(task) {
 }
 
 export function updateTask(taskId, patch) {
-  const cloudCriticalKeys = new Set(['content', 'boxId', 'priority', 'weight', 'pointsValue', 'progress', 'pinLevel', 'pinned', 'scheduledAt', 'dueDate', 'isCompleted', 'deleted', 'deletedAt', 'sortOrder', 'completedAt', 'note', 'recurrence', 'nextRunAt', 'occurrenceStatus', 'itemType', 'durationMinutes', 'cooldownMinutes', 'usageCount', 'lastUsedAt', 'pointsCost', 'url', 'tags', 'favorite', 'archived']);
+  const cloudCriticalKeys = new Set(['content', 'boxId', 'priority', 'weight', 'pointsValue', 'progress', 'pinLevel', 'pinned', 'scheduledAt', 'dueDate', 'isCompleted', 'deleted', 'deletedAt', 'sortOrder', 'completedAt', 'note', 'recurrence', 'nextRunAt', 'occurrenceStatus', 'itemType', 'durationMinutes', 'cooldownMinutes', 'usageCount', 'lastUsedAt', 'pointsCost', 'url', 'tags', 'favorite', 'archived', 'mainlineId', 'milestoneId']);
   const shouldCloudPush = Object.keys(patch || {}).some((k) => cloudCriticalKeys.has(k));
   let updated = null;
   let previous = null;
@@ -1228,8 +1389,8 @@ function scheduleApiRequest(path, options = {}) {
       return null;
     }
   })();
-  const recordMatch = path.match(/^\/(tasks|boxes)\/([^/?]+)/);
-  const collectionMatch = path.match(/^\/(tasks|boxes)$/);
+  const recordMatch = path.match(/^\/(tasks|boxes|mainlines|milestones)\/([^/?]+)/);
+  const collectionMatch = path.match(/^\/(tasks|boxes|mainlines|milestones)$/);
   const queueKey = recordMatch
     ? `${recordMatch[1]}:${decodeURIComponent(recordMatch[2])}`
     : (collectionMatch && body?.id ? `${collectionMatch[1]}:${body.id}` : path);
@@ -1282,6 +1443,8 @@ function mergeData(local, cloud) {
     ...local,
     boxes: [...local.boxes, ...cloud.boxes],
     tasks: [...local.tasks, ...cloud.tasks],
+    mainlines: [...(local.mainlines || []), ...(cloud.mainlines || [])],
+    milestones: [...(local.milestones || []), ...(cloud.milestones || [])],
     usageLogs: [...(local.usageLogs || []), ...(cloud.usageLogs || [])],
     meta: { updatedAt: new Date().toISOString() },
   });
@@ -1315,7 +1478,30 @@ function mergeData(local, cloud) {
   });
   merged.usageLogs = [...usageLogsById.values()];
 
+  const mergeRecordList = (records) => {
+    const byId = new Map();
+    records.forEach((record) => {
+      const current = byId.get(record.id);
+      byId.set(record.id, chooseBoxCopy(current, record));
+    });
+    return [...byId.values()];
+  };
+  merged.mainlines = mergeRecordList(merged.mainlines);
+  const validMainlineIds = new Set(merged.mainlines.map((mainline) => mainline.id));
+  merged.milestones = mergeRecordList(merged.milestones).filter((milestone) => validMainlineIds.has(milestone.mainlineId));
+
   return merged;
+}
+
+function syncContentFingerprint(data) {
+  const stable = (records = []) => [...records].sort((left, right) => String(left.id || '').localeCompare(String(right.id || '')));
+  return JSON.stringify({
+    boxes: stable(data.boxes),
+    tasks: stable(data.tasks),
+    mainlines: stable(data.mainlines),
+    milestones: stable(data.milestones),
+    usageLogs: stable(data.usageLogs),
+  });
 }
 
 export async function pullDataFromCloud(options = {}) {
@@ -1334,7 +1520,8 @@ export async function pullDataFromCloud(options = {}) {
   const local = getData();
   const merged = mergeData(local, cloudData);
   merged.settings = preserveLocalOnlySettings(merged.settings, local.settings);
-  saveData(merged, { skipCloud: true });
+  const changed = syncContentFingerprint(local) !== syncContentFingerprint(merged);
+  if (changed) saveData(merged, { skipCloud: true });
   ensureRecurringTaskInstances();
-  return 'merged';
+  return changed ? 'merged' : 'unchanged';
 }

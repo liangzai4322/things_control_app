@@ -1,4 +1,4 @@
-import { getBoxes, getDeletedTasksByBox, getTasksByBox, getUsageLogs, recordPoolUsage, updateTask, deleteTask, deleteRecurringSeries, reorderTasks, updateBox, addRecurringTask, addTask, playSound, restoreTask, pullDataFromCloud } from './db.js';
+import { getBoxes, getDeletedTasksByBox, getMainlines, getTasksByBox, getUsageLogs, recordPoolUsage, updateTask, deleteTask, deleteRecurringSeries, reorderTasks, updateBox, addRecurringTask, addTask, playSound, restoreTask, pullDataFromCloud } from './db.js';
 import { navigate, openSheet, showToast } from './app.js';
 import { openLuckyWheel } from './lucky-wheel.js';
 import { getPointsBalance, getTaskPointValue, recordPointsTransaction, reconcileCompletedTaskPoints, syncTaskCompletionPoints } from './points-store.js';
@@ -6,6 +6,8 @@ import { formatDueLabel as formatDueDateLabel, formatScheduledLabel, fromDateTim
 import { getRecurrenceLabel } from './recurrence.js';
 import { bindRecurrenceEditor, renderRecurrenceEditor } from './recurrence-ui.js';
 import { openBoxTypeChangeSheet } from './box-type-sheet.js';
+import { isIdeaBox, renderCoreBoxNav } from './core-box-nav.js';
+import { bindMainlineTaskFields, renderMainlineTaskFields } from './mainline-fields.js';
 import {
   BOX_TYPE_COLLECTION,
   BOX_TYPE_POOL,
@@ -19,7 +21,6 @@ import {
 
 const LONG_PRESS_MS = 500;
 const DELETE_SWIPE_THRESHOLD = 120;
-const QUICK_SWITCH_COLORS = ['important', 'misc', 'relax'];
 const QUICK_SWITCH_LABELS = {
   important: '重要',
   misc: '待办',
@@ -183,28 +184,8 @@ function renderDeletedTasks(tasks, box) {
   `).join('');
 }
 
-function getQuickSwitchBoxes(currentBox, boxes) {
-  if (!QUICK_SWITCH_COLORS.includes(currentBox?.color)) return [];
-  return QUICK_SWITCH_COLORS
-    .map((color) => boxes.find((box) => box.color === color))
-    .filter((box) => box && box.id !== currentBox.id);
-}
-
 function getQuickSwitchLabel(box) {
   return QUICK_SWITCH_LABELS[box.color] || String(box.name || '').replace(/盒$/, '') || '切换';
-}
-
-function renderQuickSwitches(boxes) {
-  if (!boxes.length) return '';
-  return `
-    <nav class="detail-switchers" aria-label="快速切换盒子">
-      ${boxes.map((box) => `
-        <button class="quick-box-switch ${box.color}" type="button" data-quick-box="${box.id}" aria-label="切换到${escapeHtml(box.name)}">
-          ${escapeHtml(getQuickSwitchLabel(box))}
-        </button>
-      `).join('')}
-    </nav>
-  `;
 }
 
 function getBoxPinStyle(box) {
@@ -324,10 +305,13 @@ function commitPoolUsage(task) {
   return true;
 }
 
-function getTaskMoveTarget(box, boxes) {
-  if (box?.color === 'important') return boxes.find((item) => item.color === 'misc') || null;
-  if (box?.color === 'misc') return boxes.find((item) => item.color === 'important') || null;
-  return null;
+function getTaskMoveTargets(box, boxes) {
+  const important = boxes.find((item) => item.color === 'important');
+  const todo = boxes.find((item) => item.color === 'misc');
+  if (isIdeaBox(box)) return [important, todo].filter(Boolean);
+  if (box?.color === 'important') return [todo].filter(Boolean);
+  if (box?.color === 'misc') return [important].filter(Boolean);
+  return [];
 }
 
 function moveTaskToBox(app, currentBox, task, targetBox) {
@@ -337,6 +321,7 @@ function moveTaskToBox(app, currentBox, task, targetBox) {
   const nextSortOrder = targetTasks.reduce((max, item) => Math.max(max, Number(item.sortOrder) || 0), -1) + 1;
   updateTask(task.id, {
     boxId: targetBox.id,
+    itemType: inferBoxType(targetBox),
     sortOrder: nextSortOrder,
   });
   if (task.recurrenceTemplateId) updateTask(task.recurrenceTemplateId, { boxId: targetBox.id });
@@ -354,7 +339,7 @@ function openTaskContextMenu(event, app, box, task) {
   menu.style.cssText = getBoxPinStyle(box);
   const currentPinLevel = getTaskPinLevel(task);
   const boxType = inferBoxType(box);
-  const moveTarget = boxType === BOX_TYPE_TASK ? getTaskMoveTarget(box, getBoxes()) : null;
+  const moveTargets = (boxType === BOX_TYPE_TASK || isIdeaBox(box)) ? getTaskMoveTargets(box, getBoxes()) : [];
   const itemName = getBoxTypeDefinition(boxType).itemName;
   menu.innerHTML = `
     <div class="task-context-title">${escapeHtml(itemName)}操作</div>
@@ -367,12 +352,16 @@ function openTaskContextMenu(event, app, box, task) {
       `).join('')}
     </div>
     ${currentPinLevel ? '<button type="button" data-action="unpin">取消置顶</button>' : ''}
-    ${moveTarget ? `
+    ${moveTargets.length ? `
       <div class="task-context-divider" aria-hidden="true"></div>
-      <button type="button" data-action="move" class="move-task" style="${getBoxPinStyle(moveTarget)}">
-        <span class="task-context-action-icon" aria-hidden="true">⇄</span>
-        <span>移动到${escapeHtml(getQuickSwitchLabel(moveTarget))}盒${task.recurrenceTemplateId ? '（本次及以后）' : ''}</span>
-      </button>
+      <div class="task-move-targets">
+        ${moveTargets.map((target) => `
+          <button type="button" data-action="move" data-target-box="${target.id}" class="move-task" style="${getBoxPinStyle(target)}">
+            <span class="task-context-action-icon" aria-hidden="true">⇄</span>
+            <span>移动到${escapeHtml(getQuickSwitchLabel(target))}盒${task.recurrenceTemplateId ? '（本次及以后）' : ''}</span>
+          </button>
+        `).join('')}
+      </div>
     ` : ''}
     ${boxType === BOX_TYPE_POOL ? '<button type="button" data-action="use"><span class="task-context-action-icon" aria-hidden="true">✦</span><span>记录使用一次</span></button>' : ''}
     ${boxType === BOX_TYPE_COLLECTION ? `<button type="button" data-action="archive"><span class="task-context-action-icon" aria-hidden="true">⌑</span><span>${task.archived ? '移出归档' : '归档条目'}</span></button>` : ''}
@@ -392,7 +381,10 @@ function openTaskContextMenu(event, app, box, task) {
     const action = button?.dataset?.action;
     if (action === 'pin-level') setTaskPinLevel(app, box, task, button.dataset.pinLevel);
     if (action === 'unpin') setTaskPinLevel(app, box, task, null);
-    if (action === 'move') moveTaskToBox(app, box, task, moveTarget);
+    if (action === 'move') {
+      const target = moveTargets.find((item) => item.id === button.dataset.targetBox);
+      moveTaskToBox(app, box, task, target);
+    }
     if (action === 'use') {
       if (!commitPoolUsage(task)) return;
       closeTaskContextMenu();
@@ -519,7 +511,6 @@ export function renderBoxDetail(app, boxId) {
 
   const tasks = getTasksByBox(boxId);
   const deletedTasks = getDeletedTasksByBox(boxId);
-  const quickSwitchBoxes = getQuickSwitchBoxes(box, boxes);
   const taskMap = new Map(tasks.map((task) => [task.id, task]));
   const boxType = inferBoxType(box);
   const typeDefinition = getBoxTypeDefinition(boxType);
@@ -554,7 +545,7 @@ export function renderBoxDetail(app, boxId) {
       <header class="topbar safe-top detail-topbar">
         <button class="icon-btn icon-btn-ghost" id="backBtn">←</button>
         <div class="row gap8 detail-actions">
-          ${renderQuickSwitches(quickSwitchBoxes)}
+          ${renderCoreBoxNav({ currentBoxId: box.id })}
           <button class="icon-btn icon-btn-ghost" id="detailPullBtn" aria-label="拉取最新盒子数据">↻</button>
           ${boxType === BOX_TYPE_POOL ? '<button class="icon-btn icon-btn-ghost" id="wheelBtn" aria-label="随机抽取">🎡</button>' : ''}
           <button class="icon-btn icon-btn-ghost" id="settingsBtn" aria-label="设置">⚙</button>
@@ -614,9 +605,6 @@ export function renderBoxDetail(app, boxId) {
   `;
 
   app.querySelector('#backBtn').addEventListener('click', () => navigate('#home'));
-  app.querySelectorAll('[data-quick-box]').forEach((button) => {
-    button.addEventListener('click', () => navigate(`#box/${button.dataset.quickBox}`));
-  });
   app.querySelector('#detailPullBtn').addEventListener('click', async () => {
     try {
       const result = await pullDataFromCloud({ force: true });
@@ -698,6 +686,7 @@ function taskItem(task, box) {
   const notePreview = hasNote ? escapeHtml(String(task.note).trim().slice(0, 40)) : '';
   const pointsValue = getTaskPointValue(task, box);
   const pinLevel = getTaskPinLevel(task);
+  const mainline = task.mainlineId ? getMainlines().find((item) => item.id === task.mainlineId) : null;
 
   return `
     <article class="task-item ${task.isCompleted ? 'done' : ''} ${pinLevel ? 'pinned' : ''} ${overdue ? 'overdue' : ''} ${needsReschedule ? 'needs-reschedule' : ''}" data-id="${task.id}" style="${getBoxPinStyle(box)}">
@@ -714,6 +703,7 @@ function taskItem(task, box) {
             ${task.scheduledAt ? `<span class="task-chip planned-chip ${needsReschedule ? 'reschedule-chip' : ''}">${escapeHtml(needsReschedule ? `待重新安排 · ${formatScheduledLabel(task.scheduledAt)}` : `计划 ${formatScheduledLabel(task.scheduledAt)}`)}</span>` : ''}
             ${task.dueDate ? `<span class="task-chip ${overdue ? 'overdue-chip' : ''}">${escapeHtml(formatDueDateLabel(task.dueDate))}</span>` : ''}
             ${task.recurrence ? `<span class="task-chip recurrence-chip">↻ ${escapeHtml(getRecurrenceLabel(task.recurrence))}</span>` : ''}
+            ${mainline ? `<span class="task-chip mainline-task-chip">◆ ${escapeHtml(mainline.name)}</span>` : ''}
             <span class="task-chip">${taskProgress}%</span>
             ${pointsValue > 0 ? `<span class="task-chip points-chip">+${pointsValue} 分</span>` : ''}
           </div>
@@ -1069,6 +1059,7 @@ function openTaskEditor({ taskId, boxId }, onDone) {
           ${taskBoxes.map((box) => `<option value="${box.id}" ${box.id === (task?.boxId || boxId) ? 'selected' : ''}>${escapeHtml(box.name)}</option>`).join('')}
         </select>
       </label>
+      ${renderMainlineTaskFields(task || {})}
       <label>备注（可选）<textarea id="taskNote" class="input" rows="4" placeholder="写下补充说明、下一步或上下文">${escapeHtml(task?.note || '')}</textarea></label>
 
       <div class="sheet-actions">
@@ -1087,6 +1078,7 @@ function openTaskEditor({ taskId, boxId }, onDone) {
   const recurrenceEditor = task?.recurrenceTemplateId
     ? { getValue: () => null }
     : bindRecurrenceEditor(root, { prefix: 'detail-task', scheduledInput });
+  const mainlineFields = bindMainlineTaskFields(root);
 
   root.querySelectorAll('[data-schedule-preset]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -1155,6 +1147,7 @@ function openTaskEditor({ taskId, boxId }, onDone) {
       scheduledAt: fromDateTimeLocalValue(scheduledAt),
       dueDate: fromDateTimeLocalValue(due),
       boxId: nextBoxId,
+      ...mainlineFields.getValue(),
       note: root.querySelector('#taskNote').value.trim(),
       isCompleted: done,
       completedAt: done ? (task?.completedAt || new Date().toISOString()) : null,

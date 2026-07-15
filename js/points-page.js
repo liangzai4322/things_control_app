@@ -1,4 +1,5 @@
 import { navigate, openSheet, showToast } from './app.js';
+import { renderCoreBoxNav } from './core-box-nav.js';
 import {
   ensurePointsData,
   getFilteredTransactions,
@@ -287,6 +288,7 @@ export async function renderPointsPage(app, viewState = {}) {
           <h2>积分</h2>
         </div>
         <div class="row gap8 hero-tools points-topbar-actions">
+          ${renderCoreBoxNav()}
           <button class="icon-btn icon-btn-ghost" id="pointsPullBtn" aria-label="拉取积分账本">↻</button>
           <button class="icon-btn icon-btn-ghost" id="pointsAiTopBtn" aria-label="AI识别积分">✦</button>
           <button class="icon-btn icon-btn-ghost" id="pointsSettingsBtn" aria-label="积分设置">⚙</button>

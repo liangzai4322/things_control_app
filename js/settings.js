@@ -1,6 +1,7 @@
 import { getSettings, setSettings, exportData, importData, pullDataFromCloud, exportDailySummary } from './db.js';
 import { navigate, showToast } from './app.js';
 import { pullPointsFromCloud } from './points-store.js';
+import { renderCoreBoxNav } from './core-box-nav.js';
 
 const DEFAULT_API_ENDPOINT = 'https://liangzai666.com/taskbox-api/v1';
 let lastAutoPullSignature = '';
@@ -81,7 +82,7 @@ export function renderSettings(app) {
       <header class="topbar safe-top">
         <button class="icon-btn icon-btn-ghost" id="backBtn">←</button>
         <h2>设置</h2>
-        <span class="topbar-spacer"></span>
+        ${renderCoreBoxNav()}
       </header>
 
       <section class="panel settings-hero">

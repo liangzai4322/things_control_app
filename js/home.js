@@ -1,9 +1,11 @@
-import { addBox, addRecurringTask, addTask, deleteBox, deleteRecurringSeries, getBoxes, getRecurringTemplates, getTasks, playSound, pullDataFromCloud, setHomePinnedBox, setRecurringTemplatePaused, updateRecurringTemplate, updateTask } from './db.js';
+import { addBox, addRecurringTask, addTask, deleteBox, deleteRecurringSeries, getBoxes, getMainlines, getMilestones, getRecurringTemplates, getTasks, playSound, pullDataFromCloud, setHomePinnedBox, setRecurringTemplatePaused, updateRecurringTemplate, updateTask } from './db.js';
 import { navigate, openSheet, showToast } from './app.js';
 import { getPointsSummary, getTaskPointValue, syncTaskCompletionPoints } from './points-store.js';
 import { getRecurrenceLabel } from './recurrence.js';
 import { bindRecurrenceEditor, renderRecurrenceEditor } from './recurrence-ui.js';
 import { openBoxTypeChangeSheet } from './box-type-sheet.js';
+import { renderCoreBoxNav } from './core-box-nav.js';
+import { bindMainlineTaskFields, renderMainlineTaskFields } from './mainline-fields.js';
 import {
   BOX_TYPE_COLLECTION,
   BOX_TYPE_POOL,
@@ -82,6 +84,36 @@ function escapeHtml(value = '') {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;');
+}
+
+function getMainlineColor(value) {
+  return /^#[0-9a-f]{6}$/i.test(value || '') ? value : '#e85d45';
+}
+
+function renderHomeMainlines(mainlines, milestones, tasks) {
+  const visible = mainlines.filter((mainline) => mainline.status === 'active' || mainline.status === 'maintenance');
+  if (!visible.length) {
+    return '<button class="mainline-home-empty" id="emptyMainlineBtn"><span>◇</span><strong>建立第一条主线</strong><small>把分散任务串成一个明确结果。</small></button>';
+  }
+  return visible.map((mainline) => {
+    const lineMilestones = milestones.filter((milestone) => milestone.mainlineId === mainline.id);
+    const completed = lineMilestones.filter((milestone) => milestone.status === 'completed').length;
+    const percent = lineMilestones.length ? Math.round((completed / lineMilestones.length) * 100) : 0;
+    const openTasks = tasks.filter((task) => task.mainlineId === mainline.id && !task.isCompleted);
+    const next = [...openTasks].sort((left, right) => new Date(left.dueDate || left.scheduledAt || left.createdAt) - new Date(right.dueDate || right.scheduledAt || right.createdAt))[0];
+    return `
+      <button class="mainline-home-card ${mainline.isWeeklyFocus ? 'focus' : ''}" data-mainline-id="${mainline.id}" style="--mainline-color:${getMainlineColor(mainline.color)}">
+        <span class="mainline-home-rail"><i style="height:${percent}%"></i></span>
+        <span class="mainline-home-copy">
+          <span class="mainline-home-kicker">${mainline.isWeeklyFocus ? '本周重点' : (mainline.status === 'maintenance' ? '维持中' : '推进中')} · ${completed}/${lineMilestones.length} 里程碑</span>
+          <strong>${escapeHtml(mainline.name)}</strong>
+          <small>${escapeHtml(mainline.currentPhase || '尚未填写当前阶段')}</small>
+          <em>${next ? `下一步：${escapeHtml(next.content)}` : '主线断档 · 补一条下一步行动'}</em>
+        </span>
+        <b>${percent}%</b>
+      </button>
+    `;
+  }).join('');
 }
 
 function getGreeting(now = new Date()) {
@@ -394,6 +426,8 @@ function enterSmallWorld(app) {
 
 export function renderHome(app) {
   const boxes = getBoxes();
+  const mainlines = getMainlines();
+  const milestones = getMilestones();
   const tasks = getTasks();
   const recurringTemplates = getRecurringTemplates();
   const pointsSummary = getPointsSummary();
@@ -420,6 +454,7 @@ export function renderHome(app) {
             <p class="hero-subtitle">把任务拆进盒子，也把行动放回具体的一天。</p>
           </div>
           <div class="row gap8 hero-tools">
+            ${renderCoreBoxNav()}
             <button class="icon-btn icon-btn-ghost" id="homePullBtn" aria-label="拉取盒子数据">↻</button>
             <button class="icon-btn icon-btn-ghost" id="smallWorldEntry" aria-label="进入小世界">◎</button>
             <button class="icon-btn icon-btn-ghost points-tool-btn" id="pointsEntry" aria-label="积分 ${pointsSummary.balance}"><span>◆</span><small>${pointsSummary.balance}</small></button>
@@ -479,6 +514,14 @@ export function renderHome(app) {
           </div>
           ${agenda.open.length > 4 ? `<button class="agenda-expand-btn" id="agendaExpandBtn">${showAllAgendaTasks ? '收起' : `展开其余 ${agenda.open.length - 4} 项`}</button>` : ''}
         </div>
+      </section>
+
+      <section class="section-heading mainline-home-heading">
+        <div><p class="eyebrow">Main Threads</p><h2>当前主线</h2></div>
+        <button class="btn subtle compact" id="addMainlineBtn">＋ 新主线</button>
+      </section>
+      <section class="mainline-home-grid">
+        ${renderHomeMainlines(mainlines, milestones, tasks)}
       </section>
 
       <section class="section-heading">
@@ -623,6 +666,16 @@ export function renderHome(app) {
     }
   });
   app.querySelector('#settingsBtn').addEventListener('click', () => navigate('#settings'));
+  app.querySelectorAll('[data-mainline-id]').forEach((button) => button.addEventListener('click', () => navigate(`#mainline/${button.dataset.mainlineId}`)));
+  const openNewMainline = async () => {
+    const { openMainlineEditor } = await import('./mainline-page.js');
+    openMainlineEditor(null, (created) => {
+      if (created) navigate(`#mainline/${created.id}`);
+      else renderHome(app);
+    });
+  };
+  app.querySelector('#addMainlineBtn').addEventListener('click', openNewMainline);
+  app.querySelector('#emptyMainlineBtn')?.addEventListener('click', openNewMainline);
   const fabWrap = app.querySelector('#fabWrap');
   app.querySelector('#fabMain').addEventListener('click', () => fabWrap.classList.toggle('open'));
   app.querySelector('#fabAI').addEventListener('click', openAIExtractSheetLazy);
@@ -739,6 +792,7 @@ function openRecurringTemplateEditor(app, boxes, template) {
       </label>
       <label>当前/下次计划时间<input id="seriesScheduledAt" class="input" type="datetime-local" value="${escapeHtml(toDateTimeLocalValue(scheduledAt))}"></label>
       <label>当前/下次截止时间<input id="seriesDueAt" class="input" type="datetime-local" value="${escapeHtml(toDateTimeLocalValue(dueDate))}"></label>
+      ${renderMainlineTaskFields(template)}
       ${renderRecurrenceEditor('series-edit', template.recurrence)}
       <label>每期完成积分<input id="seriesPoints" class="input" type="number" min="0" step="1" value="${Math.max(0, Number(template.pointsValue) || 0)}"></label>
       <div class="sheet-actions">
@@ -753,6 +807,7 @@ function openRecurringTemplateEditor(app, boxes, template) {
     scheduledInput,
     initialRule: template.recurrence,
   });
+  const mainlineFields = bindMainlineTaskFields(root);
   const noRepeatButton = root.querySelector('[data-recurrence-type="none"]');
   noRepeatButton.disabled = true;
   noRepeatButton.title = '如需停止，请返回周期任务列表选择“停止周期”';
@@ -769,6 +824,7 @@ function openRecurringTemplateEditor(app, boxes, template) {
       scheduledAt: fromDateTimeLocalValue(scheduledInput.value),
       dueDate: fromDateTimeLocalValue(root.querySelector('#seriesDueAt').value),
       pointsValue: Math.max(0, Number(root.querySelector('#seriesPoints').value) || 0),
+      ...mainlineFields.getValue(),
       recurrence: recurrenceEditor.getValue(),
     });
     close();
@@ -810,6 +866,7 @@ function openAddTaskSheet(boxes, options = {}) {
         <div class="schedule-presets deadline-presets" aria-label="快捷设置截止时间">${renderDeadlinePresets()}</div>
         <input id="newTaskDueAt" class="input" type="datetime-local">
       </label>
+      ${renderMainlineTaskFields(options)}
       ${renderRecurrenceEditor('new-task')}
       <label>完成可得积分<input id="newTaskPoints" class="input" type="number" min="0" step="1" value="${defaultPoints}"></label>
       <div class="sheet-actions">
@@ -826,6 +883,7 @@ function openAddTaskSheet(boxes, options = {}) {
   bindSchedulePresets(root, scheduledInput);
   bindDeadlinePresets(root, dueInput);
   const recurrenceEditor = bindRecurrenceEditor(root, { prefix: 'new-task', scheduledInput });
+  const mainlineFields = bindMainlineTaskFields(root);
   if (options.focusRecurrence) root.querySelector('[data-recurrence-type="daily"]')?.focus();
   pointsInput.addEventListener('input', () => {
     pointsInput.dataset.touched = '1';
@@ -851,6 +909,7 @@ function openAddTaskSheet(boxes, options = {}) {
       pointsValue,
       scheduledAt: fromDateTimeLocalValue(scheduledInput.value),
       dueDate: fromDateTimeLocalValue(dueInput.value),
+      ...mainlineFields.getValue(),
     };
     const recurrence = recurrenceEditor.getValue();
     if (recurrence) addRecurringTask(payload, recurrence);

@@ -1,6 +1,7 @@
 import { navigate, openSheet, showToast } from './app.js';
 import { getSettings, setSettings } from './db.js';
 import { openWeightedWheel } from './lucky-wheel.js';
+import { renderCoreBoxNav } from './core-box-nav.js';
 
 const NUMERALS = ['壹', '貳', '參', '肆', '伍', '陸', '柒', '捌'];
 const SW_CACHE_KEYS = {
@@ -679,7 +680,7 @@ export async function renderSmallWorldMap(app) {
       <header class="topbar safe-top">
         <button class="icon-btn icon-btn-ghost" id="swBack">←</button>
         <h2>小世界</h2>
-        <button class="icon-btn icon-btn-ghost" id="swSettingsBtn" aria-label="小世界设置">⚙</button>
+        <div class="topbar-core-actions">${renderCoreBoxNav()}<button class="icon-btn icon-btn-ghost" id="swSettingsBtn" aria-label="小世界设置">⚙</button></div>
       </header>
       <section class="panel sw-world-loading" id="swContent">
         <p class="eyebrow">Loading</p>
@@ -795,7 +796,7 @@ export function renderSmallWorldSettings(app) {
       <header class="topbar safe-top">
         <button class="icon-btn icon-btn-ghost" id="swSettingsBackBtn">←</button>
         <h2>小世界设置</h2>
-        <span class="topbar-spacer"></span>
+        ${renderCoreBoxNav()}
       </header>
       <section class="panel sw-settings-hero">
         <p class="eyebrow">Server Database</p>
@@ -1067,7 +1068,7 @@ export async function renderSmallWorldFloor(app, type, floorId) {
       <header class="topbar safe-top">
         <button class="icon-btn icon-btn-ghost" id="swBack">←</button>
         <h2>${escapeHtml(getRealmMeta(type).shortTitle)}</h2>
-        <button class="icon-btn icon-btn-ghost" id="swMapBtn" aria-label="返回地图">⌂</button>
+        <div class="topbar-core-actions">${renderCoreBoxNav()}<button class="icon-btn icon-btn-ghost" id="swMapBtn" aria-label="返回地图">⌂</button></div>
       </header>
       ${renderFloorHero(type, floor, items, loaded, isPavilion)}
 

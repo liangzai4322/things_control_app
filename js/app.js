@@ -110,6 +110,16 @@ function route(options = {}) {
     return;
   }
 
+  if (path === 'mainline') {
+    const load = ROUTE_MODULE_CACHE.mainline || import('./mainline-page.js');
+    ROUTE_MODULE_CACHE.mainline = load;
+    load.then(({ renderMainlinePage }) => {
+      renderMainlinePage(app, param);
+      maybeResetViewPosition(options);
+    });
+    return;
+  }
+
   if (path === 'settings') {
     const load = ROUTE_MODULE_CACHE.settings || import('./settings.js');
     ROUTE_MODULE_CACHE.settings = load;
@@ -200,9 +210,9 @@ async function syncCloudInBackground() {
       pullDataFromCloud(),
       pointsModule.prewarmPointsData?.({ forceSource: true }),
     ]);
-    if ((location.hash || '#home') === '#home') renderHome(app);
     if (taskResult.status === 'fulfilled' && taskResult.value === 'merged') {
-      showToast('Cloud synced');
+      route({ preserveScroll: true });
+      showToast('云端数据已更新');
     }
   } catch {
     // no-op
