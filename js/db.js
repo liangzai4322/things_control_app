@@ -6,6 +6,11 @@ import {
   getRecurringOccurrenceId,
   normalizeRecurrenceRule,
 } from './recurrence.js';
+import {
+  inferBoxType,
+  normalizeBoxType,
+  normalizeBoxTypeConfig,
+} from './box-types.js';
 
 const STORAGE_KEY = 'taskbox_data';
 
@@ -63,11 +68,14 @@ function normalize(data = {}) {
       const renamed = b.name === '杂事盒' ? '待办盒' : (b.name === '重要事项' ? '重要盒' : b.name);
       const orderMap = { '重要盒': 0, '待办盒': 1, '放松盒': 2, '奖励盒': 3, '惩罚盒': 4, '碎片学习盒': 5, '健康盒': 6 };
       const color = b.color || BOX_COLOR_POOL[orderMap[renamed] ?? 0];
+      const boxType = normalizeBoxType(b.boxType, { ...b, color });
       return {
         ...b,
         name: renamed,
         sortOrder: orderMap[renamed] ?? b.sortOrder ?? 99,
         color,
+        boxType,
+        typeConfig: normalizeBoxTypeConfig(boxType, b.typeConfig),
         homePinned: FIXED_HOME_BOX_COLORS.has(color) ? false : Boolean(b.homePinned),
         updatedAt: b.updatedAt || b.createdAt || data.meta?.updatedAt || new Date().toISOString(),
       };
@@ -91,11 +99,30 @@ function normalize(data = {}) {
         recurrence: t.recurrence && typeof t.recurrence === 'object' ? t.recurrence : null,
         nextRunAt: t.nextRunAt || null,
         occurrenceStatus: t.occurrenceStatus || null,
+        itemType: t.itemType || null,
+        durationMinutes: Math.max(0, Number(t.durationMinutes) || 0),
+        cooldownMinutes: Math.max(0, Number(t.cooldownMinutes) || 0),
+        usageCount: Math.max(0, Number(t.usageCount) || 0),
+        lastUsedAt: t.lastUsedAt || null,
+        pointsCost: Math.max(0, Number(t.pointsCost) || 0),
+        url: String(t.url || '').trim(),
+        tags: Array.isArray(t.tags) ? t.tags.map((tag) => String(tag).trim()).filter(Boolean) : [],
+        favorite: Boolean(t.favorite),
+        archived: Boolean(t.archived),
         note: t.note ?? [t.reflection, t.review, t.summaryText].filter(Boolean).join('\n').trim(),
         syncKey: t.syncKey || `${t.createdAt || ''}::${t.content || ''}`,
         updatedAt: t.updatedAt || t.createdAt || new Date().toISOString()
       };
     }),
+    usageLogs: (Array.isArray(data.usageLogs) ? data.usageLogs : []).map((log) => ({
+      ...log,
+      id: log.id || uid(),
+      boxId: log.boxId || null,
+      taskId: log.taskId || null,
+      action: log.action || 'used',
+      usedAt: log.usedAt || log.createdAt || new Date().toISOString(),
+      createdAt: log.createdAt || log.usedAt || new Date().toISOString(),
+    })),
     settings: {
       deepseekApiKey: data.settings?.deepseekApiKey || '',
       themeMode: data.settings?.themeMode || 'system',
@@ -149,6 +176,7 @@ function seed() {
   const initial = normalize({
     boxes,
     tasks,
+    usageLogs: [],
     settings: {
       deepseekApiKey: '',
       themeMode: 'system',
@@ -425,6 +453,7 @@ export function getTasksByBox(boxId) {
 export function addTask(task) {
   let created = null;
   updateData((data) => {
+    const box = data.boxes.find((item) => item.id === task.boxId);
     const maxOrder = Math.max(-1, ...data.tasks.filter((t) => t.boxId === task.boxId && !t.isCompleted).map((t) => t.sortOrder));
     created = {
       id: uid(),
@@ -438,6 +467,16 @@ export function addTask(task) {
       pinned: Boolean(task.pinLevel ?? task.pinned),
       scheduledAt: task.scheduledAt ?? null,
       dueDate: task.dueDate ?? null,
+      itemType: task.itemType || inferBoxType(box),
+      durationMinutes: Math.max(0, Number(task.durationMinutes) || 0),
+      cooldownMinutes: Math.max(0, Number(task.cooldownMinutes) || 0),
+      usageCount: Math.max(0, Number(task.usageCount) || 0),
+      lastUsedAt: task.lastUsedAt || null,
+      pointsCost: Math.max(0, Number(task.pointsCost) || 0),
+      url: String(task.url || '').trim(),
+      tags: Array.isArray(task.tags) ? task.tags : [],
+      favorite: Boolean(task.favorite),
+      archived: Boolean(task.archived),
       isCompleted: task.isCompleted ?? false,
       deleted: false,
       deletedAt: null,
@@ -713,7 +752,7 @@ function nextUniqueBoxColor(boxes) {
   return BOX_COLOR_POOL[boxes.length % BOX_COLOR_POOL.length];
 }
 
-export async function addBox({ name, description = '' }) {
+export async function addBox({ name, description = '', boxType = 'task', typeConfig = {} }) {
   const cleanName = (name || '').trim();
   if (!cleanName) throw new Error('box name required');
 
@@ -722,6 +761,7 @@ export async function addBox({ name, description = '' }) {
     if (data.boxes.some((b) => b.name.trim() === cleanName)) {
       throw new Error('box exists');
     }
+    const normalizedType = normalizeBoxType(boxType);
     created = {
       id: uid(),
       name: cleanName,
@@ -730,6 +770,8 @@ export async function addBox({ name, description = '' }) {
       icon: '📦',
       sortOrder: data.boxes.length,
       isDefault: false,
+      boxType: normalizedType,
+      typeConfig: normalizeBoxTypeConfig(normalizedType, typeConfig),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -795,7 +837,7 @@ export function restoreTask(task) {
 }
 
 export function updateTask(taskId, patch) {
-  const cloudCriticalKeys = new Set(['content', 'boxId', 'priority', 'weight', 'pointsValue', 'progress', 'pinLevel', 'pinned', 'scheduledAt', 'dueDate', 'isCompleted', 'deleted', 'deletedAt', 'sortOrder', 'completedAt', 'note', 'recurrence', 'nextRunAt', 'occurrenceStatus']);
+  const cloudCriticalKeys = new Set(['content', 'boxId', 'priority', 'weight', 'pointsValue', 'progress', 'pinLevel', 'pinned', 'scheduledAt', 'dueDate', 'isCompleted', 'deleted', 'deletedAt', 'sortOrder', 'completedAt', 'note', 'recurrence', 'nextRunAt', 'occurrenceStatus', 'itemType', 'durationMinutes', 'cooldownMinutes', 'usageCount', 'lastUsedAt', 'pointsCost', 'url', 'tags', 'favorite', 'archived']);
   const shouldCloudPush = Object.keys(patch || {}).some((k) => cloudCriticalKeys.has(k));
   let updated = null;
   let previous = null;
@@ -831,6 +873,55 @@ export function updateTask(taskId, patch) {
     ensureRecurringTaskInstances();
   }
   return updated;
+}
+
+export function getUsageLogs({ boxId = null, taskId = null } = {}) {
+  return [...getData().usageLogs]
+    .filter((log) => (!boxId || log.boxId === boxId) && (!taskId || log.taskId === taskId))
+    .sort((left, right) => taskTime(right.usedAt || right.createdAt) - taskTime(left.usedAt || left.createdAt));
+}
+
+export function recordPoolUsage(taskId, action = 'used') {
+  let updated = null;
+  let log = null;
+  const timestamp = new Date().toISOString();
+  updateData((data) => {
+    const task = data.tasks.find((item) => item.id === taskId && !item.deleted);
+    if (!task) return data;
+    task.usageCount = Math.max(0, Number(task.usageCount) || 0) + (action === 'used' ? 1 : 0);
+    task.lastUsedAt = action === 'used' ? timestamp : task.lastUsedAt;
+    task.updatedAt = timestamp;
+    updated = { ...task };
+    log = {
+      id: uid(),
+      boxId: task.boxId,
+      taskId: task.id,
+      action,
+      title: task.content,
+      usedAt: timestamp,
+      createdAt: timestamp,
+      snapshot: {
+        durationMinutes: task.durationMinutes || 0,
+        pointsCost: task.pointsCost || 0,
+        usageCount: task.usageCount,
+      },
+    };
+    data.usageLogs.push(log);
+    return data;
+  }, { skipCloud: true });
+  if (updated) {
+    scheduleApiRequest(`/tasks/${encodeURIComponent(taskId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(updated),
+    });
+  }
+  if (log) {
+    scheduleApiRequest('/usage-logs', {
+      method: 'POST',
+      body: JSON.stringify(log),
+    });
+  }
+  return { task: updated, log };
 }
 
 export function deleteTask(taskId) {
@@ -880,7 +971,12 @@ export function updateBox(boxId, patch) {
   updateData((data) => {
     const box = data.boxes.find((b) => b.id === boxId);
     if (box) {
-      Object.assign(box, patch);
+      const nextPatch = { ...patch };
+      if (nextPatch.boxType !== undefined) {
+        nextPatch.boxType = normalizeBoxType(nextPatch.boxType, box);
+        nextPatch.typeConfig = normalizeBoxTypeConfig(nextPatch.boxType, nextPatch.typeConfig || box.typeConfig);
+      }
+      Object.assign(box, nextPatch);
       box.updatedAt = new Date().toISOString();
       updated = { ...box };
     }
@@ -1186,6 +1282,7 @@ function mergeData(local, cloud) {
     ...local,
     boxes: [...local.boxes, ...cloud.boxes],
     tasks: [...local.tasks, ...cloud.tasks],
+    usageLogs: [...(local.usageLogs || []), ...(cloud.usageLogs || [])],
     meta: { updatedAt: new Date().toISOString() },
   });
 
@@ -1208,6 +1305,15 @@ function mergeData(local, cloud) {
       .map((t) => ({ ...t, boxId: idRemap.get(t.boxId) || t.boxId }))
       .filter((t) => validBoxIds.has(t.boxId))
   );
+
+  const usageLogsById = new Map();
+  merged.usageLogs.forEach((log) => {
+    const current = usageLogsById.get(log.id);
+    if (!current || taskTime(log.usedAt || log.createdAt) >= taskTime(current.usedAt || current.createdAt)) {
+      usageLogsById.set(log.id, log);
+    }
+  });
+  merged.usageLogs = [...usageLogsById.values()];
 
   return merged;
 }

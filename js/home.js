@@ -3,6 +3,17 @@ import { navigate, openSheet, showToast } from './app.js';
 import { getPointsSummary, getTaskPointValue, syncTaskCompletionPoints } from './points-store.js';
 import { getRecurrenceLabel } from './recurrence.js';
 import { bindRecurrenceEditor, renderRecurrenceEditor } from './recurrence-ui.js';
+import { openBoxTypeChangeSheet } from './box-type-sheet.js';
+import {
+  BOX_TYPE_COLLECTION,
+  BOX_TYPE_POOL,
+  bindBoxTypeOptions,
+  getBoxTypeDefinition,
+  getPoolCooldownState,
+  inferBoxType,
+  isTaskBox,
+  renderBoxTypeOptions,
+} from './box-types.js';
 import {
   formatDueLabel,
   formatScheduledLabel,
@@ -28,7 +39,6 @@ const BOX_FALLBACK_COPY = {
   study: '把碎片时间沉淀成持续学习的轨迹。',
   health: '每天推进一点，身体状态会稳定很多。',
 };
-const NON_TODO_BOX_COLORS = new Set(['relax', 'reward', 'punish', 'study']);
 const FIXED_HOME_BOX_COLORS = new Set(['important', 'misc']);
 const BOX_ACCENTS = {
   important: '#f9734e',
@@ -94,25 +104,36 @@ function getBoxDescription(box) {
   return getBoxDailySentence(box, BOX_FALLBACK_COPY[box.color] || '把相关任务装进一个盒子，减少注意力切换。');
 }
 
-function getProgressLabel(boxTasks, pendingTasks, finished) {
+function getProgressLabel(box, boxTasks, pendingTasks, finished) {
+  const boxType = inferBoxType(box);
+  if (boxType === BOX_TYPE_POOL) {
+    if (!boxTasks.length) return '等待加入可重复选项';
+    return `${pendingTasks.length} 个现在可用`;
+  }
+  if (boxType === BOX_TYPE_COLLECTION) {
+    if (!boxTasks.length) return '等待收藏第一条内容';
+    return `${boxTasks.length} 条收藏 · ${finished} 条常用`;
+  }
   if (!boxTasks.length) return '空盒子';
   if (!pendingTasks.length) return '已清空';
   return `完成 ${finished}/${boxTasks.length}`;
 }
 
 function isActionableBox(box) {
-  return !NON_TODO_BOX_COLORS.has(box?.color);
+  return isTaskBox(box);
 }
 
 function getBoxContentLabel(box, pendingCount) {
-  if (isActionableBox(box)) return pendingCount ? '待处理任务' : '暂无待办';
-  if (box.color === 'study') return pendingCount ? '储备条目' : '暂无内容';
+  const boxType = inferBoxType(box);
+  if (boxType === 'task') return pendingCount ? '待处理任务' : '暂无待办';
+  if (boxType === BOX_TYPE_COLLECTION) return pendingCount ? '收藏条目' : '暂无内容';
   return pendingCount ? '可抽取项' : '暂无内容';
 }
 
 function getBoxMetaLabel(box, pendingCount) {
-  if (isActionableBox(box)) return `${pendingCount} 项待办`;
-  if (box.color === 'study') return `${pendingCount} 条储备`;
+  const boxType = inferBoxType(box);
+  if (boxType === 'task') return `${pendingCount} 项待办`;
+  if (boxType === BOX_TYPE_COLLECTION) return `${pendingCount} 条收藏`;
   return `${pendingCount} 项候选`;
 }
 
@@ -277,6 +298,10 @@ function openBoxContextMenu(event, app, box, tasks) {
       </button>
     `}
     <div class="task-context-divider" aria-hidden="true"></div>
+    <button type="button" data-action="type">
+      <span class="task-context-action-icon" aria-hidden="true">${getBoxTypeDefinition(box).icon}</span>
+      <span>修改盒子类型</span>
+    </button>
     <button type="button" data-action="delete" class="danger ${fixed ? 'is-disabled' : ''}">${fixed ? '核心盒不可删除' : '删除盒子'}</button>
   `;
   document.body.appendChild(menu);
@@ -294,6 +319,10 @@ function openBoxContextMenu(event, app, box, tasks) {
       closeBoxContextMenu();
       showToast(pinned ? `${box.name}已置顶到第三位` : `${box.name}已取消置顶`);
       renderHome(app);
+    }
+    if (action === 'type') {
+      closeBoxContextMenu();
+      openBoxTypeChangeSheet(box, () => renderHome(app));
     }
     if (action === 'delete') openDeleteBoxSheet(app, box, activeCount);
   });
@@ -376,7 +405,7 @@ export function renderHome(app) {
   const week = getLocalWeek(selectedDate);
   const agenda = getAgenda(tasks, boxMap, selectedHomeDateKey, now);
   const visibleAgenda = showAllAgendaTasks ? agenda.open : agenda.open.slice(0, 4);
-  const doneTasks = tasks.filter((task) => task.isCompleted);
+  const doneTasks = tasks.filter((task) => task.isCompleted && isActionableBox(boxMap.get(task.boxId)));
   const openTasks = tasks.filter((task) => !task.isCompleted);
   const actionableTasks = openTasks.filter((task) => isActionableBox(boxMap.get(task.boxId)));
   const overdueTasks = actionableTasks.filter((task) => isTaskOverdue(task, now));
@@ -453,30 +482,44 @@ export function renderHome(app) {
       </section>
 
       <section class="section-heading">
-        <div><p class="eyebrow">Task Boxes</p><h2>按场景管理任务</h2></div>
-        <p class="section-note">${boxes.length} 个盒子，${tasks.length} 条任务</p>
+        <div><p class="eyebrow">Life Boxes</p><h2>按场景管理内容</h2></div>
+        <p class="section-note">${boxes.length} 个盒子，${tasks.length} 条内容</p>
       </section>
 
       <section class="box-grid scroll-area home-grid">
         ${boxes.map((box) => {
-          const boxTasks = tasks.filter((task) => task.boxId === box.id);
-          const pendingTasks = boxTasks.filter((task) => !task.isCompleted);
-          const finished = boxTasks.filter((task) => task.isCompleted).length;
-          const percent = boxTasks.length ? Math.round((finished / boxTasks.length) * 100) : 0;
+          const boxType = inferBoxType(box);
+          const typeDefinition = getBoxTypeDefinition(boxType);
+          const boxTasks = tasks.filter((task) => task.boxId === box.id && !task.archived);
+          let pendingTasks = boxTasks.filter((task) => !task.isCompleted);
+          let finished = boxTasks.filter((task) => task.isCompleted).length;
+          let percent = boxTasks.length ? Math.round((finished / boxTasks.length) * 100) : 0;
+          let statusLabel = `${percent}%`;
+          if (boxType === BOX_TYPE_POOL) {
+            pendingTasks = boxTasks.filter((task) => getPoolCooldownState(task, now).available);
+            finished = boxTasks.length - pendingTasks.length;
+            percent = boxTasks.length ? Math.round((pendingTasks.length / boxTasks.length) * 100) : 0;
+            statusLabel = `${pendingTasks.length}/${boxTasks.length}`;
+          } else if (boxType === BOX_TYPE_COLLECTION) {
+            pendingTasks = boxTasks;
+            finished = boxTasks.filter((task) => task.favorite).length;
+            percent = boxTasks.length ? Math.round((finished / boxTasks.length) * 100) : 0;
+            statusLabel = `${boxTasks.length} 条`;
+          }
 
           return `
-            <button class="box-card ${cardSizeClass(box)} ${box.color} ${box.homePinned ? 'home-pinned' : ''}" data-box-id="${box.id}">
+            <button class="box-card ${cardSizeClass(box)} ${box.color} type-${boxType} ${box.homePinned ? 'home-pinned' : ''}" data-box-id="${box.id}">
               <div class="box-head">
                 <div class="box-title-group">
                   <span class="box-icon">${escapeHtml(box.icon)}</span>
-                  <div class="box-title-block"><strong>${escapeHtml(box.name)}</strong><small>${escapeHtml(getProgressLabel(boxTasks, pendingTasks, finished))}</small></div>
+                  <div class="box-title-block"><strong>${escapeHtml(box.name)}</strong><small>${escapeHtml(getProgressLabel(box, boxTasks, pendingTasks, finished))}</small></div>
                 </div>
-                <span class="box-card-status">${box.homePinned ? '<i class="box-pinned-mark">第三位</i>' : ''}<span class="box-progress-label">${percent}%</span></span>
+                <span class="box-card-status">${box.homePinned ? '<i class="box-pinned-mark">第三位</i>' : ''}<i class="box-type-stamp ${boxType}">${typeDefinition.icon} ${typeDefinition.shortLabel}</i><span class="box-progress-label">${statusLabel}</span></span>
               </div>
               <div class="box-desc box-daily-sentence"><span>每日一句</span><p>${escapeHtml(getBoxDescription(box))}</p></div>
               ${renderBoxPreview(box, pendingTasks)}
               <div class="box-meta"><span>${getBoxMetaLabel(box, pendingTasks.length)}</span><span>进入盒子 →</span></div>
-              <div class="progress"><span style="width:${percent}%"></span></div>
+              <div class="progress ${boxType === BOX_TYPE_COLLECTION ? 'collection-progress' : ''}"><span style="width:${boxType === BOX_TYPE_COLLECTION ? 100 : percent}%"></span></div>
             </button>
           `;
         }).join('')}
@@ -680,6 +723,7 @@ function openRecurringManager(app, boxes) {
 }
 
 function openRecurringTemplateEditor(app, boxes, template) {
+  const taskBoxes = boxes.filter(isTaskBox);
   const current = getTasks().find((task) => task.recurrenceTemplateId === template.id && !task.isCompleted && !task.deleted);
   const scheduledAt = current?.scheduledAt || template.scheduledAt || template.recurrence?.anchorAt;
   const dueDate = current?.dueDate || template.dueDate;
@@ -691,7 +735,7 @@ function openRecurringTemplateEditor(app, boxes, template) {
       <p class="sheet-lead">已完成的历史不会变化；当前未完成的一期会同步采用新设置。</p>
       <label>任务内容<input id="seriesContent" class="input" value="${escapeHtml(template.content)}"></label>
       <label>所属盒子
-        <select id="seriesBox" class="input">${boxes.map((box) => `<option value="${box.id}" ${box.id === template.boxId ? 'selected' : ''}>${escapeHtml(box.name)}</option>`).join('')}</select>
+        <select id="seriesBox" class="input">${taskBoxes.map((box) => `<option value="${box.id}" ${box.id === template.boxId ? 'selected' : ''}>${escapeHtml(box.name)}</option>`).join('')}</select>
       </label>
       <label>当前/下次计划时间<input id="seriesScheduledAt" class="input" type="datetime-local" value="${escapeHtml(toDateTimeLocalValue(scheduledAt))}"></label>
       <label>当前/下次截止时间<input id="seriesDueAt" class="input" type="datetime-local" value="${escapeHtml(toDateTimeLocalValue(dueDate))}"></label>
@@ -741,7 +785,12 @@ function openRecurringTemplateEditor(app, boxes, template) {
 }
 
 function openAddTaskSheet(boxes, options = {}) {
-  const defaultBox = boxes[0] || null;
+  const taskBoxes = boxes.filter(isTaskBox);
+  const defaultBox = taskBoxes[0] || null;
+  if (!defaultBox) {
+    showToast('先创建一个待办类型的盒子');
+    return;
+  }
   const defaultPoints = defaultBox ? getTaskPointValue({ boxId: defaultBox.id }, defaultBox) : 5;
   const { root, close } = openSheet(`
     <div class="sheet-handle"></div>
@@ -751,7 +800,7 @@ function openAddTaskSheet(boxes, options = {}) {
       <p class="sheet-lead">先确定要做什么，再把它放进具体的一天。</p>
       <label>任务内容<input id="newTaskContent" class="input" placeholder="输入任务内容"></label>
       <label>所属盒子
-        <select id="newTaskBox" class="input">${boxes.map((box) => `<option value="${box.id}">${escapeHtml(box.name)}</option>`).join('')}</select>
+        <select id="newTaskBox" class="input">${taskBoxes.map((box) => `<option value="${box.id}">${escapeHtml(box.name)}</option>`).join('')}</select>
       </label>
       <label>计划时间
         <div class="schedule-presets" aria-label="快捷安排时间">${renderSchedulePresets()}</div>
@@ -783,7 +832,7 @@ function openAddTaskSheet(boxes, options = {}) {
   });
   boxSelect.addEventListener('change', () => {
     if (pointsInput.dataset.touched === '1') return;
-    const selectedBox = boxes.find((box) => box.id === boxSelect.value);
+    const selectedBox = taskBoxes.find((box) => box.id === boxSelect.value);
     pointsInput.value = String(getTaskPointValue({ boxId: boxSelect.value }, selectedBox));
   });
 
@@ -825,16 +874,19 @@ function openAddBoxSheet() {
     <div class="sheet-content">
       <p class="eyebrow">New Box</p>
       <h3>添加新盒子</h3>
-      <p class="sheet-lead">给一组相似任务一个固定容器，首页会更清晰。</p>
+      <p class="sheet-lead">先决定内容如何使用，再给它一个固定容器。</p>
       <label>盒子名称<input id="newBoxName" class="input" placeholder="例如：运动盒"></label>
+      <label>盒子类型</label>
+      <div class="box-type-options">${renderBoxTypeOptions('task')}</div>
       <label>每日一句 / 盒子介绍<textarea id="newBoxDesc" class="input" rows="4" placeholder="写两三句话，作为这个盒子的每日一句"></textarea></label>
       <div class="sheet-actions">
         <button class="btn" id="cancelBoxBtn">取消</button>
         <button class="btn primary" id="saveBoxBtn">创建盒子</button>
       </div>
     </div>
-  `, { height: '58vh' });
+  `, { height: '78vh' });
 
+  const typePicker = bindBoxTypeOptions(root, 'task');
   root.querySelector('#cancelBoxBtn').addEventListener('click', close);
   const saveBox = async () => {
     const name = root.querySelector('#newBoxName').value.trim();
@@ -844,8 +896,9 @@ function openAddBoxSheet() {
       return;
     }
     try {
-      await addBox({ name, description });
-      showToast('盒子已创建并尝试上传云端');
+      const boxType = typePicker.getValue();
+      await addBox({ name, description, boxType });
+      showToast(`${getBoxTypeDefinition(boxType).label}已创建并同步`);
       close();
       renderHome(document.getElementById('app'));
     } catch (err) {

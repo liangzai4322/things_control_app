@@ -1,10 +1,21 @@
-import { getBoxes, getDeletedTasksByBox, getTasksByBox, updateTask, deleteTask, deleteRecurringSeries, reorderTasks, updateBox, addRecurringTask, addTask, playSound, restoreTask, pullDataFromCloud } from './db.js';
+import { getBoxes, getDeletedTasksByBox, getTasksByBox, getUsageLogs, recordPoolUsage, updateTask, deleteTask, deleteRecurringSeries, reorderTasks, updateBox, addRecurringTask, addTask, playSound, restoreTask, pullDataFromCloud } from './db.js';
 import { navigate, openSheet, showToast } from './app.js';
 import { openLuckyWheel } from './lucky-wheel.js';
-import { getTaskPointValue, reconcileCompletedTaskPoints, syncTaskCompletionPoints } from './points-store.js';
+import { getPointsBalance, getTaskPointValue, recordPointsTransaction, reconcileCompletedTaskPoints, syncTaskCompletionPoints } from './points-store.js';
 import { formatDueLabel as formatDueDateLabel, formatScheduledLabel, fromDateTimeLocalValue, getBoxDailySentence, getDeadlinePresetValue, getSchedulePresetValue, isTaskNeedsReschedule, isTaskOverdue, toDateTimeLocalValue } from './task-utils.js';
 import { getRecurrenceLabel } from './recurrence.js';
 import { bindRecurrenceEditor, renderRecurrenceEditor } from './recurrence-ui.js';
+import { openBoxTypeChangeSheet } from './box-type-sheet.js';
+import {
+  BOX_TYPE_COLLECTION,
+  BOX_TYPE_POOL,
+  BOX_TYPE_TASK,
+  formatCooldownRemaining,
+  getBoxTypeDefinition,
+  getPoolCooldownState,
+  inferBoxType,
+  isTaskBox,
+} from './box-types.js';
 
 const LONG_PRESS_MS = 500;
 const DELETE_SWIPE_THRESHOLD = 120;
@@ -293,6 +304,26 @@ function setTaskPinLevel(app, box, task, level) {
   renderBoxDetail(app, box.id);
 }
 
+function commitPoolUsage(task) {
+  const pointsCost = Math.max(0, Number(task?.pointsCost) || 0);
+  if (pointsCost && getPointsBalance() < pointsCost) {
+    showToast(`积分不足，需要 ${pointsCost} 积分`);
+    return false;
+  }
+  if (pointsCost) {
+    recordPointsTransaction({
+      delta: -pointsCost,
+      title: `使用：${task.content}`,
+      note: '来自选项池',
+      bucket: 'spend',
+      sourceType: 'pool_use',
+      sourceKey: `pool-use-${task.id}-${Date.now()}`,
+    });
+  }
+  recordPoolUsage(task.id);
+  return true;
+}
+
 function getTaskMoveTarget(box, boxes) {
   if (box?.color === 'important') return boxes.find((item) => item.color === 'misc') || null;
   if (box?.color === 'misc') return boxes.find((item) => item.color === 'important') || null;
@@ -322,9 +353,11 @@ function openTaskContextMenu(event, app, box, task) {
   menu.className = 'task-context-menu';
   menu.style.cssText = getBoxPinStyle(box);
   const currentPinLevel = getTaskPinLevel(task);
-  const moveTarget = getTaskMoveTarget(box, getBoxes());
+  const boxType = inferBoxType(box);
+  const moveTarget = boxType === BOX_TYPE_TASK ? getTaskMoveTarget(box, getBoxes()) : null;
+  const itemName = getBoxTypeDefinition(boxType).itemName;
   menu.innerHTML = `
-    <div class="task-context-title">置顶位置</div>
+    <div class="task-context-title">${escapeHtml(itemName)}操作</div>
     <div class="pin-level-grid">
       ${PIN_LEVELS.map((option) => `
         <button type="button" data-action="pin-level" data-pin-level="${option.value}" class="${currentPinLevel === option.value ? 'active' : ''}">
@@ -341,8 +374,10 @@ function openTaskContextMenu(event, app, box, task) {
         <span>移动到${escapeHtml(getQuickSwitchLabel(moveTarget))}盒${task.recurrenceTemplateId ? '（本次及以后）' : ''}</span>
       </button>
     ` : ''}
+    ${boxType === BOX_TYPE_POOL ? '<button type="button" data-action="use"><span class="task-context-action-icon" aria-hidden="true">✦</span><span>记录使用一次</span></button>' : ''}
+    ${boxType === BOX_TYPE_COLLECTION ? `<button type="button" data-action="archive"><span class="task-context-action-icon" aria-hidden="true">⌑</span><span>${task.archived ? '移出归档' : '归档条目'}</span></button>` : ''}
     ${task.recurrenceTemplateId ? '<button type="button" data-action="stop-series" class="danger subtle-danger">停止整个周期</button>' : ''}
-    <button type="button" data-action="delete" class="danger">${task.recurrenceTemplateId ? '跳过本次' : '删除任务'}</button>
+    <button type="button" data-action="delete" class="danger">${task.recurrenceTemplateId ? '跳过本次' : `删除${itemName}`}</button>
   `;
   document.body.appendChild(menu);
 
@@ -358,6 +393,18 @@ function openTaskContextMenu(event, app, box, task) {
     if (action === 'pin-level') setTaskPinLevel(app, box, task, button.dataset.pinLevel);
     if (action === 'unpin') setTaskPinLevel(app, box, task, null);
     if (action === 'move') moveTaskToBox(app, box, task, moveTarget);
+    if (action === 'use') {
+      if (!commitPoolUsage(task)) return;
+      closeTaskContextMenu();
+      showToast(task.pointsCost ? `已使用 · -${task.pointsCost} 积分` : '已记录使用，选项仍保留在池中');
+      renderBoxDetail(app, box.id);
+    }
+    if (action === 'archive') {
+      updateTask(task.id, { archived: !task.archived });
+      closeTaskContextMenu();
+      showToast(task.archived ? '已移出归档' : '条目已归档');
+      renderBoxDetail(app, box.id);
+    }
     if (action === 'stop-series') confirmStopRecurringSeries(app, box, task);
     if (action === 'delete') deleteTaskWithUndo(app, box.id, task);
   });
@@ -380,6 +427,90 @@ function openTaskContextMenu(event, app, box, task) {
   };
 }
 
+function formatCompactTime(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function poolItem(task, box) {
+  const cooldown = getPoolCooldownState(task);
+  const pinLevel = getTaskPinLevel(task);
+  const details = [
+    task.durationMinutes ? `${task.durationMinutes} 分钟` : '',
+    Number(task.weight) > 1 ? `权重 ${task.weight}` : '',
+    task.pointsCost ? `${task.pointsCost} 积分` : '',
+    task.usageCount ? `用过 ${task.usageCount} 次` : '尚未使用',
+  ].filter(Boolean);
+  return `
+    <article class="task-item pool-item ${pinLevel ? 'pinned' : ''} ${cooldown.available ? 'is-available' : 'is-cooling'}" data-id="${task.id}" style="${getBoxPinStyle(box)}">
+      <div class="task-main" data-main="1">
+        <button class="pool-use-btn" data-action="use" ${cooldown.available ? '' : 'disabled'} aria-label="使用 ${escapeHtml(task.content)}"><span>✦</span><small>${cooldown.available ? '使用' : '冷却'}</small></button>
+        <button class="task-content" data-action="edit">
+          <div class="task-title-row"><span class="task-title">${escapeHtml(task.content)}</span>${pinLevel ? `<span class="task-note-badge">${escapeHtml(getTaskPinLabel(task))}</span>` : ''}</div>
+          <div class="task-meta">${details.map((detail) => `<span class="task-chip">${escapeHtml(detail)}</span>`).join('')}</div>
+          <p class="pool-availability ${cooldown.available ? 'available' : ''}">${cooldown.available ? '现在可以抽取或使用' : escapeHtml(formatCooldownRemaining(cooldown.remainingMinutes))}</p>
+          ${task.note ? `<p class="task-note-preview">${escapeHtml(task.note)}</p>` : ''}
+        </button>
+        <span class="grip" aria-hidden="true">⋮⋮</span>
+      </div>
+    </article>
+  `;
+}
+
+function collectionItem(task, box, { archived = false } = {}) {
+  const pinLevel = getTaskPinLevel(task);
+  let host = '';
+  try {
+    host = task.url ? new URL(task.url).hostname.replace(/^www\./, '') : '';
+  } catch {
+    host = task.url || '';
+  }
+  return `
+    <article class="task-item collection-item ${task.favorite ? 'is-favorite' : ''} ${archived ? 'is-archived' : ''} ${pinLevel ? 'pinned' : ''}" data-id="${task.id}" style="${getBoxPinStyle(box)}">
+      <div class="task-main" data-main="1">
+        <button class="collection-favorite-btn ${task.favorite ? 'active' : ''}" data-action="favorite" aria-label="${task.favorite ? '取消常用' : '设为常用'}">★</button>
+        <button class="task-content" data-action="edit">
+          <div class="task-title-row"><span class="task-title">${escapeHtml(task.content)}</span>${archived ? '<span class="task-note-badge">已归档</span>' : ''}</div>
+          <div class="task-meta">
+            ${host ? `<span class="task-chip link-chip">↗ ${escapeHtml(host)}</span>` : ''}
+            ${(task.tags || []).slice(0, 4).map((tag) => `<span class="task-chip">#${escapeHtml(tag)}</span>`).join('')}
+          </div>
+          ${task.note ? `<p class="task-note-preview">${escapeHtml(task.note)}</p>` : ''}
+        </button>
+        ${task.url ? `<a class="collection-open-link" href="${escapeHtml(task.url)}" target="_blank" rel="noopener noreferrer" aria-label="打开链接">↗</a>` : ''}
+        ${archived ? '<button class="collection-restore-btn" data-action="unarchive">恢复</button>' : '<span class="grip" aria-hidden="true">⋮⋮</span>'}
+      </div>
+    </article>
+  `;
+}
+
+function renderTypeSummary(boxType, activeItems, secondaryItems, usageLogs) {
+  if (boxType === BOX_TYPE_POOL) {
+    const available = activeItems.filter((item) => getPoolCooldownState(item).available).length;
+    const today = new Date().toDateString();
+    const usedToday = usageLogs.filter((log) => new Date(log.usedAt).toDateString() === today && log.action === 'used').length;
+    return [
+      ['现在可用', available],
+      ['冷却中', activeItems.length - available],
+      ['今日使用', usedToday],
+    ];
+  }
+  if (boxType === BOX_TYPE_COLLECTION) {
+    return [
+      ['收藏条目', activeItems.length],
+      ['常用', activeItems.filter((item) => item.favorite).length],
+      ['已归档', secondaryItems.length],
+    ];
+  }
+  return [
+    ['进行中', activeItems.length],
+    ['已完成', secondaryItems.length],
+    ['已逾期', activeItems.filter((item) => isTaskOverdue(item)).length],
+  ];
+}
+
 export function renderBoxDetail(app, boxId) {
   closeTaskContextMenu();
   const boxes = getBoxes();
@@ -390,18 +521,42 @@ export function renderBoxDetail(app, boxId) {
   const deletedTasks = getDeletedTasksByBox(boxId);
   const quickSwitchBoxes = getQuickSwitchBoxes(box, boxes);
   const taskMap = new Map(tasks.map((task) => [task.id, task]));
-  const openTasks = tasks.filter((task) => !task.isCompleted);
-  const doneTasks = tasks.filter((task) => task.isCompleted);
-  const overdueTasks = openTasks.filter((task) => isTaskOverdue(task));
+  const boxType = inferBoxType(box);
+  const typeDefinition = getBoxTypeDefinition(boxType);
+  const usageLogs = getUsageLogs({ boxId });
+  let activeItems = boxType === BOX_TYPE_TASK
+    ? tasks.filter((task) => !task.isCompleted)
+    : tasks.filter((task) => !task.archived);
+  if (boxType === BOX_TYPE_POOL) {
+    activeItems = [...activeItems].sort((left, right) => Number(getPoolCooldownState(right).available) - Number(getPoolCooldownState(left).available));
+  } else if (boxType === BOX_TYPE_COLLECTION) {
+    activeItems = [...activeItems].sort((left, right) => Number(right.favorite) - Number(left.favorite));
+  }
+  const secondaryItems = boxType === BOX_TYPE_TASK
+    ? tasks.filter((task) => task.isCompleted)
+    : boxType === BOX_TYPE_COLLECTION
+      ? tasks.filter((task) => task.archived)
+      : [];
+  const summary = renderTypeSummary(boxType, activeItems, secondaryItems, usageLogs);
+  const sectionTitle = boxType === BOX_TYPE_TASK ? '当前任务' : boxType === BOX_TYPE_POOL ? '可重复选项' : '收藏内容';
+  const sectionEyebrow = boxType === BOX_TYPE_TASK ? 'In Progress' : boxType === BOX_TYPE_POOL ? 'Ready To Use' : 'Saved For Later';
+  const addLabel = `＋ 新${typeDefinition.itemName}`;
+  const activeListHtml = activeItems.length
+    ? (boxType === BOX_TYPE_TASK
+      ? `<div id="openTasks">${activeItems.map((task) => taskItem(task, box)).join('')}</div>`
+      : boxType === BOX_TYPE_POOL
+        ? `<div id="openTasks" class="typed-item-list">${activeItems.map((task) => poolItem(task, box)).join('')}</div>`
+        : `<div id="openTasks" class="typed-item-list">${activeItems.map((task) => collectionItem(task, box)).join('')}</div>`)
+    : `<div class="empty-state typed-empty"><div>${typeDefinition.icon}</div><h3>${typeDefinition.emptyTitle}</h3><p>${typeDefinition.emptyDescription}</p></div>`;
 
   app.innerHTML = `
-    <main id="box-detail" class="page detail-page">
+    <main id="box-detail" class="page detail-page type-${boxType}">
       <header class="topbar safe-top detail-topbar">
         <button class="icon-btn icon-btn-ghost" id="backBtn">←</button>
         <div class="row gap8 detail-actions">
           ${renderQuickSwitches(quickSwitchBoxes)}
           <button class="icon-btn icon-btn-ghost" id="detailPullBtn" aria-label="拉取最新盒子数据">↻</button>
-          <button class="icon-btn icon-btn-ghost" id="wheelBtn" aria-label="随机抽取">🎡</button>
+          ${boxType === BOX_TYPE_POOL ? '<button class="icon-btn icon-btn-ghost" id="wheelBtn" aria-label="随机抽取">🎡</button>' : ''}
           <button class="icon-btn icon-btn-ghost" id="settingsBtn" aria-label="设置">⚙</button>
         </div>
       </header>
@@ -410,54 +565,40 @@ export function renderBoxDetail(app, boxId) {
         <div class="detail-hero-head">
           <span class="detail-icon">${escapeHtml(box.icon)}</span>
           <div class="detail-hero-copy">
-            <p class="eyebrow">任务盒</p>
+            <button class="box-type-badge ${boxType}" id="boxTypeBtn"><span>${typeDefinition.icon}</span>${typeDefinition.label}<i>修改</i></button>
             <input id="boxNameInput" class="title-input" value="${escapeHtml(box.name)}" aria-label="盒子名称">
             <label class="box-sentence-editor">
               <span>每日一句</span>
               <textarea id="boxSentenceInput" class="box-sentence-input" rows="3" aria-label="盒子每日一句">${escapeHtml(getBoxDailySentence(box))}</textarea>
             </label>
-            <p class="detail-hero-desc">${escapeHtml(String(box.description || '').trim() || '把同类任务放进一个盒子里，降低来回切换的成本。')}</p>
+            <p class="detail-hero-desc">${escapeHtml(typeDefinition.description)}</p>
           </div>
         </div>
 
         <div class="detail-summary">
-          <article class="summary-chip">
-            <span>进行中</span>
-            <strong>${openTasks.length}</strong>
-          </article>
-          <article class="summary-chip">
-            <span>已完成</span>
-            <strong>${doneTasks.length}</strong>
-          </article>
-          <article class="summary-chip">
-            <span>已逾期</span>
-            <strong>${overdueTasks.length}</strong>
-          </article>
+          ${summary.map(([label, value]) => `<article class="summary-chip"><span>${label}</span><strong>${value}</strong></article>`).join('')}
         </div>
       </section>
 
       <section class="task-section-header">
         <div>
-          <p class="eyebrow">In Progress</p>
-          <h2>当前任务</h2>
+          <p class="eyebrow">${sectionEyebrow}</p>
+          <h2>${sectionTitle}</h2>
         </div>
-        <button class="btn subtle compact" id="addTaskInlineBtn">＋ 新任务</button>
+        <button class="btn subtle compact" id="addTaskInlineBtn">${addLabel}</button>
       </section>
 
       <section class="task-list scroll-area" id="taskList">
-        ${openTasks.length === 0 ? `
-          <div class="empty-state">
-            <div>${escapeHtml(box.icon)}</div>
-            <h3>还没有进行中的任务</h3>
-            <p>先加一条任务，让这个盒子开始运转。</p>
-          </div>
-        ` : `
-          <div id="openTasks">${openTasks.map((task) => taskItem(task, box)).join('')}</div>
-        `}
+        ${activeListHtml}
 
-        ${doneTasks.length ? `
-          <button class="completed-toggle" id="toggleDone">已完成 ${doneTasks.length} 项 ▸</button>
-          <div id="doneTasks" class="completed-timeline collapsed">${renderCompletedTaskGroups(doneTasks, box)}</div>
+        ${boxType === BOX_TYPE_TASK && secondaryItems.length ? `
+          <button class="completed-toggle" id="toggleDone">已完成 ${secondaryItems.length} 项 ▸</button>
+          <div id="doneTasks" class="completed-timeline collapsed">${renderCompletedTaskGroups(secondaryItems, box)}</div>
+        ` : ''}
+
+        ${boxType === BOX_TYPE_COLLECTION && secondaryItems.length ? `
+          <button class="completed-toggle archived-toggle" id="toggleArchived">已归档 ${secondaryItems.length} 条 ▸</button>
+          <div id="archivedItems" class="archived-timeline collapsed">${secondaryItems.map((task) => collectionItem(task, box, { archived: true })).join('')}</div>
         ` : ''}
 
         ${deletedTasks.length ? `
@@ -467,7 +608,7 @@ export function renderBoxDetail(app, boxId) {
       </section>
 
       <footer class="safe-bottom footer-fixed">
-        <button class="btn primary ${box.color}" id="addTaskBtn">${tasks.length ? '＋ 添加任务' : '创建第一条任务'}</button>
+        <button class="btn primary ${box.color}" id="addTaskBtn">${tasks.length ? `＋ 添加${typeDefinition.itemName}` : `创建第一条${typeDefinition.itemName}`}</button>
       </footer>
     </main>
   `;
@@ -485,8 +626,9 @@ export function renderBoxDetail(app, boxId) {
       showToast('盒子数据拉取失败，请检查 API Token 或网络');
     }
   });
-  app.querySelector('#wheelBtn').addEventListener('click', () => openLuckyWheel(box));
+  app.querySelector('#wheelBtn')?.addEventListener('click', () => openLuckyWheel(box));
   app.querySelector('#settingsBtn').addEventListener('click', () => navigate('#settings'));
+  app.querySelector('#boxTypeBtn').addEventListener('click', () => openBoxTypeChangeSheet(box, () => renderBoxDetail(app, box.id)));
   app.querySelector('#boxNameInput').addEventListener('blur', (event) => {
     const name = event.target.value.trim();
     if (name) updateBox(box.id, { name });
@@ -503,7 +645,7 @@ export function renderBoxDetail(app, boxId) {
     if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') event.target.blur();
   });
 
-  const openEditor = () => openTaskEditor({ boxId: box.id }, () => renderBoxDetail(app, box.id));
+  const openEditor = () => openBoxItemEditor({ boxId: box.id }, () => renderBoxDetail(app, box.id));
   app.querySelector('#addTaskBtn').addEventListener('click', openEditor);
   app.querySelector('#addTaskInlineBtn').addEventListener('click', openEditor);
 
@@ -512,7 +654,16 @@ export function renderBoxDetail(app, boxId) {
     const doneList = app.querySelector('#doneTasks');
     toggle.addEventListener('click', () => {
       doneList.classList.toggle('collapsed');
-      toggle.textContent = `已完成 ${doneTasks.length} 项 ${doneList.classList.contains('collapsed') ? '▸' : '▾'}`;
+      toggle.textContent = `已完成 ${secondaryItems.length} 项 ${doneList.classList.contains('collapsed') ? '▸' : '▾'}`;
+    });
+  }
+
+  const archivedToggle = app.querySelector('#toggleArchived');
+  if (archivedToggle) {
+    const archivedList = app.querySelector('#archivedItems');
+    archivedToggle.addEventListener('click', () => {
+      archivedList.classList.toggle('collapsed');
+      archivedToggle.textContent = `已归档 ${secondaryItems.length} 条 ${archivedList.classList.contains('collapsed') ? '▸' : '▾'}`;
     });
   }
 
@@ -530,12 +681,12 @@ export function renderBoxDetail(app, boxId) {
       const task = deletedTasks.find((item) => item.id === button.dataset.restore);
       if (!task) return;
       restoreTask(task);
-      showToast('任务已还原');
+      showToast(`${typeDefinition.itemName}已还原`);
       renderBoxDetail(app, box.id);
     });
   });
 
-  bindTaskEvents(app, box, taskMap);
+  bindItemEvents(app, box, taskMap);
 }
 
 function taskItem(task, box) {
@@ -575,15 +726,19 @@ function taskItem(task, box) {
   `;
 }
 
-function bindTaskEvents(app, box, taskMap) {
+function bindItemEvents(app, box, taskMap) {
+  const boxType = inferBoxType(box);
   app.querySelectorAll('.task-item:not(.deleted-task)').forEach((item) => {
     const taskId = item.dataset.id;
     const task = taskMap.get(taskId);
     const checkButton = item.querySelector('.check');
+    const useButton = item.querySelector('[data-action="use"]');
+    const favoriteButton = item.querySelector('[data-action="favorite"]');
+    const unarchiveButton = item.querySelector('[data-action="unarchive"]');
     const editButton = item.querySelector('[data-action="edit"]');
-    if (!task || !checkButton || !editButton) return;
+    if (!task || !editButton) return;
 
-    checkButton.addEventListener('click', (event) => {
+    checkButton?.addEventListener('click', (event) => {
       event.stopPropagation();
       const checked = item.classList.contains('done');
       checkButton.classList.toggle('checked', !checked);
@@ -606,18 +761,45 @@ function bindTaskEvents(app, box, taskMap) {
       setTimeout(() => renderBoxDetail(app, box.id), 220);
     });
 
+    useButton?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const cooldown = getPoolCooldownState(task);
+      if (!cooldown.available) {
+        showToast(formatCooldownRemaining(cooldown.remainingMinutes));
+        return;
+      }
+      if (!commitPoolUsage(task)) return;
+      playSound('complete');
+      showToast(task.pointsCost ? `已使用 · -${task.pointsCost} 积分` : '已记录使用，选项会继续保留');
+      renderBoxDetail(app, box.id);
+    });
+
+    favoriteButton?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      updateTask(taskId, { favorite: !task.favorite });
+      showToast(task.favorite ? '已取消常用' : '已设为常用');
+      renderBoxDetail(app, box.id);
+    });
+
+    unarchiveButton?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      updateTask(taskId, { archived: false });
+      showToast('条目已移出归档');
+      renderBoxDetail(app, box.id);
+    });
+
     editButton.addEventListener('click', () => {
-      openTaskEditor({ taskId, boxId: box.id }, () => renderBoxDetail(app, box.id));
+      openBoxItemEditor({ taskId, boxId: box.id }, () => renderBoxDetail(app, box.id));
     });
 
     item.addEventListener('contextmenu', (event) => {
       if (task) openTaskContextMenu(event, app, box, task);
     });
 
-    bindSwipeDelete(item, box.id, app, task);
+    if (!task.archived) bindSwipeDelete(item, box.id, app, task);
   });
 
-  enableLongPressReorder(app, box.id);
+  if (boxType !== BOX_TYPE_COLLECTION || app.querySelector('#openTasks')) enableLongPressReorder(app, box.id);
 }
 
 function bindSwipeDelete(item, boxId, app, taskSnapshot) {
@@ -707,11 +889,136 @@ function enableLongPressReorder(app, boxId) {
   });
 }
 
+function openBoxItemEditor({ taskId, boxId }, onDone) {
+  const box = getBoxes().find((item) => item.id === boxId);
+  const boxType = inferBoxType(box);
+  if (boxType === BOX_TYPE_POOL) return openPoolItemEditor({ taskId, boxId }, onDone);
+  if (boxType === BOX_TYPE_COLLECTION) return openCollectionItemEditor({ taskId, boxId }, onDone);
+  return openTaskEditor({ taskId, boxId }, onDone);
+}
+
+function openPoolItemEditor({ taskId, boxId }, onDone) {
+  const boxes = getBoxes().filter((box) => inferBoxType(box) === BOX_TYPE_POOL);
+  const task = getTasksByBox(boxId).find((item) => item.id === taskId);
+  const { root, close } = openSheet(`
+    <div class="sheet-handle"></div>
+    <div class="sheet-content typed-editor pool-editor">
+      <p class="eyebrow">Choice Editor</p>
+      <h3>${task ? '编辑选项' : '添加选项'}</h3>
+      <p class="sheet-lead">选项使用后不会消失；冷却时间可以避免短时间内反复抽中。</p>
+      <label>选项名称<input id="poolContent" class="input" value="${escapeHtml(task?.content || '')}" placeholder="例如：散步 20 分钟"></label>
+      <div class="typed-editor-grid">
+        <label>预计时长（分钟）<input id="poolDuration" class="input" type="number" min="0" step="5" value="${task?.durationMinutes || ''}" placeholder="20"></label>
+        <label>抽取权重<input id="poolWeight" class="input" type="number" min="1" step="1" value="${task?.weight || 1}"></label>
+      </div>
+      <label>使用后冷却
+        <div class="cooldown-presets">
+          ${[[0, '不冷却'], [30, '30 分钟'], [120, '2 小时'], [1440, '1 天']].map(([value, label]) => `<button type="button" class="schedule-preset ${(task?.cooldownMinutes || 0) === value ? 'active' : ''}" data-cooldown="${value}">${label}</button>`).join('')}
+        </div>
+        <input id="poolCooldown" class="input" type="number" min="0" step="10" value="${task?.cooldownMinutes || 0}" aria-label="冷却分钟数">
+      </label>
+      <label>需要积分（选填）<input id="poolPointsCost" class="input" type="number" min="0" step="1" value="${task?.pointsCost || 0}"></label>
+      <label>所属选项池<select id="poolBox" class="input">${boxes.map((box) => `<option value="${box.id}" ${box.id === (task?.boxId || boxId) ? 'selected' : ''}>${escapeHtml(box.name)}</option>`).join('')}</select></label>
+      <label>使用说明（可选）<textarea id="poolNote" class="input" rows="4" placeholder="适用场景、准备条件或注意事项">${escapeHtml(task?.note || '')}</textarea></label>
+      <div class="sheet-actions"><button class="btn" id="cancelPoolBtn">取消</button><button class="btn primary" id="savePoolBtn">保存选项</button></div>
+    </div>
+  `, { height: '82vh' });
+  const cooldownInput = root.querySelector('#poolCooldown');
+  root.querySelectorAll('[data-cooldown]').forEach((button) => {
+    button.addEventListener('click', () => {
+      cooldownInput.value = button.dataset.cooldown;
+      root.querySelectorAll('[data-cooldown]').forEach((item) => item.classList.toggle('active', item === button));
+    });
+  });
+  root.querySelector('#cancelPoolBtn').addEventListener('click', close);
+  const save = () => {
+    const content = root.querySelector('#poolContent').value.trim();
+    if (!content) return showToast('先填写选项名称');
+    const payload = {
+      content,
+      boxId: root.querySelector('#poolBox').value,
+      itemType: BOX_TYPE_POOL,
+      durationMinutes: Math.max(0, Number(root.querySelector('#poolDuration').value) || 0),
+      weight: Math.max(1, Number(root.querySelector('#poolWeight').value) || 1),
+      cooldownMinutes: Math.max(0, Number(cooldownInput.value) || 0),
+      pointsCost: Math.max(0, Number(root.querySelector('#poolPointsCost').value) || 0),
+      note: root.querySelector('#poolNote').value.trim(),
+      isCompleted: false,
+    };
+    if (task) updateTask(task.id, payload);
+    else addTask(payload);
+    close();
+    showToast(task ? '选项已更新' : '选项已加入池中');
+    onDone();
+  };
+  root.querySelector('#savePoolBtn').addEventListener('click', save);
+  root.addEventListener('keydown', (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+      event.preventDefault();
+      save();
+    }
+  });
+}
+
+function normalizeExternalUrl(value) {
+  const clean = String(value || '').trim();
+  if (!clean) return '';
+  return /^[a-z][a-z\d+.-]*:/i.test(clean) ? clean : `https://${clean}`;
+}
+
+function openCollectionItemEditor({ taskId, boxId }, onDone) {
+  const boxes = getBoxes().filter((box) => inferBoxType(box) === BOX_TYPE_COLLECTION);
+  const task = getTasksByBox(boxId).find((item) => item.id === taskId);
+  const { root, close } = openSheet(`
+    <div class="sheet-handle"></div>
+    <div class="sheet-content typed-editor collection-editor">
+      <p class="eyebrow">Reference Editor</p>
+      <h3>${task ? '编辑条目' : '收藏新内容'}</h3>
+      <p class="sheet-lead">资料不需要“完成”，用标题、链接和标签让它更容易被再次找到。</p>
+      <label>标题<input id="collectionContent" class="input" value="${escapeHtml(task?.content || '')}" placeholder="例如：本周值得复习的文章"></label>
+      <label>链接（可选）<input id="collectionUrl" class="input" type="url" value="${escapeHtml(task?.url || '')}" placeholder="https://"></label>
+      <label>标签（用逗号分隔）<input id="collectionTags" class="input" value="${escapeHtml((task?.tags || []).join(', '))}" placeholder="复盘, 写作, 稍后阅读"></label>
+      <label>所属资料清单<select id="collectionBox" class="input">${boxes.map((box) => `<option value="${box.id}" ${box.id === (task?.boxId || boxId) ? 'selected' : ''}>${escapeHtml(box.name)}</option>`).join('')}</select></label>
+      <label>摘要或备注<textarea id="collectionNote" class="input" rows="5" placeholder="为什么值得保留，下次从哪里继续">${escapeHtml(task?.note || '')}</textarea></label>
+      <label class="collection-favorite-toggle"><input id="collectionFavorite" type="checkbox" ${task?.favorite ? 'checked' : ''}><span>设为常用，固定在清单前面</span></label>
+      <div class="sheet-actions"><button class="btn" id="cancelCollectionBtn">取消</button><button class="btn primary" id="saveCollectionBtn">保存条目</button></div>
+    </div>
+  `, { height: '78vh' });
+  root.querySelector('#cancelCollectionBtn').addEventListener('click', close);
+  const save = () => {
+    const content = root.querySelector('#collectionContent').value.trim();
+    if (!content) return showToast('先填写条目标题');
+    const payload = {
+      content,
+      boxId: root.querySelector('#collectionBox').value,
+      itemType: BOX_TYPE_COLLECTION,
+      url: normalizeExternalUrl(root.querySelector('#collectionUrl').value),
+      tags: root.querySelector('#collectionTags').value.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean),
+      note: root.querySelector('#collectionNote').value.trim(),
+      favorite: root.querySelector('#collectionFavorite').checked,
+      isCompleted: false,
+    };
+    if (task) updateTask(task.id, payload);
+    else addTask(payload);
+    close();
+    showToast(task ? '条目已更新' : '内容已收藏');
+    onDone();
+  };
+  root.querySelector('#saveCollectionBtn').addEventListener('click', save);
+  root.addEventListener('keydown', (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+      event.preventDefault();
+      save();
+    }
+  });
+}
+
 function openTaskEditor({ taskId, boxId }, onDone) {
   const boxes = getBoxes();
+  const taskBoxes = boxes.filter(isTaskBox);
   const currentTasks = getTasksByBox(boxId);
   const task = currentTasks.find((item) => item.id === taskId);
-  const initialBox = boxes.find((box) => box.id === (task?.boxId || boxId)) || boxes[0] || null;
+  const initialBox = taskBoxes.find((box) => box.id === (task?.boxId || boxId)) || taskBoxes[0] || null;
   const initialPoints = task ? getTaskPointValue(task, initialBox) : getTaskPointValue({ boxId: initialBox?.id }, initialBox);
   const { root, close } = openSheet(`
     <div class="sheet-handle"></div>
@@ -759,7 +1066,7 @@ function openTaskEditor({ taskId, boxId }, onDone) {
       <label>完成奖励积分<input id="taskPointsValue" class="input" type="number" min="0" step="1" value="${initialPoints}"></label>
       <label>所属盒子
         <select id="taskBox" class="input">
-          ${boxes.map((box) => `<option value="${box.id}" ${box.id === (task?.boxId || boxId) ? 'selected' : ''}>${escapeHtml(box.name)}</option>`).join('')}
+          ${taskBoxes.map((box) => `<option value="${box.id}" ${box.id === (task?.boxId || boxId) ? 'selected' : ''}>${escapeHtml(box.name)}</option>`).join('')}
         </select>
       </label>
       <label>备注（可选）<textarea id="taskNote" class="input" rows="4" placeholder="写下补充说明、下一步或上下文">${escapeHtml(task?.note || '')}</textarea></label>
@@ -819,7 +1126,7 @@ function openTaskEditor({ taskId, boxId }, onDone) {
   });
   boxSelect.addEventListener('change', () => {
     if (pointsInput.dataset.touched === '1') return;
-    const selectedBox = boxes.find((box) => box.id === boxSelect.value);
+    const selectedBox = taskBoxes.find((box) => box.id === boxSelect.value);
     const referenceTask = task ? { ...task, boxId: boxSelect.value, priority } : { boxId: boxSelect.value, priority };
     pointsInput.value = String(getTaskPointValue(referenceTask, selectedBox));
   });
@@ -833,7 +1140,7 @@ function openTaskEditor({ taskId, boxId }, onDone) {
     }
 
     const nextBoxId = root.querySelector('#taskBox').value;
-    const selectedBox = boxes.find((box) => box.id === nextBoxId) || null;
+    const selectedBox = taskBoxes.find((box) => box.id === nextBoxId) || null;
     const scheduledAt = root.querySelector('#taskScheduledAt').value || null;
     const due = root.querySelector('#taskDate').value || null;
     const weight = Math.max(1, Number(root.querySelector('#taskWeight').value) || 1);
@@ -854,7 +1161,7 @@ function openTaskEditor({ taskId, boxId }, onDone) {
     };
 
     if (task) {
-      const previousPointsValue = getTaskPointValue(task, boxes.find((box) => box.id === task.boxId) || null);
+      const previousPointsValue = getTaskPointValue(task, taskBoxes.find((box) => box.id === task.boxId) || null);
       updateTask(task.id, payload);
       const nextTask = { ...task, ...payload, id: task.id };
       let pointsResult = { changed: false, delta: 0 };

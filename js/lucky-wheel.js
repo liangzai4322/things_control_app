@@ -1,5 +1,7 @@
-import { getTasksByBox, playSound } from './db.js';
-import { openSheet } from './app.js';
+import { getTasksByBox, playSound, recordPoolUsage } from './db.js';
+import { openSheet, showToast } from './app.js';
+import { getPoolCooldownState, inferBoxType, BOX_TYPE_POOL } from './box-types.js';
+import { getPointsBalance, recordPointsTransaction } from './points-store.js';
 
 const WHEEL_THEMES = {
   important: {
@@ -146,6 +148,8 @@ function renderWheelResult(root, {
   title = '等待抽取',
   description = '点击开始，让转盘随机落到其中一项。',
   chips = [],
+  actionLabel = '',
+  onAction = null,
 } = {}) {
   const result = root.querySelector('#wheelResult');
   result.innerHTML = `
@@ -154,8 +158,10 @@ function renderWheelResult(root, {
       <h4>${escapeHtml(title)}</h4>
       <p class="wheel-result-note">${escapeHtml(description)}</p>
       ${chips.length ? `<div class="wheel-meta-row">${chips.map((chip) => `<span class="wheel-pill">${escapeHtml(chip)}</span>`).join('')}</div>` : ''}
+      ${actionLabel ? `<button type="button" class="btn primary wheel-result-action">${escapeHtml(actionLabel)}</button>` : ''}
     </section>
   `;
+  result.querySelector('.wheel-result-action')?.addEventListener('click', () => onAction?.());
 
   const card = result.querySelector('.wheel-result-shell');
   requestAnimationFrame(() => card?.classList.add('show'));
@@ -321,13 +327,64 @@ function drawWheel(ctx, size, entries, angle, theme, getText, highlightedIndex =
 }
 
 export function openLuckyWheel(box) {
-  const pendingTasks = getTasksByBox(box.id).filter((task) => !task.isCompleted);
+  const isPool = inferBoxType(box) === BOX_TYPE_POOL;
+  const pendingTasks = getTasksByBox(box.id).filter((task) => (
+    isPool ? (!task.archived && getPoolCooldownState(task).available) : !task.isCompleted
+  ));
   return openWeightedWheel({
     title: `${box.name} · 随机抽取`,
     entries: pendingTasks,
     color: box.color,
     getText: (task) => task.content,
     onPicked: (root, task, helpers) => {
+      if (isPool) {
+        const chips = [
+          task.durationMinutes ? `${task.durationMinutes} 分钟` : '',
+          task.pointsCost ? `${task.pointsCost} 积分` : '',
+          `权重 ${Math.max(1, Number(task.weight) || 1)}`,
+        ].filter(Boolean);
+        helpers.renderResult({
+          eyebrow: '本次选项',
+          title: task.content,
+          description: task.note?.trim() || '结果已经落定，确认使用后会开始计算冷却时间。',
+          chips,
+          actionLabel: '确认使用这个选项',
+          onAction: () => {
+            const pointsCost = Math.max(0, Number(task.pointsCost) || 0);
+            if (pointsCost && getPointsBalance() < pointsCost) {
+              showToast(`积分不足，需要 ${pointsCost} 积分`);
+              return;
+            }
+            if (pointsCost) {
+              recordPointsTransaction({
+                delta: -pointsCost,
+                title: `使用：${task.content}`,
+                note: '来自选项池转盘',
+                bucket: 'spend',
+                sourceType: 'pool_use',
+                sourceKey: `pool-wheel-${task.id}-${Date.now()}`,
+              });
+            }
+            recordPoolUsage(task.id);
+            task.usageCount = Math.max(0, Number(task.usageCount) || 0) + 1;
+            task.lastUsedAt = new Date().toISOString();
+            if (task.cooldownMinutes) {
+              const index = pendingTasks.findIndex((item) => item.id === task.id);
+              if (index >= 0) pendingTasks.splice(index, 1);
+              const spinButton = root.querySelector('#spinBtn');
+              spinButton.disabled = pendingTasks.length === 0;
+              if (!pendingTasks.length) spinButton.textContent = '暂无其他可用选项';
+            }
+            helpers.renderResult({
+              eyebrow: '已记录使用',
+              title: task.content,
+              description: task.cooldownMinutes ? '选项已进入冷却，之后会自动恢复可用。' : '选项仍保留在池中，下次可以继续抽取。',
+              chips: [`累计 ${task.usageCount} 次`],
+            });
+          },
+        });
+        return;
+      }
       const chips = [
         getPriorityLabel(task.priority ?? 0),
         `进度 ${clampProgress(task.progress)}%`,
@@ -472,8 +529,8 @@ export function openWeightedWheel({
         });
       } finally {
         spinning = false;
-        spinButton.disabled = false;
-        spinButton.textContent = '再抽一次';
+        spinButton.disabled = entries.length === 0;
+        spinButton.textContent = entries.length ? '再抽一次' : '暂无其他可用选项';
       }
     };
 

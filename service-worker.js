@@ -1,4 +1,4 @@
-const CACHE_NAME = 'taskbox-v29-recurring-tasks';
+const CACHE_NAME = 'taskbox-v30-box-types';
 const CACHE_FILES = [
   './',
   './index.html',
@@ -7,6 +7,8 @@ const CACHE_FILES = [
   './js/points-store.js',
   './js/db.js',
   './js/task-utils.js',
+  './js/box-types.js',
+  './js/box-type-sheet.js',
   './js/recurrence.js',
   './js/recurrence-ui.js',
   './js/home.js',
