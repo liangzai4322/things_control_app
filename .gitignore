@@ -1,5 +1,6 @@
 node_modules/
 tmp/
+dist/
 
 # Browser profile/cache fragments can contain auth state.
 Local Storage/

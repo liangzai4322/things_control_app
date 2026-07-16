@@ -2,15 +2,17 @@
 
 TaskBox 是一个本地静态 Web 应用，用来做游戏化任务管理、积分、抽奖转盘和“小世界”奖励/挑战池。这个目录也放了一些内容导出脚本，用于把 SCYS、ZSXQ、飞书等来源整理成 Markdown 或 JSON 产物。
 
-## 本地运行
+## TaskBox 本地运行
 
-这个项目没有 `package.json`，前端入口是 `index.html`，核心代码是原生 ES module。因为应用会 `fetch` 本地 JSON，并注册 `service-worker.js`，建议通过静态服务器打开：
+TaskBox 源码是原生 ES module，生产环境通过 `esbuild` 生成压缩产物。首次运行先安装依赖：
 
 ```powershell
-python -m http.server 8000
+npm ci
+npm run build
+npm run preview
 ```
 
-然后访问 `http://localhost:8000/`。主要入口文件：
+然后访问 `http://127.0.0.1:4173/`。只调试未压缩源码时也可运行 `python -m http.server 8000` 并访问 `http://localhost:8000/`。主要入口文件：
 
 - `index.html`: PWA 壳和 `js/app.js` 入口。
 - `css/style.css`: 全局界面样式。
@@ -18,6 +20,16 @@ python -m http.server 8000
 - `data/`: “小世界”奖励池和挑战塔数据。
 - `assets/`: 图标、图片、音效占位说明。
 - `service-worker.js`: App shell 和静态资源缓存。
+- `server/taskbox-api/`: SQLite + Express 记录级数据 API。
+
+生产页面是 `https://liangzai4322.github.io/things_control_app/`，数据 API 是 `https://liangzai666.com/taskbox-api/`。前端只在浏览器本地保存用户输入的 API Token，不再使用 Gist 作为业务数据源；服务器密钥不得提交到仓库或写进构建产物。
+
+当前文档：
+
+- `docs/taskbox-core-features.md`: 产品功能和业务规则。
+- `docs/architecture.md`: 前端、同步、数据库与 API 架构。
+- `docs/runbook.md`: 本地验证、部署、备份和回滚。
+- `docs/production-build.md`: 线上压缩构建规则。
 
 ## 内容导出脚本
 

@@ -2,10 +2,17 @@ import {
   getFirstOccurrenceAt,
   getNextOccurrenceAt,
   getOccurrenceDueAt,
+  getOccurrenceVisibleAfter,
   getRecurrenceKey,
   getRecurringOccurrenceId,
   normalizeRecurrenceRule,
 } from './recurrence.js';
+import {
+  getTaskContextRank,
+  isTaskReleased,
+  normalizeDeviceContext,
+  normalizeDeviceMode,
+} from './task-visibility.js';
 import {
   inferBoxType,
   normalizeBoxType,
@@ -83,6 +90,12 @@ function normalize(data = {}) {
     tasks: (Array.isArray(data.tasks) ? data.tasks : []).map((t) => {
       const rawPinLevel = Number(t.pinLevel ?? (t.pinned ? 1 : 0));
       const pinLevel = rawPinLevel >= 1 && rawPinLevel <= 3 ? rawPinLevel : null;
+      const recurrence = t.recurrence && typeof t.recurrence === 'object'
+        ? normalizeRecurrenceRule(t.recurrence, t.scheduledAt, t.dueDate)
+        : null;
+      const recurringVisibleAfter = t.recurrenceTemplateId && t.scheduledAt && recurrence
+        ? getOccurrenceVisibleAfter(recurrence, t.scheduledAt)
+        : null;
       return {
         ...t,
         weight: t.weight ?? 1,
@@ -96,11 +109,16 @@ function normalize(data = {}) {
         isRecurringTemplate: Boolean(t.isRecurringTemplate),
         recurrenceTemplateId: t.recurrenceTemplateId || null,
         recurrenceKey: t.recurrenceKey || null,
-        recurrence: t.recurrence && typeof t.recurrence === 'object' ? t.recurrence : null,
+        recurrence,
         nextRunAt: t.nextRunAt || null,
         occurrenceStatus: t.occurrenceStatus || null,
         mainlineId: t.mainlineId || null,
         milestoneId: t.milestoneId || null,
+        deviceContext: normalizeDeviceContext(t.deviceContext),
+        visibleAfter: t.visibleAfter || recurringVisibleAfter || null,
+        deferredAt: t.deferredAt || null,
+        deferNote: String(t.deferNote || ''),
+        progressLogs: Array.isArray(t.progressLogs) ? t.progressLogs : [],
         itemType: t.itemType || null,
         durationMinutes: Math.max(0, Number(t.durationMinutes) || 0),
         cooldownMinutes: Math.max(0, Number(t.cooldownMinutes) || 0),
@@ -168,6 +186,7 @@ function normalize(data = {}) {
       apiEnabled: true,
       apiEndpoint: data.settings?.apiEndpoint || DEFAULT_API_ENDPOINT,
       apiToken: data.settings?.apiToken || '',
+      deviceContextMode: normalizeDeviceMode(data.settings?.deviceContextMode),
       dailyQuote: data.settings?.dailyQuote || DEFAULT_DAILY_QUOTE,
       dailyQuoteUpdatedAt: data.settings?.dailyQuoteUpdatedAt || data.meta?.updatedAt || new Date().toISOString(),
       dailyQuoteHistory: Array.isArray(data.settings?.dailyQuoteHistory) ? data.settings.dailyQuoteHistory : [],
@@ -369,7 +388,7 @@ export const getMilestones = (mainlineId = null) => [...getData().milestones]
   .sort((left, right) => Number(left.sortOrder || 0) - Number(right.sortOrder || 0) || taskTime(left.createdAt) - taskTime(right.createdAt));
 export const getTasks = () => {
   ensureRecurringTaskInstances();
-  return getData().tasks.filter((t) => !t.deleted && !t.isRecurringTemplate);
+  return getData().tasks.filter((t) => !t.deleted && !t.isRecurringTemplate && isTaskReleased(t));
 };
 export const getSettings = () => getData().settings;
 
@@ -484,11 +503,23 @@ export function getTasksByBox(boxId) {
   return getTasks()
     .filter((t) => t.boxId === boxId)
     .sort((a, b) => pinRank(a) - pinRank(b)
+      || Number(Boolean(b.dueDate) && new Date(b.dueDate) < new Date()) - Number(Boolean(a.dueDate) && new Date(a.dueDate) < new Date())
+      || getTaskContextRank(a, getSettings()) - getTaskContextRank(b, getSettings())
       || (Number(b.weight)||1) - (Number(a.weight)||1)
       || (Number(b.priority)||0) - (Number(a.priority)||0)
       || (Number(b.progress)||0) - (Number(a.progress)||0)
       || a.sortOrder - b.sortOrder
       || new Date(a.createdAt) - new Date(b.createdAt));
+}
+
+export function getDeferredTasksByBox(boxId, referenceTime = new Date()) {
+  return getData().tasks
+    .filter((task) => task.boxId === boxId
+      && !task.deleted
+      && !task.isRecurringTemplate
+      && !task.isCompleted
+      && !isTaskReleased(task, referenceTime))
+    .sort((left, right) => new Date(left.visibleAfter) - new Date(right.visibleAfter));
 }
 
 export function addTask(task) {
@@ -510,6 +541,11 @@ export function addTask(task) {
       dueDate: task.dueDate ?? null,
       mainlineId: task.mainlineId || null,
       milestoneId: task.milestoneId || null,
+      deviceContext: normalizeDeviceContext(task.deviceContext, 'desktop'),
+      visibleAfter: task.visibleAfter || null,
+      deferredAt: task.deferredAt || null,
+      deferNote: String(task.deferNote || ''),
+      progressLogs: Array.isArray(task.progressLogs) ? task.progressLogs : [],
       itemType: task.itemType || inferBoxType(box),
       durationMinutes: Math.max(0, Number(task.durationMinutes) || 0),
       cooldownMinutes: Math.max(0, Number(task.cooldownMinutes) || 0),
@@ -562,6 +598,11 @@ function buildRecurringOccurrence(template, scheduledAt, data) {
     dueDate: getOccurrenceDueAt(recurrence, scheduledAt),
     mainlineId: template.mainlineId || null,
     milestoneId: template.milestoneId || null,
+    deviceContext: normalizeDeviceContext(template.deviceContext),
+    visibleAfter: getOccurrenceVisibleAfter(recurrence, scheduledAt),
+    deferredAt: null,
+    deferNote: '',
+    progressLogs: [],
     isCompleted: false,
     deleted: false,
     deletedAt: null,
@@ -678,6 +719,11 @@ export function addRecurringTask(task, recurrenceInput) {
       dueDate: getOccurrenceDueAt(recurrence, firstRunAt),
       mainlineId: task.mainlineId || null,
       milestoneId: task.milestoneId || null,
+      deviceContext: normalizeDeviceContext(task.deviceContext, 'desktop'),
+      visibleAfter: null,
+      deferredAt: null,
+      deferNote: '',
+      progressLogs: [],
       isCompleted: false,
       deleted: false,
       deletedAt: null,
@@ -741,7 +787,7 @@ export function updateRecurringTemplate(templateId, patch = {}) {
   };
   if (patch.dueDate !== undefined) recurrenceInput.deadlineOffsetMinutes = null;
   const recurrence = normalizeRecurrenceRule(recurrenceInput, anchorAt, dueDate);
-  const sharedFields = ['content', 'boxId', 'priority', 'weight', 'pointsValue', 'note', 'pinLevel', 'pinned', 'mainlineId', 'milestoneId'];
+  const sharedFields = ['content', 'boxId', 'priority', 'weight', 'pointsValue', 'note', 'pinLevel', 'pinned', 'mainlineId', 'milestoneId', 'deviceContext'];
   sharedFields.forEach((key) => {
     if (patch[key] !== undefined) template[key] = patch[key];
   });
@@ -756,6 +802,7 @@ export function updateRecurringTemplate(templateId, patch = {}) {
     });
     current.scheduledAt = anchorAt;
     current.dueDate = getOccurrenceDueAt(recurrence, anchorAt);
+    current.visibleAfter = getOccurrenceVisibleAfter(recurrence, anchorAt);
     current.recurrence = recurrence;
     current.recurrenceKey = getRecurrenceKey(templateId, anchorAt);
     current.syncKey = current.recurrenceKey;
@@ -998,7 +1045,7 @@ export function restoreTask(task) {
 }
 
 export function updateTask(taskId, patch) {
-  const cloudCriticalKeys = new Set(['content', 'boxId', 'priority', 'weight', 'pointsValue', 'progress', 'pinLevel', 'pinned', 'scheduledAt', 'dueDate', 'isCompleted', 'deleted', 'deletedAt', 'sortOrder', 'completedAt', 'note', 'recurrence', 'nextRunAt', 'occurrenceStatus', 'itemType', 'durationMinutes', 'cooldownMinutes', 'usageCount', 'lastUsedAt', 'pointsCost', 'url', 'tags', 'favorite', 'archived', 'mainlineId', 'milestoneId']);
+  const cloudCriticalKeys = new Set(['content', 'boxId', 'priority', 'weight', 'pointsValue', 'progress', 'pinLevel', 'pinned', 'scheduledAt', 'dueDate', 'isCompleted', 'deleted', 'deletedAt', 'sortOrder', 'completedAt', 'note', 'recurrence', 'nextRunAt', 'occurrenceStatus', 'itemType', 'durationMinutes', 'cooldownMinutes', 'usageCount', 'lastUsedAt', 'pointsCost', 'url', 'tags', 'favorite', 'archived', 'mainlineId', 'milestoneId', 'deviceContext', 'visibleAfter', 'deferredAt', 'deferNote', 'progressLogs']);
   const shouldCloudPush = Object.keys(patch || {}).some((k) => cloudCriticalKeys.has(k));
   let updated = null;
   let previous = null;
@@ -1351,6 +1398,7 @@ const LOCAL_ONLY_SETTING_KEYS = [
   'deepseekApiKey',
   'flomoWebhook',
   'apiToken',
+  'deviceContextMode',
 ];
 
 function getApiConfig(settings = getSettings()) {

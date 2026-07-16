@@ -1,0 +1,18 @@
+{
+  "name": "taskbox-web",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "npm run test:recurrence && npm run test:box-types && npm run test:visibility && npm run test:db-visibility && npm --prefix server/taskbox-api run test:schema",
+    "build": "node scripts/build-app.mjs",
+    "preview": "python scripts/serve_app.py --port 4173 --dir dist",
+    "test:recurrence": "node scripts/test-recurrence.mjs",
+    "test:box-types": "node scripts/test-box-types.mjs",
+    "test:visibility": "node scripts/test-task-visibility.mjs",
+    "test:db-visibility": "node scripts/test-db-visibility.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12"
+  }
+}

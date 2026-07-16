@@ -7,6 +7,7 @@ import {
   getBoxes,
   getMainlines,
   getMilestones,
+  getSettings,
   getTasks,
   updateMainline,
   updateMilestone,
@@ -16,6 +17,7 @@ import { isTaskBox } from './box-types.js';
 import { renderCoreBoxNav } from './core-box-nav.js';
 import { getTaskPointValue } from './points-store.js';
 import { fromDateTimeLocalValue } from './task-utils.js';
+import { bindDeviceContextField, getTaskContextRank, renderDeviceContextField } from './task-visibility.js';
 
 const MAINLINE_COLORS = ['#e85d45', '#dc8a2f', '#159b8a', '#377fae', '#69795e'];
 const STATUS_LABELS = { active: '推进中', maintenance: '维持中', paused: '已暂停', completed: '已完成' };
@@ -178,11 +180,13 @@ function openMainlineTaskEditor(mainline, onDone) {
       </div>
       <label>计划时间<input id="lineTaskScheduled" class="input" type="datetime-local"></label>
       <label>截止时间<input id="lineTaskDue" class="input" type="datetime-local"></label>
+      ${renderDeviceContextField('desktop', 'mainline-task-device')}
       <label>完成积分<input id="lineTaskPoints" class="input" type="number" min="0" value="${getTaskPointValue({ boxId: defaultBox.id }, defaultBox)}"></label>
       <div class="sheet-actions"><button class="btn" id="cancelLineTask">取消</button><button class="btn primary" id="saveLineTask">保存下一步</button></div>
     </div>
   `, { height: '76vh' });
   root.querySelector('#cancelLineTask').addEventListener('click', close);
+  const deviceField = bindDeviceContextField(root, 'mainline-task-device', 'desktop');
   root.querySelector('#lineTaskBox').addEventListener('change', (event) => {
     const box = boxes.find((item) => item.id === event.target.value);
     root.querySelector('#lineTaskPoints').value = getTaskPointValue({ boxId: box?.id }, box);
@@ -198,6 +202,7 @@ function openMainlineTaskEditor(mainline, onDone) {
       scheduledAt: fromDateTimeLocalValue(root.querySelector('#lineTaskScheduled').value),
       dueDate: fromDateTimeLocalValue(root.querySelector('#lineTaskDue').value),
       pointsValue: Math.max(0, Number(root.querySelector('#lineTaskPoints').value) || 0),
+      deviceContext: deviceField.getValue(),
     });
     close();
     showToast('下一步行动已加入盒子');
@@ -255,7 +260,7 @@ export function renderMainlinePage(app, mainlineId) {
       </section>
       <section class="section-heading mainline-section-heading"><div><p class="eyebrow">Workstream</p><h2>关联任务</h2></div><p class="section-note">${tasks.length} 项</p></section>
       <section class="mainline-task-list">
-        ${tasks.length ? [...tasks].sort((a, b) => Number(a.isCompleted) - Number(b.isCompleted) || new Date(a.dueDate || a.createdAt) - new Date(b.dueDate || b.createdAt)).map((task) => `
+        ${tasks.length ? [...tasks].sort((a, b) => Number(a.isCompleted) - Number(b.isCompleted) || getTaskContextRank(a, getSettings()) - getTaskContextRank(b, getSettings()) || new Date(a.dueDate || a.createdAt) - new Date(b.dueDate || b.createdAt)).map((task) => `
           <button class="mainline-task-row ${task.isCompleted ? 'completed' : ''}" data-open-task-box="${task.boxId}">
             <i>${task.isCompleted ? '✓' : ''}</i><span><strong>${escapeHtml(task.content)}</strong><small>${escapeHtml(boxMap.get(task.boxId)?.name || '盒子')} · ${formatDate(task.dueDate || task.scheduledAt)}</small></span>
           </button>

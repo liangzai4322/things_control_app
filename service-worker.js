@@ -1,4 +1,4 @@
-const CACHE_NAME = 'taskbox-v31-mainlines-sync';
+const CACHE_NAME = 'taskbox-v32-task-visibility';
 const CACHE_FILES = [
   './',
   './index.html',
@@ -7,6 +7,7 @@ const CACHE_FILES = [
   './js/points-store.js',
   './js/db.js',
   './js/task-utils.js',
+  './js/task-visibility.js',
   './js/box-types.js',
   './js/box-type-sheet.js',
   './js/core-box-nav.js',

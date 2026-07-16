@@ -2,6 +2,7 @@ import { getSettings, setSettings, exportData, importData, pullDataFromCloud, ex
 import { navigate, showToast } from './app.js';
 import { pullPointsFromCloud } from './points-store.js';
 import { renderCoreBoxNav } from './core-box-nav.js';
+import { detectDeviceContext, normalizeDeviceMode } from './task-visibility.js';
 
 const DEFAULT_API_ENDPOINT = 'https://liangzai666.com/taskbox-api/v1';
 let lastAutoPullSignature = '';
@@ -109,6 +110,21 @@ export function renderSettings(app) {
       <section class="panel">
         <div class="panel-heading">
           <div>
+            <p class="eyebrow">Work Context</p>
+            <h3>任务设备场景</h3>
+          </div>
+          <p class="panel-note">自动识别当前为${detectDeviceContext() === 'mobile' ? '手机' : '电脑'}；只调整排序，不会隐藏任务。</p>
+        </div>
+        <div class="device-mode-tabs">
+          ${[['auto', '自动'], ['mobile', '手机'], ['desktop', '电脑'], ['all', '全部']].map(([value, label]) => `
+            <button type="button" data-device-mode="${value}" class="${normalizeDeviceMode(settings.deviceContextMode) === value ? 'active' : ''}">${label}</button>
+          `).join('')}
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading">
+          <div>
             <p class="eyebrow">Appearance</p>
             <h3>主题模式</h3>
           </div>
@@ -202,6 +218,10 @@ export function renderSettings(app) {
   app.querySelector('#soundEnabled').addEventListener('change', (event) => {
     setSettings({ soundEnabled: event.target.checked });
   });
+  app.querySelectorAll('[data-device-mode]').forEach((button) => button.addEventListener('click', () => {
+    setSettings({ deviceContextMode: button.dataset.deviceMode });
+    renderSettings(app);
+  }));
 
   const apiEndpointInput = app.querySelector('#apiEndpoint');
   const apiTokenInput = app.querySelector('#apiToken');

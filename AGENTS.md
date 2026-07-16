@@ -9,7 +9,9 @@ This workspace has two jobs:
 
 ## Working rules
 
-- There is no `package.json` in this repo. Serve the app with a static server such as `python -m http.server 8000`.
+- The web app has a `package.json`. Use `npm ci`, `npm run build`, and `npm run preview` for production-like verification; `python -m http.server 8000` is only the unbundled source fallback.
+- Production business data comes from `server/taskbox-api/` (SQLite + Express) through record-level API calls. Do not reintroduce Gist JSON as a fallback data source.
+- Frontend changes should preserve local-cache/offline behavior, record-level sync, and idempotent server writes.
 - Put disposable browser/auth/debug artifacts in `tmp/`.
 - Put durable batch outputs in `outputs/<batch-name>/`.
 - After ZSXQ Markdown conversion/backfill/final merge, put only title-named per-article Markdown files larger than 60 KB in `outputs/太大/`, with a per-month `oversized_files_moved.json` / `.md` audit left in the month directory. Before moving, filenames should look like `<rank>_<topic_id>_<title>.md`; keep aggregate Markdown files such as `topics_normalized.md`, `articles_normalized.md`, `merged_feishu.md`, and `final_merged_articles.md` in the source month directory. Do not move JSON, DOCX, raw payloads, or auth/debug artifacts just because they are large.
@@ -54,5 +56,8 @@ This workspace has two jobs:
 ## Documentation intent
 
 - `README.md` is the project-facing operations log and rerun guide.
+- `docs/taskbox-core-features.md` is the current product and business-rule reference.
+- `docs/architecture.md` records the frontend, API, data model, and synchronization architecture.
+- `docs/runbook.md` records local verification, deployment, backup, rollback, and incident checks.
 - Keep absolute dates in docs when rules changed, especially for export policy shifts.
 - If Feishu export policy changes again, update both `README.md` and this file in the same pass.

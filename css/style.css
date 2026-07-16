@@ -1292,6 +1292,184 @@ h4 {
   backdrop-filter: blur(18px);
 }
 
+.task-context-menu {
+  max-height: min(78vh, 620px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.task-more-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: 14px;
+  cursor: pointer;
+  letter-spacing: 1px;
+}
+
+.task-more-btn:hover,
+.task-more-btn:focus-visible {
+  background: color-mix(in srgb, var(--pin-soft, #eef2f7) 72%, transparent);
+  color: var(--pin-text, #334155);
+  outline: none;
+}
+
+.device-context-field {
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.device-context-field legend {
+  margin-bottom: 10px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.device-context-options,
+.device-mode-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.device-context-options button,
+.device-mode-tabs button {
+  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  border-radius: 15px;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  color: var(--muted);
+  min-height: 52px;
+  padding: 9px 8px;
+  cursor: pointer;
+  transition: border-color .18s ease, background .18s ease, transform .18s ease;
+}
+
+.device-context-options button strong,
+.device-context-options button small {
+  display: block;
+}
+
+.device-context-options button strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.device-context-options button small {
+  margin-top: 3px;
+  font-size: 10px;
+}
+
+.device-context-options button.active,
+.device-mode-tabs button.active {
+  border-color: #2f6df6;
+  background: linear-gradient(145deg, rgba(47, 109, 246, .14), rgba(34, 195, 221, .08));
+  color: #1d4ed8;
+  box-shadow: inset 0 0 0 1px rgba(47, 109, 246, .08);
+}
+
+.device-mode-tabs {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.device-mode-tabs button {
+  min-height: 42px;
+  font-weight: 700;
+}
+
+.device-chip.device-desktop {
+  color: #1d4ed8;
+  background: rgba(47, 109, 246, .1);
+}
+
+.device-chip.device-mobile {
+  color: #047857;
+  background: rgba(16, 185, 129, .11);
+}
+
+.device-chip.device-universal {
+  color: #7c3f16;
+  background: rgba(251, 146, 60, .11);
+}
+
+.device-mismatch-toggle,
+.deferred-toggle,
+.upcoming-toggle {
+  margin-top: 14px;
+}
+
+.device-mismatch-timeline,
+.deferred-timeline,
+.upcoming-timeline {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.device-mismatch-timeline.collapsed,
+.deferred-timeline.collapsed,
+.upcoming-timeline.collapsed {
+  display: none;
+}
+
+.task-item.deferred {
+  border-style: dashed;
+  opacity: .86;
+}
+
+.task-item.deferred::after {
+  background: linear-gradient(90deg, rgba(14, 165, 164, .7), rgba(56, 189, 248, .6));
+}
+
+.deferred-chip {
+  color: #0f766e;
+  background: rgba(20, 184, 166, .12);
+}
+
+.defer-note-preview {
+  color: #0f766e;
+}
+
+.defer-task-name {
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(15, 118, 110, .12), rgba(56, 189, 248, .08));
+  font-weight: 750;
+  line-height: 1.5;
+}
+
+.defer-progress-presets {
+  margin: 8px 0;
+}
+
+.defer-warning {
+  margin: 0;
+  padding: 11px 13px;
+  border-radius: 13px;
+  background: rgba(239, 68, 68, .1);
+  color: #b91c1c;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+@media (max-width: 520px) {
+  .device-context-options button {
+    min-height: 48px;
+    padding-inline: 5px;
+  }
+
+  .device-context-options button small {
+    display: none;
+  }
+
+  .device-mode-tabs {
+    gap: 6px;
+  }
+}
+
 :root[data-theme='dark'] .task-context-menu {
   background: rgba(15, 23, 42, 0.88);
 }

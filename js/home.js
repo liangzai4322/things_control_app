@@ -1,4 +1,4 @@
-import { addBox, addRecurringTask, addTask, deleteBox, deleteRecurringSeries, getBoxes, getMainlines, getMilestones, getRecurringTemplates, getTasks, playSound, pullDataFromCloud, setHomePinnedBox, setRecurringTemplatePaused, updateRecurringTemplate, updateTask } from './db.js';
+import { addBox, addRecurringTask, addTask, deleteBox, deleteRecurringSeries, getBoxes, getMainlines, getMilestones, getRecurringTemplates, getSettings, getTasks, playSound, pullDataFromCloud, setHomePinnedBox, setRecurringTemplatePaused, updateRecurringTemplate, updateTask } from './db.js';
 import { navigate, openSheet, showToast } from './app.js';
 import { getPointsSummary, getTaskPointValue, syncTaskCompletionPoints } from './points-store.js';
 import { getRecurrenceLabel } from './recurrence.js';
@@ -6,6 +6,7 @@ import { bindRecurrenceEditor, renderRecurrenceEditor } from './recurrence-ui.js
 import { openBoxTypeChangeSheet } from './box-type-sheet.js';
 import { renderCoreBoxNav } from './core-box-nav.js';
 import { bindMainlineTaskFields, renderMainlineTaskFields } from './mainline-fields.js';
+import { bindDeviceContextField, getDeviceContextLabel, getTaskContextRank, renderDeviceContextField } from './task-visibility.js';
 import {
   BOX_TYPE_COLLECTION,
   BOX_TYPE_POOL,
@@ -225,6 +226,7 @@ function getAgenda(tasks, boxMap, dateKey, now) {
       const rightTime = new Date(right.scheduledAt || right.dueDate || '9999-12-31').getTime();
       return overdueDiff
         || (Number(left.pinLevel) || 99) - (Number(right.pinLevel) || 99)
+        || getTaskContextRank(left, getSettings()) - getTaskContextRank(right, getSettings())
         || leftTime - rightTime
         || (Number(right.priority) || 0) - (Number(left.priority) || 0);
     });
@@ -258,7 +260,7 @@ function renderAgendaTask(task, box, now) {
         <span class="day-task-title">${escapeHtml(task.content)}</span>
         <span class="day-task-meta">
           <i class="day-box-mark ${escapeHtml(box?.color || 'important')}"></i>
-          ${escapeHtml(box?.name || '未分类')}${task.recurrence ? ` · ↻ ${escapeHtml(getRecurrenceLabel(task.recurrence))}` : ''}${timing ? ` · ${escapeHtml(timing)}` : ''}
+          ${escapeHtml(box?.name || '未分类')} · ${escapeHtml(getDeviceContextLabel(task.deviceContext))}${task.recurrence ? ` · ↻ ${escapeHtml(getRecurrenceLabel(task.recurrence))}` : ''}${timing ? ` · ${escapeHtml(timing)}` : ''}
         </span>
       </button>
     </article>
@@ -792,6 +794,7 @@ function openRecurringTemplateEditor(app, boxes, template) {
       </label>
       <label>当前/下次计划时间<input id="seriesScheduledAt" class="input" type="datetime-local" value="${escapeHtml(toDateTimeLocalValue(scheduledAt))}"></label>
       <label>当前/下次截止时间<input id="seriesDueAt" class="input" type="datetime-local" value="${escapeHtml(toDateTimeLocalValue(dueDate))}"></label>
+      ${renderDeviceContextField(template.deviceContext, 'series-device')}
       ${renderMainlineTaskFields(template)}
       ${renderRecurrenceEditor('series-edit', template.recurrence)}
       <label>每期完成积分<input id="seriesPoints" class="input" type="number" min="0" step="1" value="${Math.max(0, Number(template.pointsValue) || 0)}"></label>
@@ -808,6 +811,7 @@ function openRecurringTemplateEditor(app, boxes, template) {
     initialRule: template.recurrence,
   });
   const mainlineFields = bindMainlineTaskFields(root);
+  const deviceField = bindDeviceContextField(root, 'series-device', 'desktop');
   const noRepeatButton = root.querySelector('[data-recurrence-type="none"]');
   noRepeatButton.disabled = true;
   noRepeatButton.title = '如需停止，请返回周期任务列表选择“停止周期”';
@@ -824,6 +828,7 @@ function openRecurringTemplateEditor(app, boxes, template) {
       scheduledAt: fromDateTimeLocalValue(scheduledInput.value),
       dueDate: fromDateTimeLocalValue(root.querySelector('#seriesDueAt').value),
       pointsValue: Math.max(0, Number(root.querySelector('#seriesPoints').value) || 0),
+      deviceContext: deviceField.getValue(),
       ...mainlineFields.getValue(),
       recurrence: recurrenceEditor.getValue(),
     });
@@ -866,6 +871,7 @@ function openAddTaskSheet(boxes, options = {}) {
         <div class="schedule-presets deadline-presets" aria-label="快捷设置截止时间">${renderDeadlinePresets()}</div>
         <input id="newTaskDueAt" class="input" type="datetime-local">
       </label>
+      ${renderDeviceContextField(options.deviceContext || 'desktop', 'new-task-device')}
       ${renderMainlineTaskFields(options)}
       ${renderRecurrenceEditor('new-task')}
       <label>完成可得积分<input id="newTaskPoints" class="input" type="number" min="0" step="1" value="${defaultPoints}"></label>
@@ -884,6 +890,7 @@ function openAddTaskSheet(boxes, options = {}) {
   bindDeadlinePresets(root, dueInput);
   const recurrenceEditor = bindRecurrenceEditor(root, { prefix: 'new-task', scheduledInput });
   const mainlineFields = bindMainlineTaskFields(root);
+  const deviceField = bindDeviceContextField(root, 'new-task-device', 'desktop');
   if (options.focusRecurrence) root.querySelector('[data-recurrence-type="daily"]')?.focus();
   pointsInput.addEventListener('input', () => {
     pointsInput.dataset.touched = '1';
@@ -909,6 +916,7 @@ function openAddTaskSheet(boxes, options = {}) {
       pointsValue,
       scheduledAt: fromDateTimeLocalValue(scheduledInput.value),
       dueDate: fromDateTimeLocalValue(dueInput.value),
+      deviceContext: deviceField.getValue(),
       ...mainlineFields.getValue(),
     };
     const recurrence = recurrenceEditor.getValue();

@@ -58,6 +58,10 @@ export function renderRecurrenceEditor(prefix, initialRule = null) {
           </select>
         </label>
         <label class="recurrence-field">
+          <span>当天几点出现</span>
+          <input class="input" type="time" value="${escapeHtml(initialRule?.releaseTime || '08:00')}" data-recurrence-release-time>
+        </label>
+        <label class="recurrence-field">
           <span>遗漏后怎么处理</span>
           <select class="input" data-recurrence-miss-policy>
             <option value="carry" ${initialRule?.missPolicy !== 'skip' ? 'selected' : ''}>保留未完成任务</option>
@@ -86,6 +90,7 @@ export function bindRecurrenceEditor(root, { prefix, scheduledInput, initialRule
     mode: editor.querySelector('[data-recurrence-mode]').value,
     weekday: Number(editor.querySelector('[data-recurrence-weekday]').value),
     monthDay: editor.querySelector('[data-recurrence-monthday]').value,
+    releaseTime: editor.querySelector('[data-recurrence-release-time]').value || '08:00',
     missPolicy: editor.querySelector('[data-recurrence-miss-policy]').value,
   });
 
@@ -107,8 +112,8 @@ export function bindRecurrenceEditor(root, { prefix, scheduledInput, initialRule
     const rule = normalizeRecurrenceRule(readRawRule(), scheduledAt);
     summary.textContent = getRecurrenceLabel(rule);
     help.textContent = rule.missPolicy === 'skip'
-      ? '上一期未完成时，到下一期会自动跳过，不堆积。'
-      : '未完成时继续保留；完成或跳过后才会出现下一期。';
+      ? `每期当天 ${rule.releaseTime} 出现；上一期未完成时会自动跳过，不堆积。`
+      : `每期当天 ${rule.releaseTime} 出现；未完成时继续保留，完成后才进入下一期。`;
   };
 
   editor.querySelectorAll('[data-recurrence-type]').forEach((button) => {

@@ -15,10 +15,46 @@ CREATE TABLE IF NOT EXISTS boxes (
   sort_order INTEGER DEFAULT 0,
   is_default INTEGER DEFAULT 0,
   description TEXT,
+  box_type TEXT DEFAULT 'task',
+  type_config_json TEXT,
   created_at TEXT,
   updated_at TEXT NOT NULL,
   raw_json TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS mainlines (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  outcome TEXT,
+  current_phase TEXT,
+  color TEXT,
+  icon TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  is_weekly_focus INTEGER DEFAULT 0,
+  target_date TEXT,
+  sort_order INTEGER DEFAULT 0,
+  created_at TEXT,
+  updated_at TEXT NOT NULL,
+  raw_json TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_mainlines_status_order ON mainlines(status, sort_order);
+
+CREATE TABLE IF NOT EXISTS milestones (
+  id TEXT PRIMARY KEY,
+  mainline_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open',
+  target_date TEXT,
+  sort_order INTEGER DEFAULT 0,
+  completed_at TEXT,
+  created_at TEXT,
+  updated_at TEXT NOT NULL,
+  raw_json TEXT NOT NULL,
+  FOREIGN KEY (mainline_id) REFERENCES mainlines(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_milestones_mainline_order ON milestones(mainline_id, sort_order);
 
 CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY,
@@ -30,6 +66,19 @@ CREATE TABLE IF NOT EXISTS tasks (
   weight REAL DEFAULT 1,
   points_value REAL,
   progress REAL DEFAULT 0,
+  is_recurring_template INTEGER DEFAULT 0,
+  recurrence_template_id TEXT,
+  recurrence_key TEXT,
+  recurrence_json TEXT,
+  next_run_at TEXT,
+  occurrence_status TEXT,
+  mainline_id TEXT,
+  milestone_id TEXT,
+  device_context TEXT NOT NULL DEFAULT 'universal',
+  visible_after TEXT,
+  deferred_at TEXT,
+  defer_note TEXT,
+  progress_logs_json TEXT,
   scheduled_at TEXT,
   due_date TEXT,
   deleted INTEGER DEFAULT 0,
@@ -46,6 +95,23 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE INDEX IF NOT EXISTS idx_tasks_box_id ON tasks(box_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_updated_at ON tasks(updated_at);
 CREATE INDEX IF NOT EXISTS idx_tasks_deleted ON tasks(deleted);
+
+CREATE TABLE IF NOT EXISTS usage_logs (
+  id TEXT PRIMARY KEY,
+  box_id TEXT,
+  task_id TEXT,
+  action TEXT NOT NULL DEFAULT 'used',
+  title TEXT,
+  used_at TEXT NOT NULL,
+  snapshot_json TEXT,
+  raw_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (box_id) REFERENCES boxes(id) ON DELETE CASCADE,
+  FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_usage_logs_box_used_at ON usage_logs(box_id, used_at DESC);
+CREATE INDEX IF NOT EXISTS idx_usage_logs_task_used_at ON usage_logs(task_id, used_at DESC);
 
 CREATE TABLE IF NOT EXISTS points_account (
   id TEXT PRIMARY KEY DEFAULT 'default',

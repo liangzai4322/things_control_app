@@ -13,9 +13,38 @@ const readJson = (name) => JSON.parse(fs.readFileSync(path.join(sourceDir, name)
 const db = new Database(dbPath);
 db.pragma('foreign_keys = ON');
 db.exec(fs.readFileSync(path.join(root, 'schema.sql'), 'utf8'));
-if (!db.prepare("PRAGMA table_info('tasks')").all().some((column) => column.name === 'scheduled_at')) {
-  db.exec('ALTER TABLE tasks ADD COLUMN scheduled_at TEXT');
-}
+const boxColumns = new Set(db.prepare("PRAGMA table_info('boxes')").all().map((column) => column.name));
+[
+  ['box_type', "TEXT DEFAULT 'task'"],
+  ['type_config_json', 'TEXT'],
+].forEach(([name, definition]) => {
+  if (!boxColumns.has(name)) db.exec(`ALTER TABLE boxes ADD COLUMN ${name} ${definition}`);
+});
+const taskColumns = new Set(db.prepare("PRAGMA table_info('tasks')").all().map((column) => column.name));
+[
+  ['scheduled_at', 'TEXT'],
+  ['is_recurring_template', 'INTEGER DEFAULT 0'],
+  ['recurrence_template_id', 'TEXT'],
+  ['recurrence_key', 'TEXT'],
+  ['recurrence_json', 'TEXT'],
+  ['next_run_at', 'TEXT'],
+  ['occurrence_status', 'TEXT'],
+  ['mainline_id', 'TEXT'],
+  ['milestone_id', 'TEXT'],
+  ['device_context', "TEXT DEFAULT 'universal'"],
+  ['visible_after', 'TEXT'],
+  ['deferred_at', 'TEXT'],
+  ['defer_note', 'TEXT'],
+  ['progress_logs_json', 'TEXT'],
+].forEach(([name, definition]) => {
+  if (!taskColumns.has(name)) db.exec(`ALTER TABLE tasks ADD COLUMN ${name} ${definition}`);
+});
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_recurrence_key ON tasks(recurrence_key) WHERE recurrence_key IS NOT NULL');
+db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_recurrence_template_id ON tasks(recurrence_template_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_mainline_id ON tasks(mainline_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_milestone_id ON tasks(milestone_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_visible_after ON tasks(visible_after)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_device_context ON tasks(device_context)');
 
 const upsertMeta = db.prepare(`
   INSERT INTO app_meta (key, value_json, updated_at)
@@ -24,30 +53,83 @@ const upsertMeta = db.prepare(`
 `);
 
 const upsertBox = db.prepare(`
-  INSERT INTO boxes (id, name, color, icon, sort_order, is_default, description, created_at, updated_at, raw_json)
-  VALUES (@id, @name, @color, @icon, @sort_order, @is_default, @description, @created_at, @updated_at, @raw_json)
+  INSERT INTO boxes (id, name, color, icon, sort_order, is_default, description, box_type, type_config_json, created_at, updated_at, raw_json)
+  VALUES (@id, @name, @color, @icon, @sort_order, @is_default, @description, @box_type, @type_config_json, @created_at, @updated_at, @raw_json)
   ON CONFLICT(id) DO UPDATE SET
     name=excluded.name, color=excluded.color, icon=excluded.icon, sort_order=excluded.sort_order,
-    is_default=excluded.is_default, description=excluded.description, created_at=excluded.created_at,
+    is_default=excluded.is_default, description=excluded.description, box_type=excluded.box_type,
+    type_config_json=excluded.type_config_json, created_at=excluded.created_at,
+    updated_at=excluded.updated_at, raw_json=excluded.raw_json
+`);
+
+const upsertMainline = db.prepare(`
+  INSERT INTO mainlines (
+    id, name, outcome, current_phase, color, icon, status, is_weekly_focus,
+    target_date, sort_order, created_at, updated_at, raw_json
+  )
+  VALUES (
+    @id, @name, @outcome, @current_phase, @color, @icon, @status, @is_weekly_focus,
+    @target_date, @sort_order, @created_at, @updated_at, @raw_json
+  )
+  ON CONFLICT(id) DO UPDATE SET
+    name=excluded.name, outcome=excluded.outcome, current_phase=excluded.current_phase,
+    color=excluded.color, icon=excluded.icon, status=excluded.status,
+    is_weekly_focus=excluded.is_weekly_focus, target_date=excluded.target_date,
+    sort_order=excluded.sort_order, created_at=excluded.created_at,
+    updated_at=excluded.updated_at, raw_json=excluded.raw_json
+`);
+
+const upsertMilestone = db.prepare(`
+  INSERT INTO milestones (
+    id, mainline_id, title, status, target_date, sort_order, completed_at,
+    created_at, updated_at, raw_json
+  )
+  VALUES (
+    @id, @mainline_id, @title, @status, @target_date, @sort_order, @completed_at,
+    @created_at, @updated_at, @raw_json
+  )
+  ON CONFLICT(id) DO UPDATE SET
+    mainline_id=excluded.mainline_id, title=excluded.title, status=excluded.status,
+    target_date=excluded.target_date, sort_order=excluded.sort_order,
+    completed_at=excluded.completed_at, created_at=excluded.created_at,
     updated_at=excluded.updated_at, raw_json=excluded.raw_json
 `);
 
 const upsertTask = db.prepare(`
   INSERT INTO tasks (
     id, box_id, content, is_completed, sort_order, priority, weight, points_value, progress,
+    is_recurring_template, recurrence_template_id, recurrence_key, recurrence_json, next_run_at, occurrence_status,
+    mainline_id, milestone_id, device_context, visible_after, deferred_at, defer_note, progress_logs_json,
     scheduled_at, due_date, deleted, deleted_at, note, sync_key, completed_at, created_at, updated_at, raw_json
   )
   VALUES (
     @id, @box_id, @content, @is_completed, @sort_order, @priority, @weight, @points_value, @progress,
+    @is_recurring_template, @recurrence_template_id, @recurrence_key, @recurrence_json, @next_run_at, @occurrence_status,
+    @mainline_id, @milestone_id, @device_context, @visible_after, @deferred_at, @defer_note, @progress_logs_json,
     @scheduled_at, @due_date, @deleted, @deleted_at, @note, @sync_key, @completed_at, @created_at, @updated_at, @raw_json
   )
   ON CONFLICT(id) DO UPDATE SET
     box_id=excluded.box_id, content=excluded.content, is_completed=excluded.is_completed,
     sort_order=excluded.sort_order, priority=excluded.priority, weight=excluded.weight,
-    points_value=excluded.points_value, progress=excluded.progress, scheduled_at=excluded.scheduled_at, due_date=excluded.due_date,
+    points_value=excluded.points_value, progress=excluded.progress,
+    is_recurring_template=excluded.is_recurring_template, recurrence_template_id=excluded.recurrence_template_id,
+    recurrence_key=excluded.recurrence_key, recurrence_json=excluded.recurrence_json,
+    next_run_at=excluded.next_run_at, occurrence_status=excluded.occurrence_status,
+    mainline_id=excluded.mainline_id, milestone_id=excluded.milestone_id,
+    device_context=excluded.device_context, visible_after=excluded.visible_after,
+    deferred_at=excluded.deferred_at, defer_note=excluded.defer_note, progress_logs_json=excluded.progress_logs_json,
+    scheduled_at=excluded.scheduled_at, due_date=excluded.due_date,
     deleted=excluded.deleted, deleted_at=excluded.deleted_at, note=excluded.note,
     sync_key=excluded.sync_key, completed_at=excluded.completed_at, created_at=excluded.created_at,
     updated_at=excluded.updated_at, raw_json=excluded.raw_json
+`);
+
+const upsertUsageLog = db.prepare(`
+  INSERT INTO usage_logs (id, box_id, task_id, action, title, used_at, snapshot_json, raw_json, created_at)
+  VALUES (@id, @box_id, @task_id, @action, @title, @used_at, @snapshot_json, @raw_json, @created_at)
+  ON CONFLICT(id) DO UPDATE SET box_id=excluded.box_id, task_id=excluded.task_id,
+    action=excluded.action, title=excluded.title, used_at=excluded.used_at,
+    snapshot_json=excluded.snapshot_json, raw_json=excluded.raw_json
 `);
 
 const upsertAccount = db.prepare(`
@@ -140,9 +222,42 @@ function importTaskbox() {
       sort_order: Number(box.sortOrder ?? box.sort_order ?? 0),
       is_default: bool(box.isDefault),
       description: box.description || null,
+      box_type: box.boxType || (['relax', 'reward', 'punish'].includes(box.color) ? 'pool' : box.color === 'study' ? 'collection' : 'task'),
+      type_config_json: json(box.typeConfig || {}),
       created_at: box.createdAt || null,
       updated_at: box.updatedAt || data.meta?.updatedAt || now(),
       raw_json: json(box),
+    });
+  }
+  for (const mainline of data.mainlines || []) {
+    upsertMainline.run({
+      id: mainline.id,
+      name: mainline.name || '',
+      outcome: mainline.outcome || null,
+      current_phase: mainline.currentPhase || null,
+      color: mainline.color || null,
+      icon: mainline.icon || null,
+      status: mainline.status || 'active',
+      is_weekly_focus: bool(mainline.isWeeklyFocus),
+      target_date: mainline.targetDate || null,
+      sort_order: Number(mainline.sortOrder ?? 0),
+      created_at: mainline.createdAt || null,
+      updated_at: mainline.updatedAt || data.meta?.updatedAt || now(),
+      raw_json: json(mainline),
+    });
+  }
+  for (const milestone of data.milestones || []) {
+    upsertMilestone.run({
+      id: milestone.id,
+      mainline_id: milestone.mainlineId,
+      title: milestone.title || '',
+      status: milestone.status || 'open',
+      target_date: milestone.targetDate || null,
+      sort_order: Number(milestone.sortOrder ?? 0),
+      completed_at: milestone.completedAt || null,
+      created_at: milestone.createdAt || null,
+      updated_at: milestone.updatedAt || data.meta?.updatedAt || now(),
+      raw_json: json(milestone),
     });
   }
   for (const task of data.tasks || []) {
@@ -156,6 +271,19 @@ function importTaskbox() {
       weight: Number(task.weight ?? 1),
       points_value: task.pointsValue === null || task.pointsValue === undefined ? null : Number(task.pointsValue),
       progress: Number(task.progress ?? 0),
+      is_recurring_template: bool(task.isRecurringTemplate),
+      recurrence_template_id: task.recurrenceTemplateId || null,
+      recurrence_key: task.recurrenceKey || null,
+      recurrence_json: task.recurrence ? json(task.recurrence) : null,
+      next_run_at: task.nextRunAt || null,
+      occurrence_status: task.occurrenceStatus || null,
+      mainline_id: task.mainlineId || null,
+      milestone_id: task.milestoneId || null,
+      device_context: ['desktop', 'mobile', 'universal'].includes(task.deviceContext) ? task.deviceContext : 'universal',
+      visible_after: task.visibleAfter || null,
+      deferred_at: task.deferredAt || null,
+      defer_note: task.deferNote || null,
+      progress_logs_json: json(Array.isArray(task.progressLogs) ? task.progressLogs : []),
       scheduled_at: task.scheduledAt || null,
       due_date: task.dueDate || null,
       deleted: bool(task.deleted),
@@ -166,6 +294,19 @@ function importTaskbox() {
       created_at: task.createdAt || null,
       updated_at: task.updatedAt || data.meta?.updatedAt || now(),
       raw_json: json(task),
+    });
+  }
+  for (const log of data.usageLogs || []) {
+    upsertUsageLog.run({
+      id: log.id,
+      box_id: log.boxId || null,
+      task_id: log.taskId || null,
+      action: log.action || 'used',
+      title: log.title || null,
+      used_at: log.usedAt || log.createdAt || now(),
+      snapshot_json: json(log.snapshot || {}),
+      raw_json: json(log),
+      created_at: log.createdAt || log.usedAt || now(),
     });
   }
 }
@@ -273,6 +414,8 @@ tx();
 
 const counts = {
   boxes: db.prepare('SELECT COUNT(*) AS n FROM boxes').get().n,
+  mainlines: db.prepare('SELECT COUNT(*) AS n FROM mainlines').get().n,
+  milestones: db.prepare('SELECT COUNT(*) AS n FROM milestones').get().n,
   tasks: db.prepare('SELECT COUNT(*) AS n FROM tasks').get().n,
   rewards: db.prepare('SELECT COUNT(*) AS n FROM points_rewards').get().n,
   transactions: db.prepare('SELECT COUNT(*) AS n FROM points_transactions').get().n,

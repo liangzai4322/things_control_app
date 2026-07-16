@@ -30,6 +30,11 @@ function parseTime(value, fallback = '09:00') {
   };
 }
 
+function normalizedTime(value, fallback = '09:00') {
+  const parsed = parseTime(value, fallback);
+  return `${pad2(parsed.hours)}:${pad2(parsed.minutes)}`;
+}
+
 function applyTime(date, time) {
   const next = new Date(date);
   const parsed = parseTime(time);
@@ -73,7 +78,8 @@ export function normalizeRecurrenceRule(rule = {}, scheduledAt = null, dueDate =
     mode: type === 'interval' && rule.mode === 'completion' ? 'completion' : 'calendar',
     weekday: clampInteger(rule.weekday, 0, 6, anchor.getDay()),
     monthDay: rule.monthDay === 'last' ? 'last' : clampInteger(rule.monthDay, 1, 31, anchor.getDate()),
-    time: String(rule.time || timeFromDate(anchor)),
+    time: normalizedTime(rule.time || timeFromDate(anchor)),
+    releaseTime: normalizedTime(rule.releaseTime || '08:00', '08:00'),
     anchorAt: anchor.toISOString(),
     deadlineOffsetMinutes,
     missPolicy: rule.missPolicy === 'skip' ? 'skip' : 'carry',
@@ -113,19 +119,30 @@ export function getOccurrenceDueAt(rule, scheduledAt) {
   return new Date(scheduled.getTime() + normalized.deadlineOffsetMinutes * 60000).toISOString();
 }
 
+export function getOccurrenceVisibleAfter(rule, scheduledAt) {
+  const normalized = normalizeRecurrenceRule(rule, scheduledAt);
+  const scheduled = toDate(scheduledAt);
+  if (!normalized || !scheduled) return null;
+  const releaseDate = new Date(scheduled.getFullYear(), scheduled.getMonth(), scheduled.getDate());
+  return applyTime(releaseDate, normalized.releaseTime).toISOString();
+}
+
 export function getRecurrenceLabel(rule) {
   const normalized = normalizeRecurrenceRule(rule, rule?.anchorAt);
   if (!normalized) return '';
-  if (normalized.type === 'daily') return `每天 ${normalized.time}`;
+  const release = ` · ${normalized.releaseTime} 出现`;
+  if (normalized.type === 'daily') return `每天 ${normalized.time}${release}`;
   if (normalized.type === 'interval') {
-    return normalized.mode === 'completion'
+    const label = normalized.mode === 'completion'
       ? `完成后 ${normalized.interval} 天`
       : `每 ${normalized.interval} 天`;
+    return `${label}${release}`;
   }
-  if (normalized.type === 'weekly') return `每${WEEKDAY_LABELS[normalized.weekday]} ${normalized.time}`;
-  return normalized.monthDay === 'last'
+  if (normalized.type === 'weekly') return `每${WEEKDAY_LABELS[normalized.weekday]} ${normalized.time}${release}`;
+  const label = normalized.monthDay === 'last'
     ? `每月最后一天 ${normalized.time}`
     : `每月 ${normalized.monthDay} 日 ${normalized.time}`;
+  return `${label}${release}`;
 }
 
 export function getRecurrenceKey(templateId, scheduledAt) {

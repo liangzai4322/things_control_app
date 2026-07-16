@@ -1,4 +1,4 @@
-import { getBoxes, getDeletedTasksByBox, getMainlines, getTasksByBox, getUsageLogs, recordPoolUsage, updateTask, deleteTask, deleteRecurringSeries, reorderTasks, updateBox, addRecurringTask, addTask, playSound, restoreTask, pullDataFromCloud } from './db.js';
+import { getBoxes, getDeferredTasksByBox, getDeletedTasksByBox, getMainlines, getSettings, getTasksByBox, getUsageLogs, recordPoolUsage, updateTask, deleteTask, deleteRecurringSeries, reorderTasks, updateBox, addRecurringTask, addTask, playSound, restoreTask, pullDataFromCloud } from './db.js';
 import { navigate, openSheet, showToast } from './app.js';
 import { openLuckyWheel } from './lucky-wheel.js';
 import { getPointsBalance, getTaskPointValue, recordPointsTransaction, reconcileCompletedTaskPoints, syncTaskCompletionPoints } from './points-store.js';
@@ -8,6 +8,7 @@ import { bindRecurrenceEditor, renderRecurrenceEditor } from './recurrence-ui.js
 import { openBoxTypeChangeSheet } from './box-type-sheet.js';
 import { isIdeaBox, renderCoreBoxNav } from './core-box-nav.js';
 import { bindMainlineTaskFields, renderMainlineTaskFields } from './mainline-fields.js';
+import { bindDeviceContextField, formatVisibleAfter, getDefaultDeferredUntil, getDeviceContextLabel, isTaskContextMismatch, isTaskReleased, renderDeviceContextField } from './task-visibility.js';
 import {
   BOX_TYPE_COLLECTION,
   BOX_TYPE_POOL,
@@ -329,6 +330,76 @@ function moveTaskToBox(app, currentBox, task, targetBox) {
   renderBoxDetail(app, currentBox.id);
 }
 
+function resumeTaskToday(app, box, task) {
+  closeTaskContextMenu();
+  updateTask(task.id, { visibleAfter: new Date().toISOString(), deferredAt: null, deferNote: '' });
+  showToast('任务已回到今天');
+  renderBoxDetail(app, box.id);
+}
+
+function openDeferTaskSheet(app, box, task) {
+  closeTaskContextMenu();
+  const defaultVisibleAfter = getDefaultDeferredUntil();
+  const { root, close } = openSheet(`
+    <div class="sheet-handle"></div>
+    <div class="sheet-content defer-task-sheet">
+      <p class="eyebrow">Pause Today</p>
+      <h3>今天先收工</h3>
+      <p class="sheet-lead">保留当前进度，任务会在指定时间自动回到列表。</p>
+      <div class="defer-task-name">${escapeHtml(task.content)}</div>
+      <label>今天做到多少
+        <div class="progress-select defer-progress-presets">
+          ${[20, 40, 60, 80].map((value) => `<button type="button" class="progress-dot ${Number(task.progress) === value ? 'active' : ''}" data-defer-progress="${value}">${value}%</button>`).join('')}
+        </div>
+        <input id="deferProgress" class="input" type="number" min="0" max="99" value="${Math.min(99, Math.max(0, Number(task.progress) || 0))}">
+      </label>
+      <label>再次出现时间<input id="deferVisibleAfter" class="input" type="datetime-local" value="${escapeHtml(toDateTimeLocalValue(defaultVisibleAfter))}"></label>
+      <label>进度备注（可选）<textarea id="deferNote" class="input" rows="3" placeholder="今天完成了什么，明天从哪里继续"></textarea></label>
+      <p class="defer-warning" id="deferWarning" hidden></p>
+      <div class="sheet-actions"><button class="btn" id="cancelDeferBtn">取消</button><button class="btn primary" id="confirmDeferBtn">今天收工</button></div>
+    </div>
+  `, { height: '76vh' });
+  const progressInput = root.querySelector('#deferProgress');
+  const visibleInput = root.querySelector('#deferVisibleAfter');
+  const warning = root.querySelector('#deferWarning');
+  const updateWarning = () => {
+    const visibleAt = fromDateTimeLocalValue(visibleInput.value);
+    const crossesDeadline = task.dueDate && visibleAt && new Date(visibleAt) >= new Date(task.dueDate);
+    warning.hidden = !crossesDeadline;
+    warning.textContent = crossesDeadline ? '再次出现时间已经晚于截止时间，任务恢复时会显示为逾期。' : '';
+  };
+  root.querySelectorAll('[data-defer-progress]').forEach((button) => button.addEventListener('click', () => {
+    progressInput.value = button.dataset.deferProgress;
+    root.querySelectorAll('[data-defer-progress]').forEach((item) => item.classList.toggle('active', item === button));
+  }));
+  visibleInput.addEventListener('input', updateWarning);
+  updateWarning();
+  root.querySelector('#cancelDeferBtn').addEventListener('click', close);
+  root.querySelector('#confirmDeferBtn').addEventListener('click', () => {
+    const visibleAfter = fromDateTimeLocalValue(visibleInput.value);
+    if (!visibleAfter || new Date(visibleAfter) <= new Date()) return showToast('再次出现时间需要晚于现在');
+    const progress = Math.min(99, Math.max(0, Number(progressInput.value) || 0));
+    const note = root.querySelector('#deferNote').value.trim();
+    const timestamp = new Date().toISOString();
+    const progressLog = {
+      id: crypto.randomUUID ? crypto.randomUUID() : `progress-${Date.now()}`,
+      progress,
+      note,
+      createdAt: timestamp,
+    };
+    updateTask(task.id, {
+      progress,
+      visibleAfter,
+      deferredAt: timestamp,
+      deferNote: note,
+      progressLogs: [...(task.progressLogs || []), progressLog].slice(-100),
+    });
+    close();
+    showToast(`已收工 · ${formatVisibleAfter(visibleAfter)}再出现`);
+    renderBoxDetail(app, box.id);
+  });
+}
+
 function openTaskContextMenu(event, app, box, task) {
   event.preventDefault();
   event.stopPropagation();
@@ -363,6 +434,7 @@ function openTaskContextMenu(event, app, box, task) {
         `).join('')}
       </div>
     ` : ''}
+    ${boxType === BOX_TYPE_TASK ? `<button type="button" data-action="${isTaskReleased(task) ? 'defer' : 'resume'}"><span class="task-context-action-icon" aria-hidden="true">${isTaskReleased(task) ? '☾' : '↥'}</span><span>${isTaskReleased(task) ? '今天收工' : '继续显示'}</span></button>` : ''}
     ${boxType === BOX_TYPE_POOL ? '<button type="button" data-action="use"><span class="task-context-action-icon" aria-hidden="true">✦</span><span>记录使用一次</span></button>' : ''}
     ${boxType === BOX_TYPE_COLLECTION ? `<button type="button" data-action="archive"><span class="task-context-action-icon" aria-hidden="true">⌑</span><span>${task.archived ? '移出归档' : '归档条目'}</span></button>` : ''}
     ${task.recurrenceTemplateId ? '<button type="button" data-action="stop-series" class="danger subtle-danger">停止整个周期</button>' : ''}
@@ -371,8 +443,10 @@ function openTaskContextMenu(event, app, box, task) {
   document.body.appendChild(menu);
 
   const rect = menu.getBoundingClientRect();
-  const x = Math.min(event.clientX, window.innerWidth - rect.width - 12);
-  const y = Math.min(event.clientY, window.innerHeight - rect.height - 12);
+  const pointerX = Number.isFinite(Number(event.clientX)) ? Number(event.clientX) : window.innerWidth / 2;
+  const pointerY = Number.isFinite(Number(event.clientY)) ? Number(event.clientY) : window.innerHeight / 2;
+  const x = Math.min(pointerX, window.innerWidth - rect.width - 12);
+  const y = Math.min(pointerY, window.innerHeight - rect.height - 12);
   menu.style.left = `${Math.max(12, x)}px`;
   menu.style.top = `${Math.max(12, y)}px`;
 
@@ -385,6 +459,8 @@ function openTaskContextMenu(event, app, box, task) {
       const target = moveTargets.find((item) => item.id === button.dataset.targetBox);
       moveTaskToBox(app, box, task, target);
     }
+    if (action === 'defer') openDeferTaskSheet(app, box, task);
+    if (action === 'resume') resumeTaskToday(app, box, task);
     if (action === 'use') {
       if (!commitPoolUsage(task)) return;
       closeTaskContextMenu();
@@ -510,8 +586,9 @@ export function renderBoxDetail(app, boxId) {
   if (!box) return navigate('#home');
 
   const tasks = getTasksByBox(boxId);
+  const deferredTasks = getDeferredTasksByBox(boxId);
   const deletedTasks = getDeletedTasksByBox(boxId);
-  const taskMap = new Map(tasks.map((task) => [task.id, task]));
+  const taskMap = new Map([...tasks, ...deferredTasks].map((task) => [task.id, task]));
   const boxType = inferBoxType(box);
   const typeDefinition = getBoxTypeDefinition(boxType);
   const usageLogs = getUsageLogs({ boxId });
@@ -523,12 +600,22 @@ export function renderBoxDetail(app, boxId) {
   } else if (boxType === BOX_TYPE_COLLECTION) {
     activeItems = [...activeItems].sort((left, right) => Number(right.favorite) - Number(left.favorite));
   }
+  const allActiveItems = [...activeItems];
+  const otherDeviceItems = boxType === BOX_TYPE_TASK
+    ? activeItems.filter((task) => isTaskContextMismatch(task, getSettings()))
+    : [];
+  if (otherDeviceItems.length) {
+    const otherIds = new Set(otherDeviceItems.map((task) => task.id));
+    activeItems = activeItems.filter((task) => !otherIds.has(task.id));
+  }
   const secondaryItems = boxType === BOX_TYPE_TASK
     ? tasks.filter((task) => task.isCompleted)
     : boxType === BOX_TYPE_COLLECTION
       ? tasks.filter((task) => task.archived)
       : [];
-  const summary = renderTypeSummary(boxType, activeItems, secondaryItems, usageLogs);
+  const manuallyDeferredTasks = deferredTasks.filter((task) => task.deferredAt);
+  const upcomingTasks = deferredTasks.filter((task) => !task.deferredAt);
+  const summary = renderTypeSummary(boxType, allActiveItems, secondaryItems, usageLogs);
   const sectionTitle = boxType === BOX_TYPE_TASK ? '当前任务' : boxType === BOX_TYPE_POOL ? '可重复选项' : '收藏内容';
   const sectionEyebrow = boxType === BOX_TYPE_TASK ? 'In Progress' : boxType === BOX_TYPE_POOL ? 'Ready To Use' : 'Saved For Later';
   const addLabel = `＋ 新${typeDefinition.itemName}`;
@@ -538,7 +625,9 @@ export function renderBoxDetail(app, boxId) {
       : boxType === BOX_TYPE_POOL
         ? `<div id="openTasks" class="typed-item-list">${activeItems.map((task) => poolItem(task, box)).join('')}</div>`
         : `<div id="openTasks" class="typed-item-list">${activeItems.map((task) => collectionItem(task, box)).join('')}</div>`)
-    : `<div class="empty-state typed-empty"><div>${typeDefinition.icon}</div><h3>${typeDefinition.emptyTitle}</h3><p>${typeDefinition.emptyDescription}</p></div>`;
+    : (boxType === BOX_TYPE_TASK && otherDeviceItems.length
+      ? `<div class="empty-state typed-empty context-empty"><div>⌁</div><h3>当前设备已清空</h3><p>还有 ${otherDeviceItems.length} 项其他设备任务，展开下方分组即可查看。</p></div>`
+      : `<div class="empty-state typed-empty"><div>${typeDefinition.icon}</div><h3>${typeDefinition.emptyTitle}</h3><p>${typeDefinition.emptyDescription}</p></div>`);
 
   app.innerHTML = `
     <main id="box-detail" class="page detail-page type-${boxType}">
@@ -582,6 +671,21 @@ export function renderBoxDetail(app, boxId) {
       <section class="task-list scroll-area" id="taskList">
         ${activeListHtml}
 
+        ${boxType === BOX_TYPE_TASK && otherDeviceItems.length ? `
+          <button class="completed-toggle device-mismatch-toggle" id="toggleOtherDevice">其他设备任务 ${otherDeviceItems.length} 项 ▸</button>
+          <div id="otherDeviceTasks" class="device-mismatch-timeline collapsed">${otherDeviceItems.map((task) => taskItem(task, box)).join('')}</div>
+        ` : ''}
+
+        ${boxType === BOX_TYPE_TASK && manuallyDeferredTasks.length ? `
+          <button class="completed-toggle deferred-toggle" id="toggleDeferred">今日已收工 ${manuallyDeferredTasks.length} 项 ▸</button>
+          <div id="deferredTasks" class="deferred-timeline collapsed">${manuallyDeferredTasks.map((task) => taskItem(task, box)).join('')}</div>
+        ` : ''}
+
+        ${boxType === BOX_TYPE_TASK && upcomingTasks.length ? `
+          <button class="completed-toggle upcoming-toggle" id="toggleUpcoming">待到点出现 ${upcomingTasks.length} 项 ▸</button>
+          <div id="upcomingTasks" class="upcoming-timeline collapsed">${upcomingTasks.map((task) => taskItem(task, box)).join('')}</div>
+        ` : ''}
+
         ${boxType === BOX_TYPE_TASK && secondaryItems.length ? `
           <button class="completed-toggle" id="toggleDone">已完成 ${secondaryItems.length} 项 ▸</button>
           <div id="doneTasks" class="completed-timeline collapsed">${renderCompletedTaskGroups(secondaryItems, box)}</div>
@@ -599,7 +703,7 @@ export function renderBoxDetail(app, boxId) {
       </section>
 
       <footer class="safe-bottom footer-fixed">
-        <button class="btn primary ${box.color}" id="addTaskBtn">${tasks.length ? `＋ 添加${typeDefinition.itemName}` : `创建第一条${typeDefinition.itemName}`}</button>
+        <button class="btn primary ${box.color}" id="addTaskBtn">${tasks.length + deferredTasks.length ? `＋ 添加${typeDefinition.itemName}` : `创建第一条${typeDefinition.itemName}`}</button>
       </footer>
     </main>
   `;
@@ -646,6 +750,33 @@ export function renderBoxDetail(app, boxId) {
     });
   }
 
+  const otherDeviceToggle = app.querySelector('#toggleOtherDevice');
+  if (otherDeviceToggle) {
+    const otherDeviceList = app.querySelector('#otherDeviceTasks');
+    otherDeviceToggle.addEventListener('click', () => {
+      otherDeviceList.classList.toggle('collapsed');
+      otherDeviceToggle.textContent = `其他设备任务 ${otherDeviceItems.length} 项 ${otherDeviceList.classList.contains('collapsed') ? '▸' : '▾'}`;
+    });
+  }
+
+  const deferredToggle = app.querySelector('#toggleDeferred');
+  if (deferredToggle) {
+    const deferredList = app.querySelector('#deferredTasks');
+    deferredToggle.addEventListener('click', () => {
+      deferredList.classList.toggle('collapsed');
+      deferredToggle.textContent = `今日已收工 ${manuallyDeferredTasks.length} 项 ${deferredList.classList.contains('collapsed') ? '▸' : '▾'}`;
+    });
+  }
+
+  const upcomingToggle = app.querySelector('#toggleUpcoming');
+  if (upcomingToggle) {
+    const upcomingList = app.querySelector('#upcomingTasks');
+    upcomingToggle.addEventListener('click', () => {
+      upcomingList.classList.toggle('collapsed');
+      upcomingToggle.textContent = `待到点出现 ${upcomingTasks.length} 项 ${upcomingList.classList.contains('collapsed') ? '▸' : '▾'}`;
+    });
+  }
+
   const archivedToggle = app.querySelector('#toggleArchived');
   if (archivedToggle) {
     const archivedList = app.querySelector('#archivedItems');
@@ -687,9 +818,11 @@ function taskItem(task, box) {
   const pointsValue = getTaskPointValue(task, box);
   const pinLevel = getTaskPinLevel(task);
   const mainline = task.mainlineId ? getMainlines().find((item) => item.id === task.mainlineId) : null;
+  const released = isTaskReleased(task);
+  const deferNote = String(task.deferNote || '').trim();
 
   return `
-    <article class="task-item ${task.isCompleted ? 'done' : ''} ${pinLevel ? 'pinned' : ''} ${overdue ? 'overdue' : ''} ${needsReschedule ? 'needs-reschedule' : ''}" data-id="${task.id}" style="${getBoxPinStyle(box)}">
+    <article class="task-item ${task.isCompleted ? 'done' : ''} ${pinLevel ? 'pinned' : ''} ${overdue ? 'overdue' : ''} ${needsReschedule ? 'needs-reschedule' : ''} ${released ? '' : 'deferred'}" data-id="${task.id}" style="${getBoxPinStyle(box)}">
       <div class="task-main" data-main="1">
         <button class="check task-check-control ${task.isCompleted ? 'checked' : ''}" style="--check-color:${color}" aria-label="${task.isCompleted ? '取消完成' : '完成'} ${escapeHtml(task.content)}"></button>
         <button class="task-content" data-action="edit">
@@ -700,6 +833,8 @@ function taskItem(task, box) {
           <div class="task-meta">
             ${pinLevel ? `<span class="task-chip pin-chip">${escapeHtml(getTaskPinLabel(task))}</span>` : ''}
             <span class="task-chip">${escapeHtml(getPriorityLabel(task.priority ?? 0))}</span>
+            <span class="task-chip device-chip device-${escapeHtml(task.deviceContext || 'universal')}">${escapeHtml(getDeviceContextLabel(task.deviceContext))}</span>
+            ${!released ? `<span class="task-chip deferred-chip">${escapeHtml(formatVisibleAfter(task.visibleAfter))}再出现</span>` : ''}
             ${task.scheduledAt ? `<span class="task-chip planned-chip ${needsReschedule ? 'reschedule-chip' : ''}">${escapeHtml(needsReschedule ? `待重新安排 · ${formatScheduledLabel(task.scheduledAt)}` : `计划 ${formatScheduledLabel(task.scheduledAt)}`)}</span>` : ''}
             ${task.dueDate ? `<span class="task-chip ${overdue ? 'overdue-chip' : ''}">${escapeHtml(formatDueDateLabel(task.dueDate))}</span>` : ''}
             ${task.recurrence ? `<span class="task-chip recurrence-chip">↻ ${escapeHtml(getRecurrenceLabel(task.recurrence))}</span>` : ''}
@@ -708,9 +843,10 @@ function taskItem(task, box) {
             ${pointsValue > 0 ? `<span class="task-chip points-chip">+${pointsValue} 分</span>` : ''}
           </div>
           ${hasNote ? `<p class="task-note-preview">${notePreview}${String(task.note).trim().length > 40 ? '…' : ''}</p>` : ''}
+          ${deferNote ? `<p class="task-note-preview defer-note-preview">续接点：${escapeHtml(deferNote.slice(0, 50))}${deferNote.length > 50 ? '…' : ''}</p>` : ''}
           <div class="mini-progress"><span style="width:${taskProgress}%; background:${color}"></span></div>
         </button>
-        <span class="grip" aria-hidden="true">⋮⋮</span>
+        <button class="grip task-more-btn" data-action="more" aria-label="打开 ${escapeHtml(task.content)} 的操作菜单">•••</button>
       </div>
     </article>
   `;
@@ -726,6 +862,7 @@ function bindItemEvents(app, box, taskMap) {
     const favoriteButton = item.querySelector('[data-action="favorite"]');
     const unarchiveButton = item.querySelector('[data-action="unarchive"]');
     const editButton = item.querySelector('[data-action="edit"]');
+    const moreButton = item.querySelector('[data-action="more"]');
     if (!task || !editButton) return;
 
     checkButton?.addEventListener('click', (event) => {
@@ -780,6 +917,17 @@ function bindItemEvents(app, box, taskMap) {
 
     editButton.addEventListener('click', () => {
       openBoxItemEditor({ taskId, boxId: box.id }, () => renderBoxDetail(app, box.id));
+    });
+
+    moreButton?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const rect = moreButton.getBoundingClientRect();
+      openTaskContextMenu({
+        preventDefault() {},
+        stopPropagation() {},
+        clientX: rect.right,
+        clientY: rect.bottom,
+      }, app, box, task);
     });
 
     item.addEventListener('contextmenu', (event) => {
@@ -862,7 +1010,7 @@ function enableLongPressReorder(app, boxId) {
 
   list.querySelectorAll('.task-item').forEach((element) => {
     element.addEventListener('pointerdown', (event) => {
-      if (event.target.closest('.check')) return;
+      if (event.target.closest('button')) return;
       clearTimeout(timer);
       pointerId = event.pointerId;
       timer = setTimeout(() => {
@@ -1049,6 +1197,7 @@ function openTaskEditor({ taskId, boxId }, onDone) {
         </div>
         <input id="taskDate" class="input" type="datetime-local" value="${escapeHtml(toDateTimeLocalValue(task?.dueDate))}">
       </label>
+      ${renderDeviceContextField(task?.deviceContext || 'desktop', 'detail-task-device')}
       ${task?.recurrenceTemplateId
         ? `<div class="recurrence-readonly"><span>↻</span><div><strong>${escapeHtml(getRecurrenceLabel(task.recurrence))}</strong><small>这里修改的内容只影响本次；整个周期可在首页“周期任务”中暂停或停止。</small></div></div>`
         : renderRecurrenceEditor('detail-task')}
@@ -1079,6 +1228,7 @@ function openTaskEditor({ taskId, boxId }, onDone) {
     ? { getValue: () => null }
     : bindRecurrenceEditor(root, { prefix: 'detail-task', scheduledInput });
   const mainlineFields = bindMainlineTaskFields(root);
+  const deviceField = bindDeviceContextField(root, 'detail-task-device', 'desktop');
 
   root.querySelectorAll('[data-schedule-preset]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -1147,6 +1297,7 @@ function openTaskEditor({ taskId, boxId }, onDone) {
       scheduledAt: fromDateTimeLocalValue(scheduledAt),
       dueDate: fromDateTimeLocalValue(due),
       boxId: nextBoxId,
+      deviceContext: deviceField.getValue(),
       ...mainlineFields.getValue(),
       note: root.querySelector('#taskNote').value.trim(),
       isCompleted: done,

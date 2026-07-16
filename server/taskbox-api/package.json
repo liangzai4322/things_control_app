@@ -6,7 +6,8 @@
   "scripts": {
     "init-db": "node scripts/init-db.js",
     "import-json": "node scripts/import-json.js",
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "test:schema": "node scripts/test-schema-migration.js"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",
