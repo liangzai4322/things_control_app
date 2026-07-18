@@ -28,6 +28,7 @@ const taskColumns = new Set(db.prepare("PRAGMA table_info('tasks')").all().map((
   ['mainline_id', 'TEXT'],
   ['milestone_id', 'TEXT'],
   ['device_context', "TEXT DEFAULT 'universal'"],
+  ['execution_mode', "TEXT DEFAULT 'self'"],
   ['visible_after', 'TEXT'],
   ['deferred_at', 'TEXT'],
   ['defer_note', 'TEXT'],
@@ -41,6 +42,7 @@ db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_mainline_id ON tasks(mainline_id)'
 db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_milestone_id ON tasks(milestone_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_visible_after ON tasks(visible_after)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_device_context ON tasks(device_context)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_execution_mode ON tasks(execution_mode)');
 db.close();
 
 console.log(JSON.stringify({ ok: true, dbPath }));

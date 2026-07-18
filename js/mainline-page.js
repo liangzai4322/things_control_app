@@ -18,8 +18,18 @@ import { renderCoreBoxNav } from './core-box-nav.js';
 import { getTaskPointValue } from './points-store.js';
 import { fromDateTimeLocalValue } from './task-utils.js';
 import { bindDeviceContextField, getTaskContextRank, renderDeviceContextField } from './task-visibility.js';
+import { bindExecutionModeField, getExecutionModeLabel, renderExecutionModeField } from './task-execution.js';
 
-const MAINLINE_COLORS = ['#e85d45', '#dc8a2f', '#159b8a', '#377fae', '#69795e'];
+const MAINLINE_COLORS = [
+  { value: '#6f4bd8', accent: '#c9b8ff', name: '星云紫' },
+  { value: '#b83c78', accent: '#f7b6d4', name: '莓果红' },
+  { value: '#8a3f52', accent: '#e7a7b6', name: '石榴棕' },
+  { value: '#8b5b27', accent: '#e8c58d', name: '琥珀棕' },
+  { value: '#3f568f', accent: '#aebde9', name: '深海靛' },
+  { value: '#51606f', accent: '#bdc7d1', name: '月岩灰' },
+  { value: '#76505d', accent: '#d6b6c0', name: '烟霞褐' },
+  { value: '#49527e', accent: '#b2b9df', name: '暮光蓝' },
+];
 const STATUS_LABELS = { active: '推进中', maintenance: '维持中', paused: '已暂停', completed: '已完成' };
 
 function escapeHtml(value = '') {
@@ -32,7 +42,7 @@ function escapeHtml(value = '') {
 }
 
 function safeColor(value) {
-  return /^#[0-9a-f]{6}$/i.test(value || '') ? value : MAINLINE_COLORS[0];
+  return /^#[0-9a-f]{6}$/i.test(value || '') ? value : MAINLINE_COLORS[0].value;
 }
 
 function formatDate(value) {
@@ -62,7 +72,7 @@ export function openMainlineEditor(mainline = null, onDone = () => {}) {
     <div class="sheet-content mainline-editor">
       <p class="eyebrow">Main Thread</p>
       <h3>${mainline ? '修改主线' : '建立一条主线'}</h3>
-      <p class="sheet-lead">主线说明任务为什么存在。保持 2–5 条，每条都要能说清最终成果和下一阶段。</p>
+      <p class="sheet-lead">主线说明任务为什么存在。保持 2–6 条，每条都要能说清最终成果和下一阶段。</p>
       <label>主线名称<input id="mainlineName" class="input" value="${escapeHtml(mainline?.name || '')}" placeholder="例如：公众号商业化"></label>
       <label>最终成果<textarea id="mainlineOutcome" class="input" rows="3" placeholder="完成到什么程度，才算这条主线结束">${escapeHtml(mainline?.outcome || '')}</textarea></label>
       <label>当前阶段<input id="mainlinePhase" class="input" value="${escapeHtml(mainline?.currentPhase || '')}" placeholder="例如：验证第一版产品"></label>
@@ -70,7 +80,7 @@ export function openMainlineEditor(mainline = null, onDone = () => {}) {
         <label>状态<select id="mainlineStatus" class="input">${Object.entries(STATUS_LABELS).map(([value, label]) => `<option value="${value}" ${value === (mainline?.status || 'active') ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
         <label>目标日期<input id="mainlineTarget" class="input" type="date" value="${escapeHtml((mainline?.targetDate || '').slice(0, 10))}"></label>
       </div>
-      <label>识别色<div class="mainline-color-picker">${MAINLINE_COLORS.map((color) => `<button type="button" data-mainline-color="${color}" class="${color === safeColor(mainline?.color) ? 'active' : ''}" style="--mainline-color:${color}" aria-label="选择颜色"></button>`).join('')}</div></label>
+      <label>识别色<div class="mainline-color-picker">${MAINLINE_COLORS.map((color) => `<button type="button" data-mainline-color="${color.value}" class="${color.value === safeColor(mainline?.color) ? 'active' : ''}" style="--mainline-color:${color.value};--mainline-accent:${color.accent}" aria-label="${color.name}" title="${color.name}"></button>`).join('')}</div></label>
       <label class="mainline-focus-toggle"><input id="mainlineFocus" type="checkbox" ${mainline?.isWeeklyFocus ? 'checked' : ''}><span><strong>设为本周重点</strong><small>同时最多 2 条，首页优先显示。</small></span></label>
       <div class="sheet-actions">
         ${mainline ? '<button class="btn danger" id="deleteMainlineBtn">删除</button>' : '<button class="btn" id="cancelMainlineBtn">取消</button>'}
@@ -100,7 +110,7 @@ export function openMainlineEditor(mainline = null, onDone = () => {}) {
     const status = root.querySelector('#mainlineStatus').value;
     const isWeeklyFocus = root.querySelector('#mainlineFocus').checked;
     if (!name) return showToast('先填写主线名称');
-    if (!mainline && activeCount >= 5 && ['active', 'maintenance'].includes(status)) return showToast('同时推进的主线最多 5 条，先暂停一条');
+    if (!mainline && activeCount >= 6 && ['active', 'maintenance'].includes(status)) return showToast('同时推进的主线最多 6 条，先暂停一条');
     if (isWeeklyFocus && focusCount >= 2) return showToast('本周重点最多 2 条');
     const payload = {
       name,
@@ -181,12 +191,14 @@ function openMainlineTaskEditor(mainline, onDone) {
       <label>计划时间<input id="lineTaskScheduled" class="input" type="datetime-local"></label>
       <label>截止时间<input id="lineTaskDue" class="input" type="datetime-local"></label>
       ${renderDeviceContextField('desktop', 'mainline-task-device')}
+      ${renderExecutionModeField('self', 'mainline-task-execution')}
       <label>完成积分<input id="lineTaskPoints" class="input" type="number" min="0" value="${getTaskPointValue({ boxId: defaultBox.id }, defaultBox)}"></label>
       <div class="sheet-actions"><button class="btn" id="cancelLineTask">取消</button><button class="btn primary" id="saveLineTask">保存下一步</button></div>
     </div>
   `, { height: '76vh' });
   root.querySelector('#cancelLineTask').addEventListener('click', close);
   const deviceField = bindDeviceContextField(root, 'mainline-task-device', 'desktop');
+  const executionField = bindExecutionModeField(root, 'mainline-task-execution', 'self');
   root.querySelector('#lineTaskBox').addEventListener('change', (event) => {
     const box = boxes.find((item) => item.id === event.target.value);
     root.querySelector('#lineTaskPoints').value = getTaskPointValue({ boxId: box?.id }, box);
@@ -203,6 +215,7 @@ function openMainlineTaskEditor(mainline, onDone) {
       dueDate: fromDateTimeLocalValue(root.querySelector('#lineTaskDue').value),
       pointsValue: Math.max(0, Number(root.querySelector('#lineTaskPoints').value) || 0),
       deviceContext: deviceField.getValue(),
+      executionMode: executionField.getValue(),
     });
     close();
     showToast('下一步行动已加入盒子');
@@ -245,7 +258,7 @@ export function renderMainlinePage(app, mainlineId) {
       <section class="mainline-next panel ${metrics.nextAction ? '' : 'is-empty'}">
         <p class="eyebrow">Next Action</p>
         ${metrics.nextAction ? `
-          <button data-open-task-box="${metrics.nextAction.boxId}"><strong>${escapeHtml(metrics.nextAction.content)}</strong><span>${escapeHtml(boxMap.get(metrics.nextAction.boxId)?.name || '待办盒')} · ${formatDate(metrics.nextAction.dueDate || metrics.nextAction.scheduledAt)}</span></button>
+          <button data-open-task-box="${metrics.nextAction.boxId}"><strong>${escapeHtml(metrics.nextAction.content)}</strong><span>${escapeHtml(boxMap.get(metrics.nextAction.boxId)?.name || '待办盒')} · ${escapeHtml(getExecutionModeLabel(metrics.nextAction.executionMode))} · ${formatDate(metrics.nextAction.dueDate || metrics.nextAction.scheduledAt)}</span></button>
         ` : '<div><strong>主线断档</strong><span>现在补一条足够具体的下一步行动。</span></div>'}
         <button class="btn primary compact" id="addMainlineTask">＋ 下一步</button>
       </section>
@@ -262,7 +275,7 @@ export function renderMainlinePage(app, mainlineId) {
       <section class="mainline-task-list">
         ${tasks.length ? [...tasks].sort((a, b) => Number(a.isCompleted) - Number(b.isCompleted) || getTaskContextRank(a, getSettings()) - getTaskContextRank(b, getSettings()) || new Date(a.dueDate || a.createdAt) - new Date(b.dueDate || b.createdAt)).map((task) => `
           <button class="mainline-task-row ${task.isCompleted ? 'completed' : ''}" data-open-task-box="${task.boxId}">
-            <i>${task.isCompleted ? '✓' : ''}</i><span><strong>${escapeHtml(task.content)}</strong><small>${escapeHtml(boxMap.get(task.boxId)?.name || '盒子')} · ${formatDate(task.dueDate || task.scheduledAt)}</small></span>
+            <i>${task.isCompleted ? '✓' : ''}</i><span><strong>${escapeHtml(task.content)}</strong><small>${escapeHtml(boxMap.get(task.boxId)?.name || '盒子')} · ${escapeHtml(getExecutionModeLabel(task.executionMode))} · ${formatDate(task.dueDate || task.scheduledAt)}</small></span>
           </button>
         `).join('') : '<p class="mainline-no-tasks">还没有关联任务。</p>'}
       </section>

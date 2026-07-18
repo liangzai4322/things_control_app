@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   mainline_id TEXT,
   milestone_id TEXT,
   device_context TEXT NOT NULL DEFAULT 'universal',
+  execution_mode TEXT NOT NULL DEFAULT 'self',
   visible_after TEXT,
   deferred_at TEXT,
   defer_note TEXT,

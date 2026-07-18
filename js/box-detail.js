@@ -1,4 +1,4 @@
-import { getBoxes, getDeferredTasksByBox, getDeletedTasksByBox, getMainlines, getSettings, getTasksByBox, getUsageLogs, recordPoolUsage, updateTask, deleteTask, deleteRecurringSeries, reorderTasks, updateBox, addRecurringTask, addTask, playSound, restoreTask, pullDataFromCloud } from './db.js';
+import { getBoxes, getDeferredTasksByBox, getDeletedTasksByBox, getMainlines, getSettings, getTaskById, getTasksByBox, getUsageLogs, recordPoolUsage, updateTask, deleteTask, deleteRecurringSeries, reorderTasks, updateBox, addRecurringTask, addTask, playSound, restoreTask, pullDataFromCloud } from './db.js';
 import { navigate, openSheet, showToast } from './app.js';
 import { openLuckyWheel } from './lucky-wheel.js';
 import { getPointsBalance, getTaskPointValue, recordPointsTransaction, reconcileCompletedTaskPoints, syncTaskCompletionPoints } from './points-store.js';
@@ -9,6 +9,7 @@ import { openBoxTypeChangeSheet } from './box-type-sheet.js';
 import { isIdeaBox, renderCoreBoxNav } from './core-box-nav.js';
 import { bindMainlineTaskFields, renderMainlineTaskFields } from './mainline-fields.js';
 import { bindDeviceContextField, formatVisibleAfter, getDefaultDeferredUntil, getDeviceContextLabel, isTaskContextMismatch, isTaskReleased, renderDeviceContextField } from './task-visibility.js';
+import { bindExecutionModeField, getExecutionModeLabel, renderExecutionModeField } from './task-execution.js';
 import {
   BOX_TYPE_COLLECTION,
   BOX_TYPE_POOL,
@@ -822,7 +823,7 @@ function taskItem(task, box) {
   const deferNote = String(task.deferNote || '').trim();
 
   return `
-    <article class="task-item ${task.isCompleted ? 'done' : ''} ${pinLevel ? 'pinned' : ''} ${overdue ? 'overdue' : ''} ${needsReschedule ? 'needs-reschedule' : ''} ${released ? '' : 'deferred'}" data-id="${task.id}" style="${getBoxPinStyle(box)}">
+    <article class="task-item execution-${escapeHtml(task.executionMode || 'self')} ${task.isCompleted ? 'done' : ''} ${pinLevel ? 'pinned' : ''} ${overdue ? 'overdue' : ''} ${needsReschedule ? 'needs-reschedule' : ''} ${released ? '' : 'deferred'}" data-id="${task.id}" style="${getBoxPinStyle(box)}">
       <div class="task-main" data-main="1">
         <button class="check task-check-control ${task.isCompleted ? 'checked' : ''}" style="--check-color:${color}" aria-label="${task.isCompleted ? '取消完成' : '完成'} ${escapeHtml(task.content)}"></button>
         <button class="task-content" data-action="edit">
@@ -834,6 +835,7 @@ function taskItem(task, box) {
             ${pinLevel ? `<span class="task-chip pin-chip">${escapeHtml(getTaskPinLabel(task))}</span>` : ''}
             <span class="task-chip">${escapeHtml(getPriorityLabel(task.priority ?? 0))}</span>
             <span class="task-chip device-chip device-${escapeHtml(task.deviceContext || 'universal')}">${escapeHtml(getDeviceContextLabel(task.deviceContext))}</span>
+            <span class="task-chip execution-chip execution-${escapeHtml(task.executionMode || 'self')}">${escapeHtml(getExecutionModeLabel(task.executionMode))}</span>
             ${!released ? `<span class="task-chip deferred-chip">${escapeHtml(formatVisibleAfter(task.visibleAfter))}再出现</span>` : ''}
             ${task.scheduledAt ? `<span class="task-chip planned-chip ${needsReschedule ? 'reschedule-chip' : ''}">${escapeHtml(needsReschedule ? `待重新安排 · ${formatScheduledLabel(task.scheduledAt)}` : `计划 ${formatScheduledLabel(task.scheduledAt)}`)}</span>` : ''}
             ${task.dueDate ? `<span class="task-chip ${overdue ? 'overdue-chip' : ''}">${escapeHtml(formatDueDateLabel(task.dueDate))}</span>` : ''}
@@ -1037,7 +1039,7 @@ function openBoxItemEditor({ taskId, boxId }, onDone) {
 
 function openPoolItemEditor({ taskId, boxId }, onDone) {
   const boxes = getBoxes().filter((box) => inferBoxType(box) === BOX_TYPE_POOL);
-  const task = getTasksByBox(boxId).find((item) => item.id === taskId);
+  const task = taskId ? getTaskById(taskId) : null;
   const { root, close } = openSheet(`
     <div class="sheet-handle"></div>
     <div class="sheet-content typed-editor pool-editor">
@@ -1106,7 +1108,7 @@ function normalizeExternalUrl(value) {
 
 function openCollectionItemEditor({ taskId, boxId }, onDone) {
   const boxes = getBoxes().filter((box) => inferBoxType(box) === BOX_TYPE_COLLECTION);
-  const task = getTasksByBox(boxId).find((item) => item.id === taskId);
+  const task = taskId ? getTaskById(taskId) : null;
   const { root, close } = openSheet(`
     <div class="sheet-handle"></div>
     <div class="sheet-content typed-editor collection-editor">
@@ -1154,8 +1156,7 @@ function openCollectionItemEditor({ taskId, boxId }, onDone) {
 function openTaskEditor({ taskId, boxId }, onDone) {
   const boxes = getBoxes();
   const taskBoxes = boxes.filter(isTaskBox);
-  const currentTasks = getTasksByBox(boxId);
-  const task = currentTasks.find((item) => item.id === taskId);
+  const task = taskId ? getTaskById(taskId) : null;
   const initialBox = taskBoxes.find((box) => box.id === (task?.boxId || boxId)) || taskBoxes[0] || null;
   const initialPoints = task ? getTaskPointValue(task, initialBox) : getTaskPointValue({ boxId: initialBox?.id }, initialBox);
   const { root, close } = openSheet(`
@@ -1198,6 +1199,7 @@ function openTaskEditor({ taskId, boxId }, onDone) {
         <input id="taskDate" class="input" type="datetime-local" value="${escapeHtml(toDateTimeLocalValue(task?.dueDate))}">
       </label>
       ${renderDeviceContextField(task?.deviceContext || 'desktop', 'detail-task-device')}
+      ${renderExecutionModeField(task?.executionMode || 'self', 'detail-task-execution')}
       ${task?.recurrenceTemplateId
         ? `<div class="recurrence-readonly"><span>↻</span><div><strong>${escapeHtml(getRecurrenceLabel(task.recurrence))}</strong><small>这里修改的内容只影响本次；整个周期可在首页“周期任务”中暂停或停止。</small></div></div>`
         : renderRecurrenceEditor('detail-task')}
@@ -1229,6 +1231,7 @@ function openTaskEditor({ taskId, boxId }, onDone) {
     : bindRecurrenceEditor(root, { prefix: 'detail-task', scheduledInput });
   const mainlineFields = bindMainlineTaskFields(root);
   const deviceField = bindDeviceContextField(root, 'detail-task-device', 'desktop');
+  const executionField = bindExecutionModeField(root, 'detail-task-execution', 'self');
 
   root.querySelectorAll('[data-schedule-preset]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -1298,6 +1301,7 @@ function openTaskEditor({ taskId, boxId }, onDone) {
       dueDate: fromDateTimeLocalValue(due),
       boxId: nextBoxId,
       deviceContext: deviceField.getValue(),
+      executionMode: executionField.getValue(),
       ...mainlineFields.getValue(),
       note: root.querySelector('#taskNote').value.trim(),
       isCompleted: done,

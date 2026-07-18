@@ -15,7 +15,9 @@ const {
   getBoxes,
   getData,
   getDeferredTasksByBox,
+  getTaskById,
   getTasks,
+  getTimelineTasks,
   updateTask,
 } = await import('../js/db.js');
 
@@ -25,6 +27,29 @@ assert.equal(getData().tasks[0].deviceContext, 'universal');
 
 const normal = addTask({ content: 'default device test', boxId: taskBox.id });
 assert.equal(normal.deviceContext, 'desktop');
+assert.equal(normal.executionMode, 'self');
+
+const nextMonth = new Date();
+nextMonth.setMonth(nextMonth.getMonth() + 1, 12);
+nextMonth.setHours(16, 30, 0, 0);
+const future = addTask({
+  content: 'future day task',
+  boxId: taskBox.id,
+  scheduledAt: nextMonth.toISOString(),
+  executionMode: 'ai',
+});
+assert.equal(future.executionMode, 'ai');
+assert.equal(new Date(future.visibleAfter).getHours(), 0);
+assert.equal(getTasks().some((task) => task.id === future.id), false);
+assert.equal(getTimelineTasks().some((task) => task.id === future.id), true);
+assert.equal(getDeferredTasksByBox(taskBox.id).some((task) => task.id === future.id), true);
+assert.equal(getTaskById(future.id)?.content, 'future day task');
+
+const todayLater = new Date();
+todayLater.setHours(23, 0, 0, 0);
+updateTask(future.id, { scheduledAt: todayLater.toISOString() });
+assert.equal(getTaskById(future.id)?.visibleAfter, null);
+assert.equal(getTasks().some((task) => task.id === future.id), true);
 
 const todayAtNine = new Date();
 todayAtNine.setHours(9, 0, 0, 0);

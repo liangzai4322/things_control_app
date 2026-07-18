@@ -23,6 +23,7 @@ GitHub Pages (dist)
 - `js/box-detail.js`: 三类盒子的详情、编辑、右键菜单、完成/删除/还原。
 - `js/recurrence.js`、`js/recurrence-ui.js`: 周期规则计算和编辑控件。
 - `js/task-visibility.js`: 设备场景识别、任务释放时间、今天收工和编辑器设备控件。
+- `js/task-execution.js`: 任务执行者模式、编辑器选择控件和显示标签。
 - `js/points-store.js`: 积分账户、奖励、流水和任务完成对账。
 - `js/small-world.js`: 珍宝阁、弑神塔和转盘入口。
 - `js/mainline-page.js`: 主线、里程碑和关联任务页面。
@@ -45,7 +46,7 @@ GitHub Pages (dist)
 | --- | --- |
 | `app_meta` | 设置、每日一句等应用元数据 |
 | `boxes` | 单个盒子及类型配置 |
-| `tasks` | 单个任务、池项目、清单项或周期模板/实例；设备、释放时间、暂存状态和进度日志使用独立列 |
+| `tasks` | 单个任务、池项目、清单项或周期模板/实例；设备、执行方式、释放时间、暂存状态和进度日志使用独立列 |
 | `mainlines` | 单条主线 |
 | `milestones` | 单个主线里程碑 |
 | `usage_logs` | 放松池等项目的一次使用记录 |
@@ -58,7 +59,7 @@ GitHub Pages (dist)
 
 业务字段有独立列便于查询和索引，同时保留 `raw_json` 兼容尚未拆列的前端字段。数据库定义位于 `server/taskbox-api/schema.sql`，启动和导入脚本会为旧库补列。
 
-任务可见性统一由 `visibleAfter` 判断。手动“今天收工”同时写入 `deferredAt`、`deferNote` 和 `progressLogs`；周期实例只写入规则计算出的 `visibleAfter`，因此 UI 能分别展示“今日已收工”和“待到点出现”。`deviceContext` 只影响排序和分组，不能代替可见性或删除状态。
+任务可见性统一由 `visibleAfter` 判断。手动“今天收工”同时写入 `deferredAt`、`deferNote` 和 `progressLogs`；周期实例使用规则计算的释放时间；未来单次任务使用计划日 00:00。UI 因此能分别展示“今日已收工”和“待到点出现”。日期页通过完整时间线读取未来记录，盒子当前列表只读取已释放记录。`deviceContext` 只影响排序和分组，`executionMode` 只描述由本人、AI 或双方协作执行，两者都不能代替可见性或删除状态。
 
 ## API
 

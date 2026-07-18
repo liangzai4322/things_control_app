@@ -43,7 +43,7 @@ npm run import-json -- /opt/taskbox-api/seed
 
 SQLite schema lives in `schema.sql`. `raw_json` is a compatibility fallback; query-critical fields use dedicated columns and indexes.
 
-Task availability fields are `device_context`, `visible_after`, `deferred_at`, `defer_note`, and `progress_logs_json`. Run `npm run test:schema` before deployment to verify an existing database can be upgraded in place.
+Task availability and routing fields are `device_context`, `execution_mode`, `visible_after`, `deferred_at`, `defer_note`, and `progress_logs_json`. Run `npm run test:schema` before deployment to verify an existing database can be upgraded in place.
 
 ## Health Check
 

@@ -29,10 +29,10 @@ try {
   const db = new Database(dbPath);
   const columns = db.prepare('PRAGMA table_info(tasks)').all().map((item) => item.name);
   const indexes = db.prepare('PRAGMA index_list(tasks)').all().map((item) => item.name);
-  ['device_context', 'visible_after', 'deferred_at', 'defer_note', 'progress_logs_json'].forEach((name) => {
+  ['device_context', 'execution_mode', 'visible_after', 'deferred_at', 'defer_note', 'progress_logs_json'].forEach((name) => {
     if (!columns.includes(name)) throw new Error(`missing column ${name}`);
   });
-  ['idx_tasks_visible_after', 'idx_tasks_device_context', 'idx_tasks_recurrence_key'].forEach((name) => {
+  ['idx_tasks_visible_after', 'idx_tasks_device_context', 'idx_tasks_execution_mode', 'idx_tasks_recurrence_key'].forEach((name) => {
     if (!indexes.includes(name)) throw new Error(`missing index ${name}`);
   });
   db.close();

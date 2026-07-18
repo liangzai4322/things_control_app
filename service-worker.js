@@ -1,4 +1,4 @@
-const CACHE_NAME = 'taskbox-v32-task-visibility';
+const CACHE_NAME = 'taskbox-v33-scheduled-ai-tasks';
 const CACHE_FILES = [
   './',
   './index.html',
@@ -8,6 +8,7 @@ const CACHE_FILES = [
   './js/db.js',
   './js/task-utils.js',
   './js/task-visibility.js',
+  './js/task-execution.js',
   './js/box-types.js',
   './js/box-type-sheet.js',
   './js/core-box-nav.js',

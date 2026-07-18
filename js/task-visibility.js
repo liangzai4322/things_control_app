@@ -71,6 +71,15 @@ export function getDefaultDeferredUntil(referenceTime = new Date(), releaseTime 
   return next.toISOString();
 }
 
+export function getScheduledDayVisibleAfter(scheduledAt, referenceTime = new Date()) {
+  const scheduled = toDate(scheduledAt);
+  const now = toDate(referenceTime) || new Date();
+  if (!scheduled) return null;
+  const scheduledDay = new Date(scheduled.getFullYear(), scheduled.getMonth(), scheduled.getDate());
+  const currentDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return scheduledDay > currentDay ? scheduledDay.toISOString() : null;
+}
+
 export function formatVisibleAfter(value, referenceTime = new Date()) {
   const target = toDate(value);
   const now = toDate(referenceTime) || new Date();

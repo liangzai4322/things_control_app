@@ -1316,13 +1316,15 @@ h4 {
   outline: none;
 }
 
-.device-context-field {
+.device-context-field,
+.execution-mode-field {
   border: 0;
   padding: 0;
   margin: 0;
 }
 
-.device-context-field legend {
+.device-context-field legend,
+.execution-mode-field legend {
   margin-bottom: 10px;
   font-size: 14px;
   font-weight: 700;
@@ -1330,6 +1332,7 @@ h4 {
 }
 
 .device-context-options,
+.execution-mode-options,
 .device-mode-tabs {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1337,6 +1340,7 @@ h4 {
 }
 
 .device-context-options button,
+.execution-mode-options button,
 .device-mode-tabs button {
   border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
   border-radius: 15px;
@@ -1349,16 +1353,20 @@ h4 {
 }
 
 .device-context-options button strong,
-.device-context-options button small {
+.device-context-options button small,
+.execution-mode-options button strong,
+.execution-mode-options button small {
   display: block;
 }
 
-.device-context-options button strong {
+.device-context-options button strong,
+.execution-mode-options button strong {
   color: var(--text);
   font-size: 14px;
 }
 
-.device-context-options button small {
+.device-context-options button small,
+.execution-mode-options button small {
   margin-top: 3px;
   font-size: 10px;
 }
@@ -1369,6 +1377,13 @@ h4 {
   background: linear-gradient(145deg, rgba(47, 109, 246, .14), rgba(34, 195, 221, .08));
   color: #1d4ed8;
   box-shadow: inset 0 0 0 1px rgba(47, 109, 246, .08);
+}
+
+.execution-mode-options button.active {
+  border-color: #7a4fd2;
+  background: linear-gradient(145deg, rgba(122, 79, 210, .15), rgba(217, 70, 143, .07));
+  color: #6540b3;
+  box-shadow: inset 0 0 0 1px rgba(122, 79, 210, .08);
 }
 
 .device-mode-tabs {
@@ -1393,6 +1408,21 @@ h4 {
 .device-chip.device-universal {
   color: #7c3f16;
   background: rgba(251, 146, 60, .11);
+}
+
+.execution-chip.execution-self {
+  color: #475569;
+  background: rgba(100, 116, 139, .1);
+}
+
+.execution-chip.execution-ai {
+  color: #6d3bb6;
+  background: linear-gradient(135deg, rgba(111, 75, 216, .14), rgba(184, 60, 120, .1));
+}
+
+.execution-chip.execution-hybrid {
+  color: #9a3e68;
+  background: linear-gradient(135deg, rgba(184, 60, 120, .13), rgba(139, 91, 39, .09));
 }
 
 .device-mismatch-toggle,
@@ -1456,12 +1486,14 @@ h4 {
 }
 
 @media (max-width: 520px) {
-  .device-context-options button {
+  .device-context-options button,
+  .execution-mode-options button {
     min-height: 48px;
     padding-inline: 5px;
   }
 
-  .device-context-options button small {
+  .device-context-options button small,
+  .execution-mode-options button small {
     display: none;
   }
 
@@ -6028,6 +6060,7 @@ select:focus {
 
 .mainline-color-picker {
   display: flex;
+  flex-wrap: wrap;
   gap: 9px;
   padding-top: 8px;
 }
@@ -6037,7 +6070,7 @@ select:focus {
   height: 34px;
   border: 4px solid var(--surface-strong);
   border-radius: 50%;
-  background: var(--mainline-color);
+  background: linear-gradient(135deg, var(--mainline-color) 0 56%, var(--mainline-accent, var(--mainline-color)) 58% 100%);
   box-shadow: 0 0 0 1px var(--stroke);
 }
 

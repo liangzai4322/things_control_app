@@ -36,6 +36,7 @@ const taskColumns = new Set(db.prepare("PRAGMA table_info('tasks')").all().map((
   ['mainline_id', 'TEXT'],
   ['milestone_id', 'TEXT'],
   ['device_context', "TEXT DEFAULT 'universal'"],
+  ['execution_mode', "TEXT DEFAULT 'self'"],
   ['visible_after', 'TEXT'],
   ['deferred_at', 'TEXT'],
   ['defer_note', 'TEXT'],
@@ -49,6 +50,7 @@ db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_mainline_id ON tasks(mainline_id)'
 db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_milestone_id ON tasks(milestone_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_visible_after ON tasks(visible_after)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_device_context ON tasks(device_context)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_execution_mode ON tasks(execution_mode)');
 
 const now = () => new Date().toISOString();
 const parseJson = (value, fallback) => {
@@ -181,6 +183,7 @@ function rowToTask(row) {
     mainlineId: row.mainline_id,
     milestoneId: row.milestone_id,
     deviceContext: row.device_context || 'universal',
+    executionMode: row.execution_mode || 'self',
     visibleAfter: row.visible_after,
     deferredAt: row.deferred_at,
     deferNote: row.defer_note || '',
@@ -499,11 +502,11 @@ app.post('/v1/tasks', (req, res) => {
   db.prepare(`
     INSERT INTO tasks (id, box_id, content, is_completed, sort_order, priority, weight, points_value, progress,
       is_recurring_template, recurrence_template_id, recurrence_key, recurrence_json, next_run_at, occurrence_status,
-      mainline_id, milestone_id, device_context, visible_after, deferred_at, defer_note, progress_logs_json,
+      mainline_id, milestone_id, device_context, execution_mode, visible_after, deferred_at, defer_note, progress_logs_json,
       scheduled_at, due_date, deleted, deleted_at, note, sync_key, completed_at, created_at, updated_at, raw_json)
     VALUES (@id, @box_id, @content, @is_completed, @sort_order, @priority, @weight, @points_value, @progress,
       @is_recurring_template, @recurrence_template_id, @recurrence_key, @recurrence_json, @next_run_at, @occurrence_status,
-      @mainline_id, @milestone_id, @device_context, @visible_after, @deferred_at, @defer_note, @progress_logs_json,
+      @mainline_id, @milestone_id, @device_context, @execution_mode, @visible_after, @deferred_at, @defer_note, @progress_logs_json,
       @scheduled_at, @due_date, @deleted, @deleted_at, @note, @sync_key, @completed_at, @created_at, @updated_at, @raw_json)
   `).run(taskParams(task));
   res.status(201).json(task);
@@ -519,7 +522,7 @@ app.patch('/v1/tasks/:id', (req, res) => {
       is_recurring_template=@is_recurring_template, recurrence_template_id=@recurrence_template_id,
       recurrence_key=@recurrence_key, recurrence_json=@recurrence_json, next_run_at=@next_run_at,
       occurrence_status=@occurrence_status, mainline_id=@mainline_id, milestone_id=@milestone_id,
-      device_context=@device_context, visible_after=@visible_after, deferred_at=@deferred_at,
+      device_context=@device_context, execution_mode=@execution_mode, visible_after=@visible_after, deferred_at=@deferred_at,
       defer_note=@defer_note, progress_logs_json=@progress_logs_json,
       scheduled_at=@scheduled_at, due_date=@due_date,
       deleted=@deleted, deleted_at=@deleted_at, note=@note, sync_key=@sync_key, completed_at=@completed_at,
@@ -557,6 +560,7 @@ function taskParams(task) {
     mainline_id: task.mainlineId || null,
     milestone_id: task.milestoneId || null,
     device_context: ['desktop', 'mobile', 'universal'].includes(task.deviceContext) ? task.deviceContext : 'universal',
+    execution_mode: ['self', 'ai', 'hybrid'].includes(task.executionMode) ? task.executionMode : 'self',
     visible_after: task.visibleAfter || null,
     deferred_at: task.deferredAt || null,
     defer_note: task.deferNote || null,

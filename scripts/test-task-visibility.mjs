@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {
   formatVisibleAfter,
   getDefaultDeferredUntil,
+  getScheduledDayVisibleAfter,
   getTaskContextRank,
   isTaskContextMismatch,
   isTaskReleased,
@@ -22,6 +23,13 @@ assert.equal(formatVisibleAfter(deferredUntil, reference), '明天 08:00');
 assert.equal(isTaskReleased({ visibleAfter: deferredUntil }, reference), false);
 assert.equal(isTaskReleased({ visibleAfter: deferredUntil }, new Date(2026, 6, 17, 8, 0, 0, 0)), true);
 assert.equal(isTaskReleased({ isCompleted: true, visibleAfter: deferredUntil }, reference), true);
+
+const futureDayStart = new Date(getScheduledDayVisibleAfter(new Date(2026, 7, 12, 18, 30), reference));
+assert.equal(futureDayStart.getFullYear(), 2026);
+assert.equal(futureDayStart.getMonth(), 7);
+assert.equal(futureDayStart.getDate(), 12);
+assert.equal(futureDayStart.getHours(), 0);
+assert.equal(getScheduledDayVisibleAfter(new Date(2026, 6, 16, 23, 30), reference), null);
 
 const desktopSettings = { deviceContextMode: 'desktop' };
 assert.equal(getTaskContextRank({ deviceContext: 'desktop' }, desktopSettings), 0);

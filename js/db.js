@@ -8,11 +8,13 @@ import {
   normalizeRecurrenceRule,
 } from './recurrence.js';
 import {
+  getScheduledDayVisibleAfter,
   getTaskContextRank,
   isTaskReleased,
   normalizeDeviceContext,
   normalizeDeviceMode,
 } from './task-visibility.js';
+import { normalizeExecutionMode } from './task-execution.js';
 import {
   inferBoxType,
   normalizeBoxType,
@@ -96,6 +98,9 @@ function normalize(data = {}) {
       const recurringVisibleAfter = t.recurrenceTemplateId && t.scheduledAt && recurrence
         ? getOccurrenceVisibleAfter(recurrence, t.scheduledAt)
         : null;
+      const scheduledVisibleAfter = !t.isRecurringTemplate && !t.recurrenceTemplateId && !t.deferredAt
+        ? getScheduledDayVisibleAfter(t.scheduledAt)
+        : null;
       return {
         ...t,
         weight: t.weight ?? 1,
@@ -115,7 +120,8 @@ function normalize(data = {}) {
         mainlineId: t.mainlineId || null,
         milestoneId: t.milestoneId || null,
         deviceContext: normalizeDeviceContext(t.deviceContext),
-        visibleAfter: t.visibleAfter || recurringVisibleAfter || null,
+        executionMode: normalizeExecutionMode(t.executionMode),
+        visibleAfter: t.visibleAfter || recurringVisibleAfter || scheduledVisibleAfter || null,
         deferredAt: t.deferredAt || null,
         deferNote: String(t.deferNote || ''),
         progressLogs: Array.isArray(t.progressLogs) ? t.progressLogs : [],
@@ -390,6 +396,11 @@ export const getTasks = () => {
   ensureRecurringTaskInstances();
   return getData().tasks.filter((t) => !t.deleted && !t.isRecurringTemplate && isTaskReleased(t));
 };
+export const getTimelineTasks = () => {
+  ensureRecurringTaskInstances();
+  return getData().tasks.filter((task) => !task.deleted && !task.isRecurringTemplate);
+};
+export const getTaskById = (taskId) => getData().tasks.find((task) => task.id === taskId && !task.deleted) || null;
 export const getSettings = () => getData().settings;
 
 function normalizeDailyQuoteHistory(history = []) {
@@ -542,7 +553,8 @@ export function addTask(task) {
       mainlineId: task.mainlineId || null,
       milestoneId: task.milestoneId || null,
       deviceContext: normalizeDeviceContext(task.deviceContext, 'desktop'),
-      visibleAfter: task.visibleAfter || null,
+      executionMode: normalizeExecutionMode(task.executionMode),
+      visibleAfter: Object.hasOwn(task, 'visibleAfter') ? task.visibleAfter : getScheduledDayVisibleAfter(task.scheduledAt),
       deferredAt: task.deferredAt || null,
       deferNote: String(task.deferNote || ''),
       progressLogs: Array.isArray(task.progressLogs) ? task.progressLogs : [],
@@ -599,6 +611,7 @@ function buildRecurringOccurrence(template, scheduledAt, data) {
     mainlineId: template.mainlineId || null,
     milestoneId: template.milestoneId || null,
     deviceContext: normalizeDeviceContext(template.deviceContext),
+    executionMode: normalizeExecutionMode(template.executionMode),
     visibleAfter: getOccurrenceVisibleAfter(recurrence, scheduledAt),
     deferredAt: null,
     deferNote: '',
@@ -720,6 +733,7 @@ export function addRecurringTask(task, recurrenceInput) {
       mainlineId: task.mainlineId || null,
       milestoneId: task.milestoneId || null,
       deviceContext: normalizeDeviceContext(task.deviceContext, 'desktop'),
+      executionMode: normalizeExecutionMode(task.executionMode),
       visibleAfter: null,
       deferredAt: null,
       deferNote: '',
@@ -787,7 +801,7 @@ export function updateRecurringTemplate(templateId, patch = {}) {
   };
   if (patch.dueDate !== undefined) recurrenceInput.deadlineOffsetMinutes = null;
   const recurrence = normalizeRecurrenceRule(recurrenceInput, anchorAt, dueDate);
-  const sharedFields = ['content', 'boxId', 'priority', 'weight', 'pointsValue', 'note', 'pinLevel', 'pinned', 'mainlineId', 'milestoneId', 'deviceContext'];
+  const sharedFields = ['content', 'boxId', 'priority', 'weight', 'pointsValue', 'note', 'pinLevel', 'pinned', 'mainlineId', 'milestoneId', 'deviceContext', 'executionMode'];
   sharedFields.forEach((key) => {
     if (patch[key] !== undefined) template[key] = patch[key];
   });
@@ -1045,15 +1059,23 @@ export function restoreTask(task) {
 }
 
 export function updateTask(taskId, patch) {
-  const cloudCriticalKeys = new Set(['content', 'boxId', 'priority', 'weight', 'pointsValue', 'progress', 'pinLevel', 'pinned', 'scheduledAt', 'dueDate', 'isCompleted', 'deleted', 'deletedAt', 'sortOrder', 'completedAt', 'note', 'recurrence', 'nextRunAt', 'occurrenceStatus', 'itemType', 'durationMinutes', 'cooldownMinutes', 'usageCount', 'lastUsedAt', 'pointsCost', 'url', 'tags', 'favorite', 'archived', 'mainlineId', 'milestoneId', 'deviceContext', 'visibleAfter', 'deferredAt', 'deferNote', 'progressLogs']);
-  const shouldCloudPush = Object.keys(patch || {}).some((k) => cloudCriticalKeys.has(k));
+  const taskPatch = { ...(patch || {}) };
+  const cloudCriticalKeys = new Set(['content', 'boxId', 'priority', 'weight', 'pointsValue', 'progress', 'pinLevel', 'pinned', 'scheduledAt', 'dueDate', 'isCompleted', 'deleted', 'deletedAt', 'sortOrder', 'completedAt', 'note', 'recurrence', 'nextRunAt', 'occurrenceStatus', 'itemType', 'durationMinutes', 'cooldownMinutes', 'usageCount', 'lastUsedAt', 'pointsCost', 'url', 'tags', 'favorite', 'archived', 'mainlineId', 'milestoneId', 'deviceContext', 'executionMode', 'visibleAfter', 'deferredAt', 'deferNote', 'progressLogs']);
+  const shouldCloudPush = Object.keys(taskPatch).some((key) => cloudCriticalKeys.has(key));
   let updated = null;
   let previous = null;
   updateData((data) => {
     const t = data.tasks.find((x) => x.id === taskId);
     if (t) {
       previous = { ...t };
-      Object.assign(t, patch);
+      if (Object.hasOwn(taskPatch, 'scheduledAt')
+        && !Object.hasOwn(taskPatch, 'visibleAfter')
+        && !t.deferredAt
+        && !t.recurrenceTemplateId
+        && !t.isRecurringTemplate) {
+        taskPatch.visibleAfter = getScheduledDayVisibleAfter(taskPatch.scheduledAt);
+      }
+      Object.assign(t, taskPatch);
       t.updatedAt = new Date().toISOString();
       updated = { ...t };
     }

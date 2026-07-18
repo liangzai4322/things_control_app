@@ -99,13 +99,13 @@ const upsertTask = db.prepare(`
   INSERT INTO tasks (
     id, box_id, content, is_completed, sort_order, priority, weight, points_value, progress,
     is_recurring_template, recurrence_template_id, recurrence_key, recurrence_json, next_run_at, occurrence_status,
-    mainline_id, milestone_id, device_context, visible_after, deferred_at, defer_note, progress_logs_json,
+    mainline_id, milestone_id, device_context, execution_mode, visible_after, deferred_at, defer_note, progress_logs_json,
     scheduled_at, due_date, deleted, deleted_at, note, sync_key, completed_at, created_at, updated_at, raw_json
   )
   VALUES (
     @id, @box_id, @content, @is_completed, @sort_order, @priority, @weight, @points_value, @progress,
     @is_recurring_template, @recurrence_template_id, @recurrence_key, @recurrence_json, @next_run_at, @occurrence_status,
-    @mainline_id, @milestone_id, @device_context, @visible_after, @deferred_at, @defer_note, @progress_logs_json,
+    @mainline_id, @milestone_id, @device_context, @execution_mode, @visible_after, @deferred_at, @defer_note, @progress_logs_json,
     @scheduled_at, @due_date, @deleted, @deleted_at, @note, @sync_key, @completed_at, @created_at, @updated_at, @raw_json
   )
   ON CONFLICT(id) DO UPDATE SET
@@ -116,7 +116,7 @@ const upsertTask = db.prepare(`
     recurrence_key=excluded.recurrence_key, recurrence_json=excluded.recurrence_json,
     next_run_at=excluded.next_run_at, occurrence_status=excluded.occurrence_status,
     mainline_id=excluded.mainline_id, milestone_id=excluded.milestone_id,
-    device_context=excluded.device_context, visible_after=excluded.visible_after,
+    device_context=excluded.device_context, execution_mode=excluded.execution_mode, visible_after=excluded.visible_after,
     deferred_at=excluded.deferred_at, defer_note=excluded.defer_note, progress_logs_json=excluded.progress_logs_json,
     scheduled_at=excluded.scheduled_at, due_date=excluded.due_date,
     deleted=excluded.deleted, deleted_at=excluded.deleted_at, note=excluded.note,
@@ -280,6 +280,7 @@ function importTaskbox() {
       mainline_id: task.mainlineId || null,
       milestone_id: task.milestoneId || null,
       device_context: ['desktop', 'mobile', 'universal'].includes(task.deviceContext) ? task.deviceContext : 'universal',
+      execution_mode: ['self', 'ai', 'hybrid'].includes(task.executionMode) ? task.executionMode : 'self',
       visible_after: task.visibleAfter || null,
       deferred_at: task.deferredAt || null,
       defer_note: task.deferNote || null,
