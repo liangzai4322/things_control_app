@@ -1,4 +1,4 @@
-const CACHE_NAME = 'taskbox-v33-scheduled-ai-tasks';
+const CACHE_NAME = 'taskbox-v34-idea-sync-ai-visual';
 const CACHE_FILES = [
   './',
   './index.html',

@@ -334,6 +334,8 @@ app.patch('/v1/daily-quote', (req, res) => {
 
 app.post('/v1/boxes', (req, res) => {
   const box = { ...req.body, id: req.body.id || uid(), createdAt: req.body.createdAt || now(), updatedAt: now() };
+  const existing = db.prepare('SELECT * FROM boxes WHERE id=?').get(box.id);
+  if (existing) return res.json(rowToBox(existing));
   db.prepare(`
     INSERT INTO boxes (id, name, color, icon, sort_order, is_default, description, box_type, type_config_json, created_at, updated_at, raw_json)
     VALUES (@id, @name, @color, @icon, @sort_order, @is_default, @description, @box_type, @type_config_json, @created_at, @updated_at, @raw_json)

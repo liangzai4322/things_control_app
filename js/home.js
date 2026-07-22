@@ -258,13 +258,13 @@ function renderAgendaTask(task, box, now) {
   if (needsReschedule) timing = `待重新安排 · ${planned}`;
 
   return `
-    <article class="day-task-row ${overdue ? 'is-overdue' : ''} ${needsReschedule ? 'needs-reschedule' : ''}" data-agenda-task="${task.id}">
+    <article class="day-task-row execution-${escapeHtml(task.executionMode || 'self')} ${overdue ? 'is-overdue' : ''} ${needsReschedule ? 'needs-reschedule' : ''}" data-agenda-task="${task.id}">
       <button class="day-task-check task-check-control" style="--check-color:${BOX_ACCENTS[box?.color] || BOX_ACCENTS.important}" data-agenda-complete="${task.id}" aria-label="完成 ${escapeHtml(task.content)}"></button>
       <button class="day-task-open" data-agenda-open="${task.id}">
         <span class="day-task-title">${escapeHtml(task.content)}</span>
         <span class="day-task-meta">
           <i class="day-box-mark ${escapeHtml(box?.color || 'important')}"></i>
-          ${escapeHtml(box?.name || '未分类')} · ${escapeHtml(getDeviceContextLabel(task.deviceContext))} · ${escapeHtml(getExecutionModeLabel(task.executionMode))}${task.recurrence ? ` · ↻ ${escapeHtml(getRecurrenceLabel(task.recurrence))}` : ''}${timing ? ` · ${escapeHtml(timing)}` : ''}
+          ${escapeHtml(box?.name || '未分类')} · ${escapeHtml(getDeviceContextLabel(task.deviceContext))} · ${task.executionMode === 'ai' ? '✦ ' : ''}${escapeHtml(getExecutionModeLabel(task.executionMode))}${task.recurrence ? ` · ↻ ${escapeHtml(getRecurrenceLabel(task.recurrence))}` : ''}${timing ? ` · ${escapeHtml(timing)}` : ''}
         </span>
       </button>
     </article>

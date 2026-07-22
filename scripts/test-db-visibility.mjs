@@ -15,6 +15,7 @@ const {
   getBoxes,
   getData,
   getDeferredTasksByBox,
+  getLocalIdeaBoxRecoveryPlan,
   getTaskById,
   getTasks,
   getTimelineTasks,
@@ -81,5 +82,20 @@ assert.ok(nextDeferred, 'next recurring occurrence should exist but stay deferre
 assert.equal(nextDeferred.deviceContext, 'mobile');
 assert.ok(new Date(nextDeferred.visibleAfter) > new Date());
 assert.equal(getTasks().some((task) => task.id === nextDeferred.id), false);
+
+const localIdeaBox = { id: 'ideas-local', name: '思路盒', createdAt: new Date().toISOString() };
+const recovery = getLocalIdeaBoxRecoveryPlan({
+  boxes: [localIdeaBox],
+  tasks: [{ id: 'idea-task-local', boxId: localIdeaBox.id, content: '尚未想清楚的项目', syncKey: 'idea-local' }],
+}, { boxes: [], tasks: [] });
+assert.deepEqual(recovery.boxes.map((box) => box.id), ['ideas-local']);
+assert.deepEqual(recovery.tasks.map((task) => task.id), ['idea-task-local']);
+
+const canonicalRecovery = getLocalIdeaBoxRecoveryPlan({
+  boxes: [localIdeaBox],
+  tasks: [{ id: 'idea-task-local', boxId: localIdeaBox.id, content: '尚未想清楚的项目', syncKey: 'idea-local' }],
+}, { boxes: [{ id: 'ideas-cloud', name: '思路盒' }], tasks: [] });
+assert.equal(canonicalRecovery.boxes.length, 0);
+assert.equal(canonicalRecovery.tasks[0].boxId, 'ideas-cloud');
 
 console.log('db visibility tests passed');

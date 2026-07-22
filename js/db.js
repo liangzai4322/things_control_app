@@ -266,6 +266,42 @@ function taskTime(value) {
   return Number.isNaN(date.getTime()) ? 0 : date.getTime();
 }
 
+function normalizedBoxName(box) {
+  return String(box?.name || '').trim().toLowerCase();
+}
+
+function isIdeaBoxRecord(box) {
+  return /(?:思路|灵感|想法)(?:盒)?/.test(String(box?.name || ''));
+}
+
+export function getLocalIdeaBoxRecoveryPlan(localData = {}, cloudData = {}) {
+  const localBoxes = Array.isArray(localData.boxes) ? localData.boxes : [];
+  const localTasks = Array.isArray(localData.tasks) ? localData.tasks : [];
+  const cloudBoxes = Array.isArray(cloudData.boxes) ? cloudData.boxes : [];
+  const cloudTasks = Array.isArray(cloudData.tasks) ? cloudData.tasks : [];
+  const cloudBoxById = new Map(cloudBoxes.map((box) => [box.id, box]));
+  const cloudBoxByName = new Map(cloudBoxes.map((box) => [normalizedBoxName(box), box]));
+  const cloudTaskIds = new Set(cloudTasks.map((task) => task.id).filter(Boolean));
+  const cloudTaskSyncKeys = new Set(cloudTasks.map((task) => task.syncKey).filter(Boolean));
+  const cloudRecurrenceKeys = new Set(cloudTasks.map((task) => task.recurrenceKey).filter(Boolean));
+  const boxes = [];
+  const tasks = [];
+
+  localBoxes.filter(isIdeaBoxRecord).forEach((localBox) => {
+    const cloudBox = cloudBoxById.get(localBox.id) || cloudBoxByName.get(normalizedBoxName(localBox));
+    const targetBoxId = cloudBox?.id || localBox.id;
+    if (!cloudBox) boxes.push({ ...localBox });
+    localTasks
+      .filter((task) => task.boxId === localBox.id)
+      .filter((task) => !cloudTaskIds.has(task.id)
+        && (!task.syncKey || !cloudTaskSyncKeys.has(task.syncKey))
+        && (!task.recurrenceKey || !cloudRecurrenceKeys.has(task.recurrenceKey)))
+      .forEach((task) => tasks.push({ ...task, boxId: targetBoxId }));
+  });
+
+  return { boxes, tasks };
+}
+
 function chooseTaskCopy(current, candidate) {
   if (!current) return { ...candidate };
   const currentTime = Math.max(taskTime(current.updatedAt), taskTime(current.deletedAt), taskTime(current.createdAt));
@@ -1520,6 +1556,7 @@ function mergeData(local, cloud) {
   });
 
   const boxesByName = new Map();
+  const cloudBoxByName = new Map((cloud.boxes || []).map((box) => [normalizedBoxName(box), box]));
   const idRemap = new Map();
   merged.boxes.forEach((b) => {
     if (!boxesByName.has(b.name)) boxesByName.set(b.name, []);
@@ -1527,7 +1564,9 @@ function mergeData(local, cloud) {
   });
 
   merged.boxes = Array.from(boxesByName.values()).map((group) => {
-    const chosen = group.reduce((current, candidate) => chooseBoxCopy(current, candidate), null);
+    const latest = group.reduce((current, candidate) => chooseBoxCopy(current, candidate), null);
+    const cloudIdentity = cloudBoxByName.get(normalizedBoxName(latest));
+    const chosen = cloudIdentity ? { ...latest, id: cloudIdentity.id } : latest;
     group.forEach((box) => idRemap.set(box.id, chosen.id));
     return chosen;
   }).map((b, i) => ({ ...b, sortOrder: i }));
@@ -1586,8 +1625,21 @@ export async function pullDataFromCloud(options = {}) {
     await waitForApiMutations();
     cloudData = normalize(await apiRequest('/taskbox'));
   }
+  // Repair the legacy case where an idea box only exists in this browser.
+  // Restricting this to semantic idea boxes avoids resurrecting intentionally deleted boxes.
+  let local = getData();
+  const recovery = getLocalIdeaBoxRecoveryPlan(local, cloudData);
+  if (recovery.boxes.length || recovery.tasks.length) {
+    for (const box of recovery.boxes) {
+      await apiRequest('/boxes', { method: 'POST', body: JSON.stringify(box) });
+    }
+    for (const task of recovery.tasks) {
+      await apiRequest('/tasks', { method: 'POST', body: JSON.stringify(task) });
+    }
+    cloudData = normalize(await apiRequest('/taskbox'));
+  }
   // Read after the request: the user may have edited records while the pull was in flight.
-  const local = getData();
+  local = getData();
   const merged = mergeData(local, cloudData);
   merged.settings = preserveLocalOnlySettings(merged.settings, local.settings);
   const changed = syncContentFingerprint(local) !== syncContentFingerprint(merged);

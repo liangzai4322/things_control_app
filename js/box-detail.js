@@ -310,9 +310,10 @@ function commitPoolUsage(task) {
 function getTaskMoveTargets(box, boxes) {
   const important = boxes.find((item) => item.color === 'important');
   const todo = boxes.find((item) => item.color === 'misc');
+  const ideas = boxes.find(isIdeaBox);
   if (isIdeaBox(box)) return [important, todo].filter(Boolean);
-  if (box?.color === 'important') return [todo].filter(Boolean);
-  if (box?.color === 'misc') return [important].filter(Boolean);
+  if (box?.color === 'important') return [todo, ideas].filter(Boolean);
+  if (box?.color === 'misc') return [important, ideas].filter(Boolean);
   return [];
 }
 
@@ -327,7 +328,7 @@ function moveTaskToBox(app, currentBox, task, targetBox) {
     sortOrder: nextSortOrder,
   });
   if (task.recurrenceTemplateId) updateTask(task.recurrenceTemplateId, { boxId: targetBox.id });
-  showToast(`已移动到${getQuickSwitchLabel(targetBox)}盒${task.recurrenceTemplateId ? '，以后也放这里' : ''}`);
+  showToast(`${isIdeaBox(targetBox) ? '已送回思路盒' : `已移动到${getQuickSwitchLabel(targetBox)}盒`}${task.recurrenceTemplateId ? '，以后也放这里' : ''}`);
   renderBoxDetail(app, currentBox.id);
 }
 
@@ -430,7 +431,7 @@ function openTaskContextMenu(event, app, box, task) {
         ${moveTargets.map((target) => `
           <button type="button" data-action="move" data-target-box="${target.id}" class="move-task" style="${getBoxPinStyle(target)}">
             <span class="task-context-action-icon" aria-hidden="true">⇄</span>
-            <span>移动到${escapeHtml(getQuickSwitchLabel(target))}盒${task.recurrenceTemplateId ? '（本次及以后）' : ''}</span>
+            <span>${isIdeaBox(target) ? '送回思路盒' : `移动到${escapeHtml(getQuickSwitchLabel(target))}盒`}${task.recurrenceTemplateId ? '（本次及以后）' : ''}</span>
           </button>
         `).join('')}
       </div>
@@ -835,7 +836,7 @@ function taskItem(task, box) {
             ${pinLevel ? `<span class="task-chip pin-chip">${escapeHtml(getTaskPinLabel(task))}</span>` : ''}
             <span class="task-chip">${escapeHtml(getPriorityLabel(task.priority ?? 0))}</span>
             <span class="task-chip device-chip device-${escapeHtml(task.deviceContext || 'universal')}">${escapeHtml(getDeviceContextLabel(task.deviceContext))}</span>
-            <span class="task-chip execution-chip execution-${escapeHtml(task.executionMode || 'self')}">${escapeHtml(getExecutionModeLabel(task.executionMode))}</span>
+            <span class="task-chip execution-chip execution-${escapeHtml(task.executionMode || 'self')}">${task.executionMode === 'ai' ? '✦ ' : ''}${escapeHtml(getExecutionModeLabel(task.executionMode))}</span>
             ${!released ? `<span class="task-chip deferred-chip">${escapeHtml(formatVisibleAfter(task.visibleAfter))}再出现</span>` : ''}
             ${task.scheduledAt ? `<span class="task-chip planned-chip ${needsReschedule ? 'reschedule-chip' : ''}">${escapeHtml(needsReschedule ? `待重新安排 · ${formatScheduledLabel(task.scheduledAt)}` : `计划 ${formatScheduledLabel(task.scheduledAt)}`)}</span>` : ''}
             ${task.dueDate ? `<span class="task-chip ${overdue ? 'overdue-chip' : ''}">${escapeHtml(formatDueDateLabel(task.dueDate))}</span>` : ''}

@@ -258,7 +258,7 @@ export function renderMainlinePage(app, mainlineId) {
       <section class="mainline-next panel ${metrics.nextAction ? '' : 'is-empty'}">
         <p class="eyebrow">Next Action</p>
         ${metrics.nextAction ? `
-          <button data-open-task-box="${metrics.nextAction.boxId}"><strong>${escapeHtml(metrics.nextAction.content)}</strong><span>${escapeHtml(boxMap.get(metrics.nextAction.boxId)?.name || '待办盒')} · ${escapeHtml(getExecutionModeLabel(metrics.nextAction.executionMode))} · ${formatDate(metrics.nextAction.dueDate || metrics.nextAction.scheduledAt)}</span></button>
+          <button class="execution-${escapeHtml(metrics.nextAction.executionMode || 'self')}" data-open-task-box="${metrics.nextAction.boxId}"><strong>${metrics.nextAction.executionMode === 'ai' ? '✦ ' : ''}${escapeHtml(metrics.nextAction.content)}</strong><span>${escapeHtml(boxMap.get(metrics.nextAction.boxId)?.name || '待办盒')} · ${escapeHtml(getExecutionModeLabel(metrics.nextAction.executionMode))} · ${formatDate(metrics.nextAction.dueDate || metrics.nextAction.scheduledAt)}</span></button>
         ` : '<div><strong>主线断档</strong><span>现在补一条足够具体的下一步行动。</span></div>'}
         <button class="btn primary compact" id="addMainlineTask">＋ 下一步</button>
       </section>
@@ -274,8 +274,8 @@ export function renderMainlinePage(app, mainlineId) {
       <section class="section-heading mainline-section-heading"><div><p class="eyebrow">Workstream</p><h2>关联任务</h2></div><p class="section-note">${tasks.length} 项</p></section>
       <section class="mainline-task-list">
         ${tasks.length ? [...tasks].sort((a, b) => Number(a.isCompleted) - Number(b.isCompleted) || getTaskContextRank(a, getSettings()) - getTaskContextRank(b, getSettings()) || new Date(a.dueDate || a.createdAt) - new Date(b.dueDate || b.createdAt)).map((task) => `
-          <button class="mainline-task-row ${task.isCompleted ? 'completed' : ''}" data-open-task-box="${task.boxId}">
-            <i>${task.isCompleted ? '✓' : ''}</i><span><strong>${escapeHtml(task.content)}</strong><small>${escapeHtml(boxMap.get(task.boxId)?.name || '盒子')} · ${escapeHtml(getExecutionModeLabel(task.executionMode))} · ${formatDate(task.dueDate || task.scheduledAt)}</small></span>
+          <button class="mainline-task-row execution-${escapeHtml(task.executionMode || 'self')} ${task.isCompleted ? 'completed' : ''}" data-open-task-box="${task.boxId}">
+            <i>${task.isCompleted ? '✓' : (task.executionMode === 'ai' ? '✦' : '')}</i><span><strong>${escapeHtml(task.content)}</strong><small>${escapeHtml(boxMap.get(task.boxId)?.name || '盒子')} · ${task.executionMode === 'ai' ? '✦ ' : ''}${escapeHtml(getExecutionModeLabel(task.executionMode))} · ${formatDate(task.dueDate || task.scheduledAt)}</small></span>
           </button>
         `).join('') : '<p class="mainline-no-tasks">还没有关联任务。</p>'}
       </section>
