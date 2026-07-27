@@ -1,4 +1,4 @@
-const CACHE_NAME = 'taskbox-v34-idea-sync-ai-visual';
+const CACHE_NAME = 'taskbox-v35-dedupe-rank-ai-entry';
 const CACHE_FILES = [
   './',
   './index.html',

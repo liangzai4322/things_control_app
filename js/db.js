@@ -135,6 +135,7 @@ function normalize(data = {}) {
         tags: Array.isArray(t.tags) ? t.tags.map((tag) => String(tag).trim()).filter(Boolean) : [],
         favorite: Boolean(t.favorite),
         archived: Boolean(t.archived),
+        duplicateIds: Array.isArray(t.duplicateIds) ? [...new Set(t.duplicateIds.filter((id) => id && id !== t.id))] : [],
         note: t.note ?? [t.reflection, t.review, t.summaryText].filter(Boolean).join('\n').trim(),
         syncKey: t.syncKey || `${t.createdAt || ''}::${t.content || ''}`,
         updatedAt: t.updatedAt || t.createdAt || new Date().toISOString()
@@ -309,7 +310,63 @@ function chooseTaskCopy(current, candidate) {
   return candidateTime >= currentTime ? { ...current, ...candidate } : current;
 }
 
-function dedupeTasksByIdentity(tasks = []) {
+function normalizedTaskContent(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase();
+}
+
+function duplicateTaskFingerprint(task) {
+  const content = normalizedTaskContent(task.content);
+  if (!content) return '';
+  return [
+    task.boxId || '',
+    content,
+    task.scheduledAt || '',
+    task.dueDate || '',
+    task.recurrenceTemplateId || '',
+    task.isRecurringTemplate ? 'template' : 'task',
+    task.mainlineId || '',
+    task.milestoneId || '',
+    task.deviceContext || '',
+    task.executionMode || '',
+  ].join('::');
+}
+
+function areLikelyDuplicateTasks(left, right) {
+  if (!left?.id || !right?.id || left.id === right.id) return false;
+  const linked = (left.duplicateIds || []).includes(right.id) || (right.duplicateIds || []).includes(left.id);
+  if (linked) return true;
+  const leftCreated = taskTime(left.createdAt);
+  const rightCreated = taskTime(right.createdAt);
+  if (!leftCreated && !rightCreated) return true;
+  if (!leftCreated || !rightCreated) return false;
+  return Math.abs(leftCreated - rightCreated) <= 15 * 60 * 1000;
+}
+
+function collapseLikelyDuplicateTasks(tasks = []) {
+  const collapsed = [];
+  tasks.forEach((task) => {
+    const fingerprint = duplicateTaskFingerprint(task);
+    const duplicateIndex = fingerprint
+      ? collapsed.findIndex((candidate) => duplicateTaskFingerprint(candidate) === fingerprint && areLikelyDuplicateTasks(candidate, task))
+      : -1;
+    if (duplicateIndex < 0) {
+      collapsed.push({ ...task, duplicateIds: [...new Set(task.duplicateIds || [])] });
+      return;
+    }
+    const existing = collapsed[duplicateIndex];
+    const winner = chooseTaskCopy(existing, task);
+    winner.duplicateIds = [...new Set([
+      ...(existing.duplicateIds || []),
+      ...(task.duplicateIds || []),
+      existing.id,
+      task.id,
+    ].filter((id) => id && id !== winner.id))];
+    collapsed[duplicateIndex] = winner;
+  });
+  return collapsed;
+}
+
+export function dedupeTasksByIdentity(tasks = []) {
   const byId = new Map();
   const noIdTasks = [];
 
@@ -334,7 +391,7 @@ function dedupeTasksByIdentity(tasks = []) {
     }
   });
 
-  return [...oneTimeTasks, ...byRecurrenceKey.values()];
+  return collapseLikelyDuplicateTasks([...oneTimeTasks, ...byRecurrenceKey.values()]);
 }
 
 function dedupeLocalTasks(data) {
@@ -604,6 +661,7 @@ export function addTask(task) {
       tags: Array.isArray(task.tags) ? task.tags : [],
       favorite: Boolean(task.favorite),
       archived: Boolean(task.archived),
+      duplicateIds: [],
       isCompleted: task.isCompleted ?? false,
       deleted: false,
       deletedAt: null,
@@ -1122,6 +1180,12 @@ export function updateTask(taskId, patch) {
       method: 'PATCH',
       body: JSON.stringify(updated),
     });
+    (updated.duplicateIds || []).forEach((duplicateId) => {
+      scheduleApiRequest(`/tasks/${encodeURIComponent(duplicateId)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ ...updated, id: duplicateId, duplicateIds: [updated.id, ...(updated.duplicateIds || []).filter((id) => id !== duplicateId)] }),
+      });
+    });
   }
   if (updated?.recurrenceTemplateId && !previous?.isCompleted && updated.isCompleted) {
     const templateId = updated.recurrenceTemplateId;
@@ -1206,6 +1270,9 @@ export function deleteTask(taskId) {
   if (deleted) {
     scheduleApiRequest(`/tasks/${encodeURIComponent(taskId)}`, {
       method: 'DELETE',
+    });
+    (deleted.duplicateIds || []).forEach((duplicateId) => {
+      scheduleApiRequest(`/tasks/${encodeURIComponent(duplicateId)}`, { method: 'DELETE' });
     });
   }
   if (deleted?.recurrenceTemplateId) {

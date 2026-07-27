@@ -499,7 +499,9 @@ app.post('/v1/tasks', (req, res) => {
   const task = { ...req.body, id: req.body.id || uid(), createdAt: req.body.createdAt || now(), updatedAt: now() };
   const existing = task.recurrenceKey
     ? db.prepare('SELECT * FROM tasks WHERE id=? OR recurrence_key=?').get(task.id, task.recurrenceKey)
-    : db.prepare('SELECT * FROM tasks WHERE id=?').get(task.id);
+    : (task.syncKey
+      ? db.prepare('SELECT * FROM tasks WHERE id=? OR sync_key=?').get(task.id, task.syncKey)
+      : db.prepare('SELECT * FROM tasks WHERE id=?').get(task.id));
   if (existing) return res.json(rowToTask(existing));
   db.prepare(`
     INSERT INTO tasks (id, box_id, content, is_completed, sort_order, priority, weight, points_value, progress,

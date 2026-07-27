@@ -359,6 +359,13 @@ h4 {
   flex-shrink: 0;
 }
 
+.icon-btn.icon-btn-ghost.home-ai-tool {
+  color: #fff;
+  border-color: rgba(129, 140, 248, .42);
+  background: linear-gradient(135deg, #475bd8, #7c3aed 58%, #c026d3);
+  box-shadow: 0 8px 20px rgba(91, 74, 208, .22);
+}
+
 .hero-stats {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1824,6 +1831,58 @@ select:focus {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.task-rank-field {
+  border: 0;
+  padding: 0;
+  margin: 0 0 14px;
+}
+
+.task-rank-field legend {
+  margin-bottom: 9px;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 750;
+}
+
+.task-rank-options {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.task-rank-options button {
+  min-width: 0;
+  min-height: 54px;
+  padding: 8px 5px;
+  border: 1px solid var(--stroke);
+  border-radius: 15px;
+  background: color-mix(in srgb, var(--surface-strong) 92%, transparent);
+  color: var(--text-secondary);
+  box-shadow: none;
+}
+
+.task-rank-options button strong,
+.task-rank-options button small {
+  display: block;
+}
+
+.task-rank-options button strong {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.task-rank-options button small {
+  margin-top: 3px;
+  font-size: 9px;
+}
+
+.task-rank-options button.active {
+  border-color: rgba(247, 119, 77, .48);
+  background: linear-gradient(145deg, rgba(247, 119, 77, .16), rgba(255, 193, 105, .1));
+  color: #c2410c;
+  box-shadow: inset 0 0 0 1px rgba(247, 119, 77, .08);
 }
 
 .prio-dot,

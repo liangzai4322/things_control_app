@@ -462,6 +462,7 @@ export function renderHome(app) {
           </div>
           <div class="row gap8 hero-tools">
             ${renderCoreBoxNav()}
+            <button class="icon-btn icon-btn-ghost home-ai-tool" id="homeAiBtn" aria-label="AI识别任务" title="AI识别任务">✦</button>
             <button class="icon-btn icon-btn-ghost" id="homePullBtn" aria-label="拉取盒子数据">↻</button>
             <button class="icon-btn icon-btn-ghost" id="smallWorldEntry" aria-label="进入小世界">◎</button>
             <button class="icon-btn icon-btn-ghost points-tool-btn" id="pointsEntry" aria-label="积分 ${pointsSummary.balance}"><span>◆</span><small>${pointsSummary.balance}</small></button>
@@ -663,6 +664,7 @@ export function renderHome(app) {
 
   app.querySelector('#smallWorldEntry').addEventListener('click', () => enterSmallWorld(app));
   app.querySelector('#pointsEntry').addEventListener('click', () => navigate('#points'));
+  app.querySelector('#homeAiBtn').addEventListener('click', openAIExtractSheetLazy);
   app.querySelector('#homePullBtn').addEventListener('click', async () => {
     try {
       const result = await pullDataFromCloud({ force: true });
@@ -871,6 +873,17 @@ function openAddTaskSheet(boxes, options = {}) {
       <label>所属盒子
         <select id="newTaskBox" class="input">${taskBoxes.map((box) => `<option value="${box.id}">${escapeHtml(box.name)}</option>`).join('')}</select>
       </label>
+      <fieldset class="task-rank-field">
+        <legend>是否进入列表前三</legend>
+        <div class="task-rank-options" data-task-rank>
+          ${[
+            [0, '普通', '默认位置'],
+            [1, '第 1', '最优先'],
+            [2, '第 2', '紧随其后'],
+            [3, '第 3', '保留提醒'],
+          ].map(([value, label, hint]) => `<button type="button" data-rank="${value}" class="${value === 0 ? 'active' : ''}"><strong>${label}</strong><small>${hint}</small></button>`).join('')}
+        </div>
+      </fieldset>
       <label>计划时间
         <div class="schedule-presets" aria-label="快捷安排时间">${renderSchedulePresets()}</div>
         <input id="newTaskScheduledAt" class="input" type="datetime-local" value="${escapeHtml(toDateTimeLocalValue(options.scheduledAt))}">
@@ -901,6 +914,14 @@ function openAddTaskSheet(boxes, options = {}) {
   const mainlineFields = bindMainlineTaskFields(root);
   const deviceField = bindDeviceContextField(root, 'new-task-device', 'desktop');
   const executionField = bindExecutionModeField(root, 'new-task-execution', 'self');
+  let pinLevel = null;
+  root.querySelectorAll('[data-task-rank] [data-rank]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const value = Number(button.dataset.rank);
+      pinLevel = value >= 1 && value <= 3 ? value : null;
+      root.querySelectorAll('[data-task-rank] [data-rank]').forEach((item) => item.classList.toggle('active', item === button));
+    });
+  });
   if (options.focusRecurrence) root.querySelector('[data-recurrence-type="daily"]')?.focus();
   pointsInput.addEventListener('input', () => {
     pointsInput.dataset.touched = '1';
@@ -912,7 +933,9 @@ function openAddTaskSheet(boxes, options = {}) {
   });
 
   root.querySelector('#cancelTaskBtn').addEventListener('click', close);
+  let savingTask = false;
   const saveTask = () => {
+    if (savingTask) return;
     const content = root.querySelector('#newTaskContent').value.trim();
     const boxId = root.querySelector('#newTaskBox').value;
     const pointsValue = Math.max(0, Number(root.querySelector('#newTaskPoints').value) || 0);
@@ -920,6 +943,8 @@ function openAddTaskSheet(boxes, options = {}) {
       showToast('先输入任务内容');
       return;
     }
+    savingTask = true;
+    root.querySelector('#saveTaskBtn').disabled = true;
     const payload = {
       content,
       boxId,
@@ -928,6 +953,7 @@ function openAddTaskSheet(boxes, options = {}) {
       dueDate: fromDateTimeLocalValue(dueInput.value),
       deviceContext: deviceField.getValue(),
       executionMode: executionField.getValue(),
+      pinLevel,
       ...mainlineFields.getValue(),
     };
     const recurrence = recurrenceEditor.getValue();

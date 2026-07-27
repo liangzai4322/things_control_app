@@ -12,6 +12,7 @@ globalThis.localStorage = {
 const {
   addRecurringTask,
   addTask,
+  dedupeTasksByIdentity,
   getBoxes,
   getData,
   getDeferredTasksByBox,
@@ -29,6 +30,11 @@ assert.equal(getData().tasks[0].deviceContext, 'universal');
 const normal = addTask({ content: 'default device test', boxId: taskBox.id });
 assert.equal(normal.deviceContext, 'desktop');
 assert.equal(normal.executionMode, 'self');
+assert.equal(normal.pinLevel, null);
+
+const ranked = addTask({ content: 'top three test', boxId: taskBox.id, pinLevel: 2 });
+assert.equal(ranked.pinLevel, 2);
+assert.equal(ranked.pinned, true);
 
 const nextMonth = new Date();
 nextMonth.setMonth(nextMonth.getMonth() + 1, 12);
@@ -97,5 +103,19 @@ const canonicalRecovery = getLocalIdeaBoxRecoveryPlan({
 }, { boxes: [{ id: 'ideas-cloud', name: '思路盒' }], tasks: [] });
 assert.equal(canonicalRecovery.boxes.length, 0);
 assert.equal(canonicalRecovery.tasks[0].boxId, 'ideas-cloud');
+
+const duplicateCreatedAt = new Date().toISOString();
+const collapsedDuplicates = dedupeTasksByIdentity([
+  { id: 'copy-a', boxId: taskBox.id, content: ' 修改后重复的任务 ', createdAt: duplicateCreatedAt, updatedAt: duplicateCreatedAt },
+  { id: 'copy-b', boxId: taskBox.id, content: '修改后重复的任务', createdAt: duplicateCreatedAt, updatedAt: new Date(Date.now() + 1000).toISOString() },
+]);
+assert.equal(collapsedDuplicates.length, 1);
+assert.deepEqual(collapsedDuplicates[0].duplicateIds, ['copy-a']);
+
+const intentionalDuplicates = dedupeTasksByIdentity([
+  { id: 'later-a', boxId: taskBox.id, content: '允许再次创建', createdAt: '2026-01-01T00:00:00.000Z' },
+  { id: 'later-b', boxId: taskBox.id, content: '允许再次创建', createdAt: '2026-01-01T01:00:00.000Z' },
+]);
+assert.equal(intentionalDuplicates.length, 2);
 
 console.log('db visibility tests passed');

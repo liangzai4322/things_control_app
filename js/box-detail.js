@@ -1179,6 +1179,18 @@ function openTaskEditor({ taskId, boxId }, onDone) {
         </div>
       </label>
 
+      <fieldset class="task-rank-field">
+        <legend>是否进入列表前三</legend>
+        <div class="task-rank-options" data-task-rank>
+          ${[
+            [0, '普通', '默认位置'],
+            [1, '第 1', '最优先'],
+            [2, '第 2', '紧随其后'],
+            [3, '第 3', '保留提醒'],
+          ].map(([value, label, hint]) => `<button type="button" data-rank="${value}" class="${Number(task?.pinLevel || 0) === value ? 'active' : ''}"><strong>${label}</strong><small>${hint}</small></button>`).join('')}
+        </div>
+      </fieldset>
+
       <label>完成进度
         <div class="progress-select">
           ${[0, 20, 40, 60, 80, 100].map((value) => `
@@ -1222,6 +1234,7 @@ function openTaskEditor({ taskId, boxId }, onDone) {
   `, { height: '80vh' });
 
   let priority = task?.priority ?? 0;
+  let pinLevel = Number(task?.pinLevel) >= 1 && Number(task?.pinLevel) <= 3 ? Number(task.pinLevel) : null;
   let progress = task?.progress ?? 0;
   const boxSelect = root.querySelector('#taskBox');
   const pointsInput = root.querySelector('#taskPointsValue');
@@ -1260,6 +1273,14 @@ function openTaskEditor({ taskId, boxId }, onDone) {
     });
   });
 
+  root.querySelectorAll('[data-task-rank] [data-rank]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const value = Number(button.dataset.rank);
+      pinLevel = value >= 1 && value <= 3 ? value : null;
+      root.querySelectorAll('[data-task-rank] [data-rank]').forEach((item) => item.classList.toggle('active', item === button));
+    });
+  });
+
   root.querySelectorAll('.progress-dot').forEach((button) => {
     button.addEventListener('click', () => {
       progress = Number(button.dataset.progress);
@@ -1278,12 +1299,16 @@ function openTaskEditor({ taskId, boxId }, onDone) {
   });
 
   root.querySelector('#cancelBtn').addEventListener('click', close);
+  let savingTask = false;
   const saveTask = () => {
+    if (savingTask) return;
     const content = root.querySelector('#taskContent').value.trim();
     if (!content) {
       showToast('先填写任务内容');
       return;
     }
+    savingTask = true;
+    root.querySelector('#saveBtn').disabled = true;
 
     const nextBoxId = root.querySelector('#taskBox').value;
     const selectedBox = taskBoxes.find((box) => box.id === nextBoxId) || null;
@@ -1295,6 +1320,8 @@ function openTaskEditor({ taskId, boxId }, onDone) {
     const payload = {
       content,
       priority,
+      pinLevel,
+      pinned: Boolean(pinLevel),
       progress,
       weight,
       pointsValue,
