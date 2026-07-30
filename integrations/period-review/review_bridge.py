@@ -110,6 +110,7 @@ def plain_summary(block: str) -> str:
             continue
         value = re.sub(r"^[-*]\s*", "", value)
         value = re.sub(r"^#{1,6}\s+", "", value)
+        value = re.sub(r"(?:\*\*|__|`)", "", value)
         if value:
             lines.append(value)
     return "\n".join(lines).strip()

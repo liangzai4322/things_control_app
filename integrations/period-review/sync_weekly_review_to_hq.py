@@ -22,6 +22,14 @@ from review_bridge import (
 )
 
 
+def list_or_summary(block: str) -> list[str]:
+    values = list_lines(block)
+    if values:
+        return values
+    summary = plain_summary(block)
+    return [summary] if summary else []
+
+
 def parse_weekly_review(markdown: str) -> dict:
     bottleneck_heading, bottleneck_block = section_prefix(markdown, "主瓶颈：", 3)
     bottleneck_fields = bullet_map(bottleneck_block)
@@ -47,9 +55,9 @@ def parse_weekly_review(markdown: str) -> dict:
         },
         "resources": table_rows(section(markdown, "七、下周资源分配")),
         "startStopContinue": {
-            "start": list_lines(section(markdown, "Start（最多 1 条）", 3)),
-            "stop": list_lines(section(markdown, "Stop（最多 1 条）", 3)),
-            "continue": list_lines(section(markdown, "Continue（最多 1 条）", 3)),
+            "start": list_or_summary(section(markdown, "Start（最多 1 条）", 3)),
+            "stop": list_or_summary(section(markdown, "Stop（最多 1 条）", 3)),
+            "continue": list_or_summary(section(markdown, "Continue（最多 1 条）", 3)),
         },
         "scoreboard": list_lines(section(markdown, "十一、下周记分牌")),
     }

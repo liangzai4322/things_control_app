@@ -58,15 +58,22 @@ class PeriodReviewBridgeTests(unittest.TestCase):
 
     def test_weekly_parser_accepts_bold_field_labels(self):
         markdown = """
+## 一、本周经营裁决
+本周只验证**一个外部结果**。
 ## 六、下周唯一实验
 ### 服务标准化实验
 - **假设：** 标准化后可以复用
 - **实验动作：** 完成一版 SOP
 - **截止日期：** 2026-08-05
+## 八、Start / Stop / Continue
+### Start（最多 1 条）
+开始执行 24 小时资产化。
 """.strip()
         result = weekly.parse_weekly_review(markdown)
+        self.assertEqual(result["verdict"], "本周只验证一个外部结果。")
         self.assertEqual(result["experiment"]["hypothesis"], "标准化后可以复用")
         self.assertEqual(result["experiment"]["action"], "完成一版 SOP")
+        self.assertEqual(result["startStopContinue"]["start"], ["开始执行 24 小时资产化。"])
 
     def test_monthly_parser(self):
         markdown = """
