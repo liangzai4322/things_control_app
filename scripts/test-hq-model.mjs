@@ -48,4 +48,7 @@ assert.equal(review.completedCount, 1);
 assert.equal(review.completionRate, 33);
 assert.deepEqual(review.todayEvidence, { touched: 4, completed: 2, progress: 3 });
 
+const emptyReview = normalizeReviewStatus({ completionRate: null, history: [] }, reviewDate);
+assert.equal(emptyReview.completionRate, null);
+
 console.log('hq model tests passed');

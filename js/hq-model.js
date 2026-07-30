@@ -33,7 +33,10 @@ export function normalizeReviewStatus(review = {}, reviewDate = '') {
     history,
     knownCount,
     completedCount,
-    completionRate: Number.isFinite(Number(review.completionRate))
+    completionRate: review.completionRate !== null
+      && review.completionRate !== ''
+      && review.completionRate !== undefined
+      && Number.isFinite(Number(review.completionRate))
       ? Number(review.completionRate)
       : (knownCount ? Math.round((completedCount / knownCount) * 100) : null),
     todayEvidence: {
