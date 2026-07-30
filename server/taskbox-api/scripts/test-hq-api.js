@@ -75,6 +75,9 @@ child.stderr.on('data', (chunk) => { serverError += chunk.toString('utf8'); });
       stopDoing: ['停止无效切换'],
       continueDoing: ['先做唯一动作'],
       outcomes: { published: 1 },
+      yesterdayClosure: { commitment: '完成 MVP', result: '完成', evidence: '线上页面' },
+      reviewCompletedAt: '2026-07-30T14:00:00.000Z',
+      reviewArtifacts: { markdownPath: 'D:/reviews/2026-07-30.md' },
       source: 'integration_test',
     });
     if (brief.reviewDate !== '2026-07-30' || brief.outcomes.published !== 1) {
@@ -88,6 +91,13 @@ child.stderr.on('data', (chunk) => { serverError += chunk.toString('utf8'); });
     const snapshot = await request('/v1/hq/today?date=2026-07-30');
     if (!snapshot.decisions.some((item) => item.id === 'integration-decision')) {
       throw new Error('decision missing from HQ snapshot');
+    }
+    if (snapshot.review.status !== 'synced' || snapshot.review.completionRate !== 100) {
+      throw new Error('review loop missing from HQ snapshot');
+    }
+    const reviewStatus = await request('/v1/hq/review-status?date=2026-07-30&days=7');
+    if (reviewStatus.completedCount !== 1 || reviewStatus.history.length !== 7) {
+      throw new Error('review history aggregation mismatch');
     }
     await request('/v1/hq/decisions/integration-decision', 'PATCH', { status: 'resolved' });
     const openDecisions = await request('/v1/hq/decisions?status=open');

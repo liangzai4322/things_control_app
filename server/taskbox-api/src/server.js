@@ -454,6 +454,76 @@ function buildProjectHealth(mainlines, tasks) {
     });
 }
 
+function shiftDateKey(dateKey, offset) {
+  const date = new Date(`${dateKey}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + offset);
+  return date.toISOString().slice(0, 10);
+}
+
+function taskTouchesDate(task, reviewDate) {
+  return [
+    task.scheduledAt,
+    task.dueDate,
+    task.completedAt,
+    task.createdAt,
+    task.updatedAt,
+    ...(task.progressLogs || []).map((log) => log.at || log.updatedAt),
+  ].some((value) => String(value || '').slice(0, 10) === reviewDate);
+}
+
+function buildReviewStatus(reviewDate, tasks = [], requestedDays = 7) {
+  const days = Math.max(3, Math.min(31, Number(requestedDays) || 7));
+  const dates = Array.from({ length: days }, (_, index) => shiftDateKey(reviewDate, index - days + 1));
+  const oldest = dates[0];
+  const briefs = db.prepare(`
+    SELECT * FROM hq_daily_briefs
+    WHERE review_date BETWEEN ? AND ?
+    ORDER BY review_date
+  `).all(oldest, reviewDate).map(rowToDailyBrief);
+  const byDate = new Map(briefs.map((brief) => [brief.reviewDate, brief]));
+  const resultState = (result) => {
+    if (result === '完成') return 'completed';
+    if (result === '部分完成') return 'partial';
+    if (result === '未完成') return 'missed';
+    if (result === '无法判断') return 'unknown';
+    return 'empty';
+  };
+  const history = dates.map((date) => {
+    const brief = byDate.get(date);
+    const result = brief?.yesterdayClosure?.result || '';
+    return {
+      date,
+      result,
+      state: resultState(result),
+      reviewCompletedAt: brief?.reviewCompletedAt || null,
+      synced: Boolean(brief?.reviewCompletedAt),
+    };
+  });
+  const known = history.filter((item) => ['completed', 'partial', 'missed'].includes(item.state));
+  const completedCount = known.filter((item) => item.state === 'completed').length;
+  const latestReview = [...briefs]
+    .filter((brief) => brief.reviewCompletedAt)
+    .sort((left, right) => new Date(right.reviewCompletedAt) - new Date(left.reviewCompletedAt))[0] || null;
+  const todayBrief = byDate.get(reviewDate) || null;
+  const touched = tasks.filter((task) => !task.deleted && !task.isRecurringTemplate && taskTouchesDate(task, reviewDate));
+  return {
+    status: todayBrief?.reviewCompletedAt ? 'synced' : 'pending',
+    reviewDate,
+    latestReviewDate: latestReview?.reviewDate || null,
+    latestReviewAt: latestReview?.reviewCompletedAt || null,
+    artifacts: latestReview?.reviewArtifacts || {},
+    history,
+    knownCount: known.length,
+    completedCount,
+    completionRate: known.length ? Math.round((completedCount / known.length) * 100) : null,
+    todayEvidence: {
+      touched: touched.length,
+      completed: touched.filter((task) => task.isCompleted && String(task.completedAt || '').slice(0, 10) === reviewDate).length,
+      progress: touched.filter((task) => (task.progressLogs || []).some((log) => String(log.at || log.updatedAt || '').slice(0, 10) === reviewDate)).length,
+    },
+  };
+}
+
 function buildHqSnapshot(reviewDate) {
   const brief = rowToDailyBrief(db.prepare('SELECT * FROM hq_daily_briefs WHERE review_date=?').get(reviewDate));
   const tasks = db.prepare('SELECT * FROM tasks ORDER BY sort_order, created_at').all().map(rowToTask);
@@ -479,6 +549,7 @@ function buildHqSnapshot(reviewDate) {
     commitments,
     projects: buildProjectHealth(mainlines, tasks),
     decisions,
+    review: buildReviewStatus(reviewDate, tasks, 7),
     ai: {
       open: aiTasks.length,
       needsInput: aiTasks.filter((task) => task.executionState === 'needs_input').length,
@@ -545,6 +616,12 @@ app.patch('/v1/daily-quote', (req, res) => {
 app.get('/v1/hq/today', (req, res) => {
   const reviewDate = validDateKey(req.query.date) || todayKey();
   res.json(buildHqSnapshot(reviewDate));
+});
+
+app.get('/v1/hq/review-status', (req, res) => {
+  const reviewDate = validDateKey(req.query.date) || todayKey();
+  const tasks = db.prepare('SELECT * FROM tasks ORDER BY sort_order, created_at').all().map(rowToTask);
+  res.json(buildReviewStatus(reviewDate, tasks, req.query.days));
 });
 
 app.get('/v1/hq/daily-briefs/:date', (req, res) => {

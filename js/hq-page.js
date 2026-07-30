@@ -7,7 +7,7 @@ import {
   updateTask,
 } from './db.js';
 import { navigate, openSheet, showToast } from './app.js';
-import { buildLocalHqSnapshot, normalizeHqBrief } from './hq-model.js';
+import { buildLocalHqSnapshot, normalizeHqBrief, normalizeReviewStatus } from './hq-model.js';
 import { localDateKey } from './task-utils.js';
 
 const HQ_CACHE_KEY = 'taskbox_hq_cache_v1';
@@ -149,6 +149,45 @@ function renderOutcomes(outcomes = {}) {
   `).join('');
 }
 
+function renderReviewLoop(reviewInput, reviewDate) {
+  const review = normalizeReviewStatus(reviewInput, reviewDate);
+  const statusLabel = review.status === 'synced' ? '今日日省已同步' : '今晚待复盘';
+  const rateLabel = review.completionRate === null ? '证据不足' : `${review.completionRate}%`;
+  const history = review.history.length ? review.history : Array.from({ length: 7 }, (_, index) => ({
+    date: '',
+    state: 'empty',
+    result: '',
+    placeholder: index,
+  }));
+  return `
+    <section class="hq-review-loop ${review.status}">
+      <div class="hq-review-copy">
+        <span>DAILY REVIEW LOOP</span>
+        <h2>日省闭环</h2>
+        <p>参谋部定方向，盒子留证据，日省做结算。</p>
+      </div>
+      <div class="hq-review-status">
+        <i></i>
+        <div><strong>${statusLabel}</strong><small>${review.latestReviewAt ? `最近同步 ${escapeHtml(formatRelativeDate(review.latestReviewAt))}` : '完成日省后自动生成明日驾驶舱'}</small></div>
+      </div>
+      <div class="hq-review-evidence">
+        <article><strong>${review.todayEvidence.completed}</strong><span>今日完成</span></article>
+        <article><strong>${review.todayEvidence.progress}</strong><span>有进度</span></article>
+        <article><strong>${review.todayEvidence.touched}</strong><span>触达任务</span></article>
+      </div>
+      <div class="hq-review-trend">
+        <div><strong>${rateLabel}</strong><span>7 天唯一承诺完成率</span></div>
+        <ol>${history.map((item) => `
+          <li class="${escapeHtml(item.state || 'empty')}" title="${escapeHtml(item.result || '尚无判定')}">
+            <i></i><span>${item.date ? escapeHtml(item.date.slice(5).replace('-', '/')) : '·'}</span>
+          </li>
+        `).join('')}</ol>
+      </div>
+      <button class="hq-review-button" id="hqReviewEvidence">查看今日事实包 <span>↗</span></button>
+    </section>
+  `;
+}
+
 function renderProject(project) {
   const total = Number(project.openTaskCount || 0) + Number(project.completedTaskCount || 0);
   const percent = total ? Math.round((Number(project.completedTaskCount || 0) / total) * 100) : 0;
@@ -232,6 +271,8 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
         </div>
       </section>
 
+      ${renderReviewLoop(snapshot.review, snapshot.reviewDate)}
+
       <section class="hq-grid hq-action-zone">
         <div class="hq-zone-label"><span>01</span><p>今日行动驾驶舱</p><small>只承诺 1 个主动作 + 2 个维护动作</small></div>
         <div class="hq-action-stack">
@@ -302,6 +343,35 @@ function renderTaskOptions(tasks, selectedId, excludedIds = []) {
       .filter((task) => !excludedIds.includes(task.id))
       .map((task) => `<option value="${escapeHtml(task.id)}" ${task.id === selectedId ? 'selected' : ''}>${escapeHtml(task.content)}</option>`),
   ].join('');
+}
+
+async function openReviewEvidence(snapshot) {
+  let daily = null;
+  try {
+    daily = await requestTaskboxApi(`/daily-snapshot?date=${encodeURIComponent(snapshot.reviewDate)}`);
+  } catch {
+    daily = { tasks: [], completedTasks: [], progressTasks: [] };
+  }
+  const completed = daily.completedTasks || [];
+  const progress = daily.progressTasks || [];
+  const risks = (snapshot.projects || []).filter((project) => ['blocked', 'stale', 'needs_action'].includes(project.health));
+  const list = (items, emptyText) => items.length
+    ? items.map((item) => `<li><strong>${escapeHtml(item.content || item.name || item.title)}</strong><small>${escapeHtml(item.completionEvidence || item.nextAction?.content || item.context || taskMeta(item) || '盒子已有事实记录')}</small></li>`).join('')
+    : `<li class="empty"><strong>${emptyText}</strong><small>日省会保留“未记录”，不会自动补成 0 或未完成。</small></li>`;
+  const { root, close } = openSheet(`
+    <div class="sheet-header">
+      <div><p class="eyebrow">DAILY REVIEW EVIDENCE</p><h2>${escapeHtml(snapshot.reviewDate)} 日省事实包</h2></div>
+      <button class="icon-btn" id="closeReviewEvidence">×</button>
+    </div>
+    <div class="hq-evidence-sheet">
+      <p class="hq-evidence-rule">以下内容来自盒子和参谋部，只作为事实输入；最终复盘仍保留原始证据和不确定状态。</p>
+      <section><div><span>DONE</span><h3>今日明确完成</h3></div><ul>${list(completed, '今日还没有明确完成记录')}</ul></section>
+      <section><div><span>PROGRESS</span><h3>今日推进记录</h3></div><ul>${list(progress, '今日还没有进度记录')}</ul></section>
+      <section><div><span>RISKS</span><h3>项目预警</h3></div><ul>${list(risks, '当前没有项目预警')}</ul></section>
+      <section><div><span>DECISIONS</span><h3>待决策</h3></div><ul>${list(snapshot.decisions || [], '当前没有待决策事项')}</ul></section>
+    </div>
+  `, { height: '88vh' });
+  root.querySelector('#closeReviewEvidence').addEventListener('click', close);
 }
 
 function openBriefEditor(app, snapshot) {
@@ -458,6 +528,7 @@ function bindPageEvents(app, snapshot) {
     renderHqPage(app, { refreshRemote: true });
   });
   app.querySelector('#hqEditBrief').addEventListener('click', () => openBriefEditor(app, snapshot));
+  app.querySelector('#hqReviewEvidence')?.addEventListener('click', () => openReviewEvidence(snapshot));
   app.querySelector('#editBriefEmpty')?.addEventListener('click', () => openBriefEditor(app, snapshot));
   app.querySelector('#hqAddDecision').addEventListener('click', () => openDecisionEditor(app, snapshot));
   app.querySelectorAll('[data-open-task]').forEach((button) => {

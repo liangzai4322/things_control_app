@@ -77,18 +77,21 @@ GitHub Pages (dist)
 
 - `#hq`：今日驾驶舱、项目中心、待决策队列和系统接入口。
 - TaskBox：行动执行层，管理任务、场景、进度和完成证据。
-- 日省：复盘层，读取 `/daily-snapshot`，并把次日 `1 个主动作 + 2 个维护动作`回写到 TaskBox。
+- 日省：复盘层，开始前读取 `/daily-snapshot`、HQ 快照和 7 天承诺状态生成事实包，结束后把次日 `1 个主动作 + 2 个维护动作`回写到 TaskBox。
 - `hq_daily_briefs`：按日期保存行动驾驶舱、外部结果、停止做、继续做和昨日闭环。
 - `hq_decisions`：保存必须明确继续、排期、拆小或停止的事项。
 
 关键接口：
 
 - `GET /v1/hq/today?date=YYYY-MM-DD`
+- `GET /v1/hq/review-status?date=YYYY-MM-DD&days=7`
 - `GET/POST /v1/hq/daily-briefs/:date`
 - `GET/POST/PATCH/DELETE /v1/hq/decisions`
 - `GET /v1/daily-snapshot?date=YYYY-MM-DD`
 
 任务的 `pinLevel` 只决定显示顺序；`commitmentRole`、`commitmentDate`和`commitmentSource`记录日省/参谋部承诺语义，二者不混为同一字段。扩展字段继续保存在任务 `raw_json` 中，保持旧客户端兼容。
+
+`hq_daily_briefs.raw_json`中的`reviewCompletedAt`用于区分“上一份日省生成的今日计划”和“今天已经完成的日省”；`reviewArtifacts`保存私有飞书入口、认知卡片入口和本地 Markdown 路径，不复制日省全文。
 
 - 快照：`GET /taskbox`、`GET /points`。
 - 盒子：`POST /boxes`、`PATCH /boxes/:id`、`DELETE /boxes/:id`。

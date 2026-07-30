@@ -49,10 +49,11 @@ API 目录默认 `/opt/taskbox-api`，数据库默认 `/opt/taskbox-api/data/tas
 
 人生参谋部发布后再验证：
 
-1. `GET /v1/hq/today?date=YYYY-MM-DD` 返回 `brief / commitments / projects / decisions / ai`。
+1. `GET /v1/hq/today?date=YYYY-MM-DD` 返回 `brief / commitments / projects / decisions / review / ai`。
 2. 新建一条临时决策、标记已决定并删除测试记录。
 3. `GET /v1/daily-snapshot?date=YYYY-MM-DD` 只返回目标日期相关记录。
-4. GitHub Pages 的 `#hq` 可打开，编辑今日表单可见，未配置 Token 时仍能显示本地快照。
+4. `GET /v1/hq/review-status?date=YYYY-MM-DD&days=7` 返回逐日承诺判定和事实计数。
+5. GitHub Pages 的 `#hq` 可打开，日省闭环卡与事实包抽屉可见，未配置 Token 时仍能显示本地快照。
 
 ## 故障检查
 
@@ -62,7 +63,8 @@ API 目录默认 `/opt/taskbox-api`，数据库默认 `/opt/taskbox-api/data/tas
 - 修改后出现重复：检查客户端记录 ID、服务端 `POST` 幂等逻辑和周期任务 `recurrenceKey` 唯一性。
 - 页面显示旧内容：确认新构建已发布、Service Worker 缓存名已更新，并做一次强制刷新。
 - 参谋部只显示本地快照：检查浏览器 API Token、`/v1/hq/today` 状态码和服务器是否已执行最新 `schema.sql`。
-- 日省没有派发到盒子：检查本机 `TASKBOX_API_TOKEN` 环境变量，并单独运行 `sync_daily_review_to_hq.py` 查看不含凭据的 JSON 结果。
+- 日省事实包没有生成：运行`fetch_daily_review_context.py --date YYYY-MM-DD`，检查私有 Token 文件或`TASKBOX_API_TOKEN`，并确认 API Origin 配置。
+- 日省没有派发到盒子：检查本机私有 Token 文件或`TASKBOX_API_TOKEN`，并单独运行 `sync_daily_review_to_hq.py` 查看不含凭据的 JSON 结果。
 
 ## 回滚
 

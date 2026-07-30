@@ -17,6 +17,33 @@ export function normalizeHqBrief(brief = {}, reviewDate = '') {
   };
 }
 
+export function normalizeReviewStatus(review = {}, reviewDate = '') {
+  const history = Array.isArray(review.history) ? review.history.slice(-7) : [];
+  const known = history.filter((item) => ['completed', 'partial', 'missed'].includes(item?.state));
+  const completedCount = Number.isFinite(Number(review.completedCount))
+    ? Number(review.completedCount)
+    : known.filter((item) => item.state === 'completed').length;
+  const knownCount = Number.isFinite(Number(review.knownCount)) ? Number(review.knownCount) : known.length;
+  return {
+    status: review.status === 'synced' ? 'synced' : 'pending',
+    reviewDate: review.reviewDate || reviewDate,
+    latestReviewDate: review.latestReviewDate || null,
+    latestReviewAt: review.latestReviewAt || null,
+    artifacts: review.artifacts && typeof review.artifacts === 'object' ? review.artifacts : {},
+    history,
+    knownCount,
+    completedCount,
+    completionRate: Number.isFinite(Number(review.completionRate))
+      ? Number(review.completionRate)
+      : (knownCount ? Math.round((completedCount / knownCount) * 100) : null),
+    todayEvidence: {
+      touched: Math.max(0, Number(review.todayEvidence?.touched) || 0),
+      completed: Math.max(0, Number(review.todayEvidence?.completed) || 0),
+      progress: Math.max(0, Number(review.todayEvidence?.progress) || 0),
+    },
+  };
+}
+
 export function selectHqCommitments(tasks = [], briefInput = {}, reviewDate = '') {
   const brief = normalizeHqBrief(briefInput, reviewDate);
   const open = tasks.filter((task) => !task.deleted && !task.isCompleted && !task.isRecurringTemplate);
@@ -73,6 +100,7 @@ export function buildLocalHqSnapshot({ reviewDate, brief, tasks = [], mainlines 
     commitments: selectHqCommitments(tasks, normalizedBrief, reviewDate),
     projects: buildHqProjectHealth(mainlines, tasks),
     decisions: decisions.filter((decision) => decision.status !== 'resolved'),
+    review: normalizeReviewStatus({}, reviewDate),
     ai: {
       open: tasks.filter((task) => !task.deleted && !task.isCompleted && task.executionMode === 'ai').length,
       needsInput: tasks.filter((task) => !task.deleted && !task.isCompleted && task.executionMode === 'ai' && task.executionState === 'needs_input').length,

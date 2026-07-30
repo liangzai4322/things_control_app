@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
-import { buildHqProjectHealth, normalizeHqBrief, selectHqCommitments } from '../js/hq-model.js';
+import {
+  buildHqProjectHealth,
+  normalizeHqBrief,
+  normalizeReviewStatus,
+  selectHqCommitments,
+} from '../js/hq-model.js';
 
 const reviewDate = '2026-07-30';
 const tasks = [
@@ -27,5 +32,20 @@ const [project] = buildHqProjectHealth([
 ], new Date('2026-07-30T00:00:00.000Z'));
 assert.equal(project.health, 'healthy');
 assert.equal(project.nextAction.id, 'next');
+
+const review = normalizeReviewStatus({
+  status: 'synced',
+  todayEvidence: { touched: 4, completed: 2, progress: 3 },
+  history: [
+    { date: '2026-07-28', state: 'completed' },
+    { date: '2026-07-29', state: 'partial' },
+    { date: '2026-07-30', state: 'missed' },
+  ],
+}, reviewDate);
+assert.equal(review.status, 'synced');
+assert.equal(review.knownCount, 3);
+assert.equal(review.completedCount, 1);
+assert.equal(review.completionRate, 33);
+assert.deepEqual(review.todayEvidence, { touched: 4, completed: 2, progress: 3 });
 
 console.log('hq model tests passed');
