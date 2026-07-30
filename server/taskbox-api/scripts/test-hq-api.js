@@ -99,12 +99,44 @@ child.stderr.on('data', (chunk) => { serverError += chunk.toString('utf8'); });
     if (reviewStatus.completedCount !== 1 || reviewStatus.history.length !== 7) {
       throw new Error('review history aggregation mismatch');
     }
+    const weekly = await request('/v1/hq/periods/week/2026-07-27_to_2026-08-02', 'POST', {
+      startDate: '2026-07-27',
+      endDate: '2026-08-02',
+      status: 'synced',
+      verdict: '用一个实验验证主瓶颈',
+      experiment: { action: '发布周期面板', successThreshold: '线上可访问' },
+      source: 'weekly_review',
+      completedAt: '2026-08-02T12:00:00.000Z',
+    });
+    if (weekly.periodType !== 'week' || weekly.experiment.action !== '发布周期面板') {
+      throw new Error('weekly review upsert mismatch');
+    }
+    const weeklySnapshot = await request('/v1/hq/periods/week/current?date=2026-07-30');
+    if (weeklySnapshot.periodKey !== '2026-07-27_to_2026-08-02' || weeklySnapshot.review.status !== 'synced') {
+      throw new Error('weekly period snapshot mismatch');
+    }
+    await request('/v1/hq/periods/month/2026-07', 'POST', {
+      startDate: '2026-07-01',
+      endDate: '2026-07-31',
+      status: 'synced',
+      verdict: '集中资源完成可视化成果物',
+      goals: [{ title: '发布人生参谋部' }],
+      source: 'monthly_review',
+    });
+    const monthlySnapshot = await request('/v1/hq/periods/month/current?date=2026-07-30');
+    if (monthlySnapshot.review.goals[0].title !== '发布人生参谋部') {
+      throw new Error('monthly period snapshot mismatch');
+    }
+    const weeklyList = await request('/v1/hq/periods?type=week&limit=3');
+    if (weeklyList.length !== 1) throw new Error('period review list mismatch');
     await request('/v1/hq/decisions/integration-decision', 'PATCH', { status: 'resolved' });
     const openDecisions = await request('/v1/hq/decisions?status=open');
     if (openDecisions.some((item) => item.id === 'integration-decision')) {
       throw new Error('resolved decision remained open');
     }
     await request('/v1/hq/decisions/integration-decision', 'DELETE');
+    await request('/v1/hq/periods/week/2026-07-27_to_2026-08-02', 'DELETE');
+    await request('/v1/hq/periods/month/2026-07', 'DELETE');
     const evidence = await request('/v1/daily-snapshot?date=2026-07-30');
     if (evidence.reviewDate !== '2026-07-30') throw new Error('daily snapshot date mismatch');
     console.log('hq api integration tests passed');

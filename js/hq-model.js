@@ -47,6 +47,50 @@ export function normalizeReviewStatus(review = {}, reviewDate = '') {
   };
 }
 
+export function normalizePeriodSnapshot(snapshot = {}, periodType = 'week') {
+  const review = snapshot.review && typeof snapshot.review === 'object' ? snapshot.review : {};
+  const derived = snapshot.derived && typeof snapshot.derived === 'object' ? snapshot.derived : {};
+  return {
+    periodType: snapshot.periodType || periodType,
+    periodKey: snapshot.periodKey || '',
+    startDate: snapshot.startDate || '',
+    endDate: snapshot.endDate || '',
+    review: {
+      status: ['completed', 'synced'].includes(review.status) ? review.status : 'draft',
+      verdict: String(review.verdict || ''),
+      previousCommitments: Array.isArray(review.previousCommitments) ? review.previousCommitments : [],
+      metrics: review.metrics && typeof review.metrics === 'object' ? review.metrics : {},
+      bottleneck: review.bottleneck && typeof review.bottleneck === 'object' ? review.bottleneck : {},
+      experiment: review.experiment && typeof review.experiment === 'object' ? review.experiment : {},
+      resources: Array.isArray(review.resources) ? review.resources : [],
+      startStopContinue: {
+        start: Array.isArray(review.startStopContinue?.start) ? review.startStopContinue.start : [],
+        stop: Array.isArray(review.startStopContinue?.stop) ? review.startStopContinue.stop : [],
+        continue: Array.isArray(review.startStopContinue?.continue) ? review.startStopContinue.continue : [],
+      },
+      scoreboard: Array.isArray(review.scoreboard) ? review.scoreboard : [],
+      portfolio: Array.isArray(review.portfolio) ? review.portfolio : [],
+      strategicDecisions: Array.isArray(review.strategicDecisions) ? review.strategicDecisions : [],
+      goals: Array.isArray(review.goals) ? review.goals : [],
+      notDoing: Array.isArray(review.notDoing) ? review.notDoing : [],
+      artifacts: review.artifacts && typeof review.artifacts === 'object' ? review.artifacts : {},
+      completedAt: review.completedAt || null,
+    },
+    derived: {
+      dailyReviewCount: Math.max(0, Number(derived.dailyReviewCount) || 0),
+      dailyBriefCount: Math.max(0, Number(derived.dailyBriefCount) || 0),
+      evidenceDays: Math.max(0, Number(derived.evidenceDays) || 0),
+      outcomes: derived.outcomes && typeof derived.outcomes === 'object' ? derived.outcomes : {},
+      commitments: derived.commitments && typeof derived.commitments === 'object' ? derived.commitments : {},
+      tasks: derived.tasks && typeof derived.tasks === 'object' ? derived.tasks : {},
+      projectRisks: Array.isArray(derived.projectRisks) ? derived.projectRisks : [],
+    },
+    projects: Array.isArray(snapshot.projects) ? snapshot.projects : [],
+    decisions: Array.isArray(snapshot.decisions) ? snapshot.decisions : [],
+    generatedAt: snapshot.generatedAt || null,
+  };
+}
+
 export function selectHqCommitments(tasks = [], briefInput = {}, reviewDate = '') {
   const brief = normalizeHqBrief(briefInput, reviewDate);
   const open = tasks.filter((task) => !task.deleted && !task.isCompleted && !task.isRecurringTemplate);

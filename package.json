@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "npm run test:recurrence && npm run test:box-types && npm run test:visibility && npm run test:db-visibility && npm run test:branches && npm run test:hq && npm run test:daily-review && npm --prefix server/taskbox-api run test:schema && npm --prefix server/taskbox-api run test:hq",
+    "test": "npm run test:recurrence && npm run test:box-types && npm run test:visibility && npm run test:db-visibility && npm run test:branches && npm run test:hq && npm run test:daily-review && npm run test:period-review && npm --prefix server/taskbox-api run test:schema && npm --prefix server/taskbox-api run test:hq",
     "build": "node scripts/build-app.mjs",
     "preview": "python scripts/serve_app.py --port 4173 --dir dist",
     "test:recurrence": "node scripts/test-recurrence.mjs",
@@ -13,7 +13,8 @@
     "test:db-visibility": "node scripts/test-db-visibility.mjs",
     "test:branches": "node scripts/test-branches.mjs",
     "test:hq": "node scripts/test-hq-model.mjs",
-    "test:daily-review": "node scripts/test-daily-review-bridge.mjs"
+    "test:daily-review": "node scripts/test-daily-review-bridge.mjs",
+    "test:period-review": "node scripts/test-period-review-bridge.mjs"
   },
   "devDependencies": {
     "esbuild": "0.25.12"

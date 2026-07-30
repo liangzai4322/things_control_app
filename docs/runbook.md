@@ -54,6 +54,8 @@ API 目录默认 `/opt/taskbox-api`，数据库默认 `/opt/taskbox-api/data/tas
 3. `GET /v1/daily-snapshot?date=YYYY-MM-DD` 只返回目标日期相关记录。
 4. `GET /v1/hq/review-status?date=YYYY-MM-DD&days=7` 返回逐日承诺判定和事实计数。
 5. GitHub Pages 的 `#hq` 可打开，日省闭环卡与事实包抽屉可见，未配置 Token 时仍能显示本地快照。
+6. `#hq/week`与`#hq/month`可切换；周期 API 分别返回`review / derived / projects / decisions`。
+7. 对测试周期执行一次 POST → GET → DELETE，确认周省/月省按周期键幂等写入。
 
 ## 故障检查
 
@@ -65,6 +67,7 @@ API 目录默认 `/opt/taskbox-api`，数据库默认 `/opt/taskbox-api/data/tas
 - 参谋部只显示本地快照：检查浏览器 API Token、`/v1/hq/today` 状态码和服务器是否已执行最新 `schema.sql`。
 - 日省事实包没有生成：运行`fetch_daily_review_context.py --date YYYY-MM-DD`，检查私有 Token 文件或`TASKBOX_API_TOKEN`，并确认 API Origin 配置。
 - 日省没有派发到盒子：检查本机私有 Token 文件或`TASKBOX_API_TOKEN`，并单独运行 `sync_daily_review_to_hq.py` 查看不含凭据的 JSON 结果。
+- 周省/月省没有进入参谋部：先运行`fetch_period_review_context.py`核对周期键，再运行对应`sync_weekly_review_to_hq.py`或`sync_monthly_review_to_hq.py`。
 
 ## 回滚
 

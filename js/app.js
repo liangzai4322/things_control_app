@@ -105,7 +105,7 @@ function route(options = {}) {
     const load = ROUTE_MODULE_CACHE.hq || import('./hq-page.js');
     ROUTE_MODULE_CACHE.hq = load;
     load.then(({ renderHqPage }) => {
-      renderHqPage(app, { refreshRemote: true });
+      renderHqPage(app, { refreshRemote: true, dimension: ['week', 'month'].includes(param) ? param : 'day' });
       maybeResetViewPosition(options);
     });
     return;

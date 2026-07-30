@@ -337,6 +337,22 @@ function rowToDecision(row) {
   };
 }
 
+function rowToPeriodReview(row) {
+  if (!row) return null;
+  return {
+    ...parseJson(row.raw_json, {}),
+    periodType: row.period_type,
+    periodKey: row.period_key,
+    startDate: row.start_date,
+    endDate: row.end_date,
+    status: row.status || 'draft',
+    verdict: row.verdict || '',
+    source: row.source || 'hq',
+    completedAt: row.completed_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function mergeRaw(existingRaw, patch) {
   return { ...parseJson(existingRaw, {}), ...patch };
 }
@@ -469,6 +485,184 @@ function taskTouchesDate(task, reviewDate) {
     task.updatedAt,
     ...(task.progressLogs || []).map((log) => log.at || log.updatedAt),
   ].some((value) => String(value || '').slice(0, 10) === reviewDate);
+}
+
+function validPeriodType(value) {
+  return ['week', 'month'].includes(value) ? value : null;
+}
+
+function buildPeriodInfo(periodType, dateKey) {
+  if (periodType === 'month') {
+    const [year, month] = dateKey.split('-').map(Number);
+    const endDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    const monthKey = `${year}-${String(month).padStart(2, '0')}`;
+    return {
+      periodType,
+      periodKey: monthKey,
+      startDate: `${monthKey}-01`,
+      endDate: `${monthKey}-${String(endDay).padStart(2, '0')}`,
+    };
+  }
+  const date = new Date(`${dateKey}T12:00:00Z`);
+  const day = date.getUTCDay();
+  const startDate = shiftDateKey(dateKey, day === 0 ? -6 : 1 - day);
+  const endDate = shiftDateKey(startDate, 6);
+  return { periodType, periodKey: `${startDate}_to_${endDate}`, startDate, endDate };
+}
+
+function resolvePeriodInfo(periodType, periodKey, patch = {}) {
+  const startDate = validDateKey(patch.startDate);
+  const endDate = validDateKey(patch.endDate);
+  if (startDate && endDate && startDate <= endDate) {
+    return { periodType, periodKey, startDate, endDate };
+  }
+  if (periodType === 'month' && /^\d{4}-\d{2}$/.test(periodKey)) {
+    return buildPeriodInfo(periodType, `${periodKey}-15`);
+  }
+  const match = /^(\d{4}-\d{2}-\d{2})_to_(\d{4}-\d{2}-\d{2})$/.exec(periodKey);
+  if (periodType === 'week' && match) {
+    return { periodType, periodKey, startDate: match[1], endDate: match[2] };
+  }
+  return null;
+}
+
+function emptyPeriodReview(info) {
+  return {
+    ...info,
+    status: 'draft',
+    verdict: '',
+    previousCommitments: [],
+    metrics: {},
+    bottleneck: {},
+    experiment: {},
+    resources: [],
+    startStopContinue: { start: [], stop: [], continue: [] },
+    scoreboard: [],
+    portfolio: [],
+    strategicDecisions: [],
+    goals: [],
+    notDoing: [],
+    artifacts: {},
+    source: 'derived',
+    completedAt: null,
+    updatedAt: null,
+  };
+}
+
+function buildPeriodDerived(info, tasks, projects) {
+  const briefs = db.prepare(`
+    SELECT * FROM hq_daily_briefs
+    WHERE review_date BETWEEN ? AND ?
+    ORDER BY review_date
+  `).all(info.startDate, info.endDate).map(rowToDailyBrief);
+  const outcomeKeys = ['published', 'conversations', 'quotes', 'deals', 'feedback'];
+  const outcomes = Object.fromEntries(outcomeKeys.map((key) => {
+    const recorded = briefs.map((brief) => brief.outcomes?.[key]).filter((value) => value !== null && value !== undefined && value !== '');
+    return [key, { value: recorded.reduce((sum, value) => sum + (Number(value) || 0), 0), recordedDays: recorded.length }];
+  }));
+  const closureStates = briefs.map((brief) => brief.yesterdayClosure?.result).filter(Boolean);
+  const knownClosures = closureStates.filter((result) => ['完成', '部分完成', '未完成'].includes(result));
+  const completedClosures = knownClosures.filter((result) => result === '完成').length;
+  const touchesRange = (task) => [
+    task.scheduledAt,
+    task.dueDate,
+    task.completedAt,
+    task.createdAt,
+    task.updatedAt,
+    ...(task.progressLogs || []).map((log) => log.at || log.updatedAt),
+  ].some((value) => {
+    const date = String(value || '').slice(0, 10);
+    return date >= info.startDate && date <= info.endDate;
+  });
+  const periodTasks = tasks.filter((task) => !task.deleted && !task.isRecurringTemplate && touchesRange(task));
+  return {
+    dailyReviewCount: briefs.filter((brief) => brief.reviewCompletedAt).length,
+    dailyBriefCount: briefs.length,
+    evidenceDays: briefs.filter((brief) => outcomeKeys.some((key) => brief.outcomes?.[key] !== null && brief.outcomes?.[key] !== undefined)).length,
+    outcomes,
+    commitments: {
+      known: knownClosures.length,
+      completed: completedClosures,
+      rate: knownClosures.length ? Math.round((completedClosures / knownClosures.length) * 100) : null,
+    },
+    tasks: {
+      touched: periodTasks.length,
+      completed: periodTasks.filter((task) => {
+        const completedDate = String(task.completedAt || '').slice(0, 10);
+        return task.isCompleted && completedDate >= info.startDate && completedDate <= info.endDate;
+      }).length,
+    },
+    projectRisks: projects.filter((project) => ['blocked', 'stale', 'needs_action'].includes(project.health)),
+  };
+}
+
+function buildPeriodSnapshot(periodType, dateKey, periodKey = null) {
+  const info = periodKey
+    ? resolvePeriodInfo(periodType, periodKey)
+    : buildPeriodInfo(periodType, dateKey);
+  if (!info) return null;
+  const stored = rowToPeriodReview(db.prepare(`
+    SELECT * FROM hq_period_reviews WHERE period_type=? AND period_key=?
+  `).get(periodType, info.periodKey));
+  const tasks = db.prepare('SELECT * FROM tasks ORDER BY sort_order, created_at').all().map(rowToTask);
+  const mainlines = db.prepare('SELECT * FROM mainlines ORDER BY sort_order, created_at').all().map(rowToMainline);
+  const projects = buildProjectHealth(mainlines, tasks);
+  const decisions = db.prepare("SELECT * FROM hq_decisions WHERE status='open' ORDER BY updated_at DESC").all().map(rowToDecision);
+  return {
+    ...info,
+    review: { ...emptyPeriodReview(info), ...(stored || {}) },
+    derived: buildPeriodDerived(info, tasks, projects),
+    projects,
+    decisions,
+    generatedAt: now(),
+  };
+}
+
+function upsertPeriodReview(periodType, periodKey, patch = {}) {
+  const info = resolvePeriodInfo(periodType, periodKey, patch);
+  if (!info) return null;
+  const existing = db.prepare('SELECT * FROM hq_period_reviews WHERE period_type=? AND period_key=?').get(periodType, periodKey);
+  const current = rowToPeriodReview(existing) || emptyPeriodReview(info);
+  const next = {
+    ...current,
+    ...patch,
+    ...info,
+    status: ['draft', 'completed', 'synced'].includes(patch.status) ? patch.status : (current.status || 'draft'),
+    verdict: String(patch.verdict ?? current.verdict ?? ''),
+    source: String(patch.source || current.source || 'hq'),
+    completedAt: patch.completedAt ?? current.completedAt ?? null,
+    updatedAt: now(),
+  };
+  db.prepare(`
+    INSERT INTO hq_period_reviews (
+      period_type, period_key, start_date, end_date, status, verdict, source,
+      completed_at, raw_json, updated_at
+    ) VALUES (
+      @period_type, @period_key, @start_date, @end_date, @status, @verdict, @source,
+      @completed_at, @raw_json, @updated_at
+    )
+    ON CONFLICT(period_type, period_key) DO UPDATE SET
+      start_date=excluded.start_date,
+      end_date=excluded.end_date,
+      status=excluded.status,
+      verdict=excluded.verdict,
+      source=excluded.source,
+      completed_at=excluded.completed_at,
+      raw_json=excluded.raw_json,
+      updated_at=excluded.updated_at
+  `).run({
+    period_type: periodType,
+    period_key: periodKey,
+    start_date: info.startDate,
+    end_date: info.endDate,
+    status: next.status,
+    verdict: next.verdict,
+    source: next.source,
+    completed_at: next.completedAt,
+    raw_json: json(next),
+    updated_at: next.updatedAt,
+  });
+  return rowToPeriodReview(db.prepare('SELECT * FROM hq_period_reviews WHERE period_type=? AND period_key=?').get(periodType, periodKey));
 }
 
 function buildReviewStatus(reviewDate, tasks = [], requestedDays = 7) {
@@ -622,6 +816,49 @@ app.get('/v1/hq/review-status', (req, res) => {
   const reviewDate = validDateKey(req.query.date) || todayKey();
   const tasks = db.prepare('SELECT * FROM tasks ORDER BY sort_order, created_at').all().map(rowToTask);
   res.json(buildReviewStatus(reviewDate, tasks, req.query.days));
+});
+
+app.get('/v1/hq/periods', (req, res) => {
+  const periodType = validPeriodType(req.query.type);
+  if (!periodType) return res.status(400).json({ error: 'invalid_period_type' });
+  const limit = Math.max(1, Math.min(36, Number(req.query.limit) || 12));
+  const rows = db.prepare(`
+    SELECT * FROM hq_period_reviews
+    WHERE period_type=?
+    ORDER BY start_date DESC
+    LIMIT ?
+  `).all(periodType, limit).map(rowToPeriodReview);
+  return res.json(rows);
+});
+
+app.get('/v1/hq/periods/:type/current', (req, res) => {
+  const periodType = validPeriodType(req.params.type);
+  const reviewDate = validDateKey(req.query.date) || todayKey();
+  if (!periodType) return res.status(400).json({ error: 'invalid_period_type' });
+  return res.json(buildPeriodSnapshot(periodType, reviewDate));
+});
+
+app.get('/v1/hq/periods/:type/:key', (req, res) => {
+  const periodType = validPeriodType(req.params.type);
+  if (!periodType) return res.status(400).json({ error: 'invalid_period_type' });
+  const snapshot = buildPeriodSnapshot(periodType, todayKey(), req.params.key);
+  if (!snapshot) return res.status(400).json({ error: 'invalid_period_key' });
+  return res.json(snapshot);
+});
+
+app.post('/v1/hq/periods/:type/:key', (req, res) => {
+  const periodType = validPeriodType(req.params.type);
+  if (!periodType) return res.status(400).json({ error: 'invalid_period_type' });
+  const review = upsertPeriodReview(periodType, req.params.key, req.body || {});
+  if (!review) return res.status(400).json({ error: 'invalid_period_range' });
+  return res.json(review);
+});
+
+app.delete('/v1/hq/periods/:type/:key', (req, res) => {
+  const periodType = validPeriodType(req.params.type);
+  if (!periodType) return res.status(400).json({ error: 'invalid_period_type' });
+  db.prepare('DELETE FROM hq_period_reviews WHERE period_type=? AND period_key=?').run(periodType, req.params.key);
+  return res.status(204).end();
 });
 
 app.get('/v1/hq/daily-briefs/:date', (req, res) => {

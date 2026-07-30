@@ -263,3 +263,21 @@ CREATE TABLE IF NOT EXISTS hq_decisions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_hq_decisions_status_updated ON hq_decisions(status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS hq_period_reviews (
+  period_type TEXT NOT NULL,
+  period_key TEXT NOT NULL,
+  start_date TEXT NOT NULL,
+  end_date TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft',
+  verdict TEXT,
+  source TEXT NOT NULL DEFAULT 'hq',
+  completed_at TEXT,
+  raw_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (period_type, period_key),
+  CHECK (period_type IN ('week', 'month'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_hq_period_reviews_range
+  ON hq_period_reviews(period_type, start_date DESC, end_date DESC);

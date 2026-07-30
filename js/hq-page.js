@@ -8,6 +8,7 @@ import {
 } from './db.js';
 import { navigate, openSheet, showToast } from './app.js';
 import { buildLocalHqSnapshot, normalizeHqBrief, normalizeReviewStatus } from './hq-model.js';
+import { bindHqDimensionNav, renderHqDimensionNav, renderHqPeriodPage } from './hq-period-page.js';
 import { localDateKey } from './task-utils.js';
 
 const HQ_CACHE_KEY = 'taskbox_hq_cache_v1';
@@ -271,6 +272,7 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
         </div>
       </section>
 
+      ${renderHqDimensionNav('day')}
       ${renderReviewLoop(snapshot.review, snapshot.reviewDate)}
 
       <section class="hq-grid hq-action-zone">
@@ -523,6 +525,7 @@ function openDecisionEditor(app, snapshot) {
 }
 
 function bindPageEvents(app, snapshot) {
+  bindHqDimensionNav(app);
   app.querySelector('#hqBack').addEventListener('click', () => navigate('#home'));
   app.querySelector('#hqRefresh').addEventListener('click', async () => {
     showToast('正在刷新参谋部');
@@ -570,7 +573,11 @@ function bindPageEvents(app, snapshot) {
   });
 }
 
-export async function renderHqPage(app, { refreshRemote = true } = {}) {
+export async function renderHqPage(app, { refreshRemote = true, dimension = 'day' } = {}) {
+  if (dimension !== 'day') {
+    await renderHqPeriodPage(app, { dimension, refreshRemote });
+    return;
+  }
   const reviewDate = localDateKey(new Date());
   const cache = readCache();
   const localSnapshot = buildLocalHqSnapshot({

@@ -36,7 +36,7 @@ try {
     if (!indexes.includes(name)) throw new Error(`missing index ${name}`);
   });
   const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((item) => item.name);
-  ['branches', 'hq_daily_briefs', 'hq_decisions'].forEach((name) => {
+  ['branches', 'hq_daily_briefs', 'hq_decisions', 'hq_period_reviews'].forEach((name) => {
     if (!tables.includes(name)) throw new Error(`missing table ${name}`);
   });
   db.close();

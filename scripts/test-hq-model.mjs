@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {
   buildHqProjectHealth,
   normalizeHqBrief,
+  normalizePeriodSnapshot,
   normalizeReviewStatus,
   selectHqCommitments,
 } from '../js/hq-model.js';
@@ -50,5 +51,21 @@ assert.deepEqual(review.todayEvidence, { touched: 4, completed: 2, progress: 3 }
 
 const emptyReview = normalizeReviewStatus({ completionRate: null, history: [] }, reviewDate);
 assert.equal(emptyReview.completionRate, null);
+
+const period = normalizePeriodSnapshot({
+  periodType: 'week',
+  periodKey: '2026-07-27_to_2026-08-02',
+  review: {
+    status: 'synced',
+    verdict: '集中完成唯一实验',
+    experiment: { action: '连续使用周期面板 7 天' },
+    startStopContinue: { start: ['每天查看'], stop: ['临时换方向'], continue: ['MVP 先行'] },
+  },
+  derived: { dailyReviewCount: 4, commitments: { rate: 75 }, tasks: { completed: 5 } },
+}, 'week');
+assert.equal(period.review.status, 'synced');
+assert.equal(period.review.experiment.action, '连续使用周期面板 7 天');
+assert.equal(period.derived.dailyReviewCount, 4);
+assert.equal(period.derived.commitments.rate, 75);
 
 console.log('hq model tests passed');

@@ -42,6 +42,7 @@ npm run import-json -- /opt/taskbox-api/seed
 - `/v1/smallworld/:realm`: pavilion/tower reads and item-level writes.
 - `GET /v1/hq/today`: aggregated Life HQ cockpit for one date.
 - `GET /v1/hq/review-status`: review sync state, evidence counts, and 3-31 day commitment trend.
+- `/v1/hq/periods`: weekly/monthly review list, current snapshot, period upsert and delete.
 - `GET/POST /v1/hq/daily-briefs/:date`: daily command brief and review result upsert.
 - `/v1/hq/decisions`: decision queue record-level CRUD.
 - `GET /v1/daily-snapshot`: evidence snapshot consumed by 日省.
