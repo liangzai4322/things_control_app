@@ -348,7 +348,9 @@ function renderTaskOptions(tasks, selectedId, excludedIds = []) {
 async function openReviewEvidence(snapshot) {
   let daily = null;
   try {
-    daily = await requestTaskboxApi(`/daily-snapshot?date=${encodeURIComponent(snapshot.reviewDate)}`);
+    daily = await requestTaskboxApi(`/daily-snapshot?date=${encodeURIComponent(snapshot.reviewDate)}`) || {
+      tasks: [], completedTasks: [], progressTasks: [],
+    };
   } catch {
     daily = { tasks: [], completedTasks: [], progressTasks: [] };
   }
