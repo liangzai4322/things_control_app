@@ -115,6 +115,13 @@ child.stderr.on('data', (chunk) => { serverError += chunk.toString('utf8'); });
     if (weeklySnapshot.periodKey !== '2026-07-27_to_2026-08-02' || weeklySnapshot.review.status !== 'synced') {
       throw new Error('weekly period snapshot mismatch');
     }
+    await request('/v1/hq/periods/week/2026-07-20_to_2026-07-26', 'POST', {
+      startDate: '2026-07-20', endDate: '2026-07-26', status: 'synced', verdict: '上周裁决', source: 'weekly_review',
+    });
+    const previousWeekly = await request('/v1/hq/periods/week/current?date=2026-07-30&offset=-1');
+    if (previousWeekly.periodKey !== '2026-07-20_to_2026-07-26' || previousWeekly.review.verdict !== '上周裁决') {
+      throw new Error('previous weekly offset mismatch');
+    }
     await request('/v1/hq/periods/month/2026-07', 'POST', {
       startDate: '2026-07-01',
       endDate: '2026-07-31',
@@ -127,8 +134,15 @@ child.stderr.on('data', (chunk) => { serverError += chunk.toString('utf8'); });
     if (monthlySnapshot.review.goals[0].title !== '发布人生参谋部') {
       throw new Error('monthly period snapshot mismatch');
     }
+    await request('/v1/hq/periods/month/2026-06', 'POST', {
+      startDate: '2026-06-01', endDate: '2026-06-30', status: 'synced', verdict: '上月裁决', source: 'monthly_review',
+    });
+    const previousMonthly = await request('/v1/hq/periods/month/current?date=2026-07-30&offset=-1');
+    if (previousMonthly.periodKey !== '2026-06' || previousMonthly.review.verdict !== '上月裁决') {
+      throw new Error('previous monthly offset mismatch');
+    }
     const weeklyList = await request('/v1/hq/periods?type=week&limit=3');
-    if (weeklyList.length !== 1) throw new Error('period review list mismatch');
+    if (weeklyList.length !== 2) throw new Error('period review list mismatch');
     await request('/v1/hq/decisions/integration-decision', 'PATCH', { status: 'resolved' });
     const openDecisions = await request('/v1/hq/decisions?status=open');
     if (openDecisions.some((item) => item.id === 'integration-decision')) {
@@ -136,7 +150,9 @@ child.stderr.on('data', (chunk) => { serverError += chunk.toString('utf8'); });
     }
     await request('/v1/hq/decisions/integration-decision', 'DELETE');
     await request('/v1/hq/periods/week/2026-07-27_to_2026-08-02', 'DELETE');
+    await request('/v1/hq/periods/week/2026-07-20_to_2026-07-26', 'DELETE');
     await request('/v1/hq/periods/month/2026-07', 'DELETE');
+    await request('/v1/hq/periods/month/2026-06', 'DELETE');
     const evidence = await request('/v1/daily-snapshot?date=2026-07-30');
     if (evidence.reviewDate !== '2026-07-30') throw new Error('daily snapshot date mismatch');
     console.log('hq api integration tests passed');

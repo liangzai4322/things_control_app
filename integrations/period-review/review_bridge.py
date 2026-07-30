@@ -71,7 +71,10 @@ def bullet_map(block: str) -> dict[str, str]:
     for line in block.splitlines():
         match = re.match(r"^\s*-\s*([^：:]+)[：:]\s*(.*?)\s*$", line)
         if match:
-            result[match.group(1).strip()] = match.group(2).strip()
+            key = re.sub(r"[*_`]", "", match.group(1)).strip()
+            value = re.sub(r"^(?:\*\*|__|`)\s*", "", match.group(2)).strip()
+            value = re.sub(r"\s*(?:\*\*|__|`)$", "", value).strip()
+            result[key] = value
     return result
 
 

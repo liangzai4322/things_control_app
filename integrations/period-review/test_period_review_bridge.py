@@ -56,6 +56,18 @@ class PeriodReviewBridgeTests(unittest.TestCase):
         self.assertEqual(result["startStopContinue"]["stop"], ["临时换方向"])
         self.assertEqual(len(result["scoreboard"]), 1)
 
+    def test_weekly_parser_accepts_bold_field_labels(self):
+        markdown = """
+## 六、下周唯一实验
+### 服务标准化实验
+- **假设：** 标准化后可以复用
+- **实验动作：** 完成一版 SOP
+- **截止日期：** 2026-08-05
+""".strip()
+        result = weekly.parse_weekly_review(markdown)
+        self.assertEqual(result["experiment"]["hypothesis"], "标准化后可以复用")
+        self.assertEqual(result["experiment"]["action"], "完成一版 SOP")
+
     def test_monthly_parser(self):
         markdown = """
 # 月省 · 2026-07-01 至 2026-07-31
@@ -107,6 +119,36 @@ class PeriodReviewBridgeTests(unittest.TestCase):
         self.assertEqual(result["strategicDecisions"][0]["decision"], "加码人生参谋部")
         self.assertEqual(len(result["goals"]), 3)
         self.assertEqual(result["notDoing"], ["不新增第四个系统"])
+
+    def test_monthly_parser_accepts_legacy_review_shape(self):
+        markdown = """
+# 月省 · 2026-06-02 至 2026-07-01
+## 一、本月一句话判断
+先完成杠杆化，再启动新方向。
+## 二、ORID 月度复盘
+### O｜客观事实：这个月发生了什么
+站点已经上线，但反馈传感器仍缺失。
+### D｜决策与行动：下个月要怎么变
+1. **现金流业务：** 完成代理 SOP。
+2. **增长业务：** 给站点安装反馈传感器。
+3. **内容系统：** 每周发布一篇实操复盘。
+## 四、Stop / Keep / Start
+### Stop
+- 停止模糊任务
+### Keep
+- 保留复盘节律
+### Start
+- 开始固定发布
+## 六、下月最小行动清单
+- [ ] 完成代理 SOP v0.2
+- [ ] SEO 站接入反馈传感器
+- [ ] 每周发布 1 篇实操文章
+""".strip()
+        result = monthly.parse_monthly_review(markdown)
+        self.assertIn("先完成杠杆化", result["verdict"])
+        self.assertEqual(len(result["strategicDecisions"]), 3)
+        self.assertEqual(result["goals"][0]["title"], "完成代理 SOP v0.2")
+        self.assertEqual(result["startStopContinue"]["stop"], ["停止模糊任务"])
 
     def test_context_renderer(self):
         snapshot = {

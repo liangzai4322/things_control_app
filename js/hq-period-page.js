@@ -220,7 +220,7 @@ export async function renderHqPeriodPage(app, { dimension = 'week', refreshRemot
   renderPeriod(app, cache || emptySnapshot(dimension, dateKey), dimension, false);
   if (!refreshRemote) return;
   try {
-    const remote = await requestTaskboxApi(`/hq/periods/${dimension}/current?date=${encodeURIComponent(dateKey)}`);
+    const remote = await requestTaskboxApi(`/hq/periods/${dimension}/current?date=${encodeURIComponent(dateKey)}&offset=-1`);
     if (!remote) return;
     writeCache(dimension, remote);
     renderPeriod(app, remote, dimension, true);

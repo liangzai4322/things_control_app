@@ -21,6 +21,19 @@ from review_bridge import (
 )
 
 
+def first_section(markdown: str, headings: list[str], level: int = 2) -> str:
+    for heading in headings:
+        block = section(markdown, heading, level)
+        if block:
+            return block
+    return ""
+
+
+def clean_markdown(value: str) -> str:
+    value = re.sub(r"[*_`]", "", value)
+    return re.sub(r"\s+", " ", value).strip()
+
+
 def parse_strategic_decisions(markdown: str) -> list[dict]:
     block = section(markdown, "七、本月战略决策（最多 3 条）")
     decisions = []
@@ -35,6 +48,23 @@ def parse_strategic_decisions(markdown: str) -> list[dict]:
                 "limit": fields.get("时间 / 预算上限", ""),
                 "reviewDate": fields.get("复查日期", ""),
                 "exitCondition": fields.get("退出条件", ""),
+            })
+    if decisions:
+        return decisions[:3]
+
+    # Compatibility with monthly reviews generated before the structured
+    # strategy-decision section was introduced.
+    legacy = first_section(markdown, ["D｜决策与行动：下个月要怎么变", "D｜决策与行动"], 3)
+    for match in re.finditer(r"^\s*\d+[.、]\s*(.+?)\s*$", legacy, re.MULTILINE):
+        decision = clean_markdown(match.group(1))
+        if decision:
+            decisions.append({
+                "decision": decision,
+                "evidence": "来自上月月省的下月决策",
+                "reversibility": "",
+                "limit": "",
+                "reviewDate": "",
+                "exitCondition": "",
             })
     return decisions[:3]
 
@@ -52,21 +82,33 @@ def parse_goals(markdown: str) -> list[dict]:
         summary = plain_summary(block)
         if summary:
             goals.append({"type": goal_type, "title": fields.get("目标", "") or summary.splitlines()[0], "detail": summary})
+    if goals:
+        return goals
+
+    # Older monthly reviews used one ordered "minimum action list" instead of
+    # three typed goals. Preserve its first three actions as the active plan.
+    legacy_actions = list_lines(section(markdown, "六、下月最小行动清单"))
+    for goal_type, action in zip(("cash", "growth", "system"), legacy_actions[:3]):
+        title = clean_markdown(action)
+        goals.append({"type": goal_type, "title": title, "detail": title})
     return goals
 
 
 def parse_monthly_review(markdown: str) -> dict:
     return {
-        "verdict": plain_summary(section(markdown, "一、本月经营裁决")),
+        "verdict": plain_summary(first_section(markdown, ["一、本月经营裁决", "一、本月一句话判断"])),
         "previousCommitments": table_rows(section(markdown, "二、上月承诺验收")),
-        "metrics": {"summary": plain_summary(section(markdown, "三、本月经营仪表盘"))},
+        "metrics": {"summary": plain_summary(
+            section(markdown, "三、本月经营仪表盘")
+            or section(markdown, "O｜客观事实：这个月发生了什么", 3)
+        )},
         "portfolio": table_rows(section(markdown, "四、业务组合与 ROI")),
         "strategicDecisions": parse_strategic_decisions(markdown),
         "resources": table_rows(section(markdown, "八、下月资源分配")),
         "startStopContinue": {
-            "start": list_lines(section(markdown, "Start（最多 1 条）", 3)),
-            "stop": list_lines(section(markdown, "Stop（最多 1 条）", 3)),
-            "continue": list_lines(section(markdown, "Keep（最多 1 条）", 3)),
+            "start": list_lines(first_section(markdown, ["Start（最多 1 条）", "Start"], 3)),
+            "stop": list_lines(first_section(markdown, ["Stop（最多 1 条）", "Stop"], 3)),
+            "continue": list_lines(first_section(markdown, ["Keep（最多 1 条）", "Keep"], 3)),
         },
         "goals": parse_goals(markdown),
         "notDoing": list_lines(section(markdown, "十二、下月不做清单")),

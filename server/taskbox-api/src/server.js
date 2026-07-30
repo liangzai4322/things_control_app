@@ -510,6 +510,14 @@ function buildPeriodInfo(periodType, dateKey) {
   return { periodType, periodKey: `${startDate}_to_${endDate}`, startDate, endDate };
 }
 
+function shiftPeriodAnchor(periodType, dateKey, offset) {
+  if (!offset) return dateKey;
+  if (periodType === 'week') return shiftDateKey(dateKey, offset * 7);
+  const date = new Date(`${dateKey}T12:00:00Z`);
+  date.setUTCMonth(date.getUTCMonth() + offset);
+  return date.toISOString().slice(0, 10);
+}
+
 function resolvePeriodInfo(periodType, periodKey, patch = {}) {
   const startDate = validDateKey(patch.startDate);
   const endDate = validDateKey(patch.endDate);
@@ -835,7 +843,8 @@ app.get('/v1/hq/periods/:type/current', (req, res) => {
   const periodType = validPeriodType(req.params.type);
   const reviewDate = validDateKey(req.query.date) || todayKey();
   if (!periodType) return res.status(400).json({ error: 'invalid_period_type' });
-  return res.json(buildPeriodSnapshot(periodType, reviewDate));
+  const offset = Math.max(-24, Math.min(0, Number(req.query.offset) || 0));
+  return res.json(buildPeriodSnapshot(periodType, shiftPeriodAnchor(periodType, reviewDate, offset)));
 });
 
 app.get('/v1/hq/periods/:type/:key', (req, res) => {
