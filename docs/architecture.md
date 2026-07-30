@@ -1,6 +1,6 @@
 # TaskBox 架构
 
-最后核对：2026-07-27。
+最后核对：2026-07-30。
 
 ## 系统边界
 
@@ -70,6 +70,25 @@ GitHub Pages (dist)
 ## API
 
 基地址：`/taskbox-api/v1`。除 CORS 预检外，业务请求均需要 Bearer Token。
+
+## 人生参谋部
+
+人生参谋部是 TaskBox 上层的决策与项目健康视图，复用同一套 PWA、认证、SQLite API 和记录级同步，不另建任务数据库。
+
+- `#hq`：今日驾驶舱、项目中心、待决策队列和系统接入口。
+- TaskBox：行动执行层，管理任务、场景、进度和完成证据。
+- 日省：复盘层，读取 `/daily-snapshot`，并把次日 `1 个主动作 + 2 个维护动作`回写到 TaskBox。
+- `hq_daily_briefs`：按日期保存行动驾驶舱、外部结果、停止做、继续做和昨日闭环。
+- `hq_decisions`：保存必须明确继续、排期、拆小或停止的事项。
+
+关键接口：
+
+- `GET /v1/hq/today?date=YYYY-MM-DD`
+- `GET/POST /v1/hq/daily-briefs/:date`
+- `GET/POST/PATCH/DELETE /v1/hq/decisions`
+- `GET /v1/daily-snapshot?date=YYYY-MM-DD`
+
+任务的 `pinLevel` 只决定显示顺序；`commitmentRole`、`commitmentDate`和`commitmentSource`记录日省/参谋部承诺语义，二者不混为同一字段。扩展字段继续保存在任务 `raw_json` 中，保持旧客户端兼容。
 
 - 快照：`GET /taskbox`、`GET /points`。
 - 盒子：`POST /boxes`、`PATCH /boxes/:id`、`DELETE /boxes/:id`。

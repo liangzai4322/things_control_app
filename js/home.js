@@ -461,6 +461,7 @@ export function renderHome(app) {
             <p class="hero-subtitle">把任务拆进盒子，也把行动放回具体的一天。</p>
           </div>
           <div class="row gap8 hero-tools">
+            <button class="icon-btn icon-btn-ghost hq-entry-tool" id="hqEntry" aria-label="进入人生参谋部" title="人生参谋部">参</button>
             ${renderCoreBoxNav()}
             <button class="icon-btn icon-btn-ghost home-ai-tool" id="homeAiBtn" aria-label="AI识别任务" title="AI识别任务">✦</button>
             <button class="icon-btn icon-btn-ghost" id="homePullBtn" aria-label="拉取盒子数据">↻</button>
@@ -663,6 +664,7 @@ export function renderHome(app) {
   });
 
   app.querySelector('#smallWorldEntry').addEventListener('click', () => enterSmallWorld(app));
+  app.querySelector('#hqEntry').addEventListener('click', () => navigate('#hq'));
   app.querySelector('#pointsEntry').addEventListener('click', () => navigate('#points'));
   app.querySelector('#homeAiBtn').addEventListener('click', openAIExtractSheetLazy);
   app.querySelector('#homePullBtn').addEventListener('click', async () => {

@@ -301,8 +301,191 @@ function rowToUsageLog(row) {
   };
 }
 
+function rowToDailyBrief(row) {
+  if (!row) return null;
+  return {
+    ...parseJson(row.raw_json, {}),
+    reviewDate: row.review_date,
+    primaryTaskId: row.primary_task_id,
+    maintenanceTaskIds: parseJson(row.maintenance_task_ids_json, []),
+    stopDoing: parseJson(row.stop_doing_json, []),
+    continueDoing: parseJson(row.continue_doing_json, []),
+    outcomes: parseJson(row.outcomes_json, {}),
+    yesterdayClosure: parseJson(row.yesterday_closure_json, {}),
+    notes: row.notes || '',
+    source: row.source || 'hq',
+    updatedAt: row.updated_at,
+  };
+}
+
+function rowToDecision(row) {
+  if (!row) return null;
+  return {
+    ...parseJson(row.raw_json, {}),
+    id: row.id,
+    title: row.title,
+    context: row.context || '',
+    status: row.status || 'open',
+    urgency: row.urgency || 'normal',
+    resolution: row.resolution || '',
+    mainlineId: row.mainline_id,
+    taskId: row.task_id,
+    dueDate: row.due_date,
+    createdAt: row.created_at,
+    resolvedAt: row.resolved_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function mergeRaw(existingRaw, patch) {
   return { ...parseJson(existingRaw, {}), ...patch };
+}
+
+function validDateKey(value) {
+  const date = String(value || '').trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : null;
+}
+
+function todayKey() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Singapore' }).format(new Date());
+}
+
+function upsertDailyBrief(reviewDate, patch = {}) {
+  const existing = db.prepare('SELECT * FROM hq_daily_briefs WHERE review_date=?').get(reviewDate);
+  const current = rowToDailyBrief(existing) || {};
+  const next = {
+    ...current,
+    ...patch,
+    reviewDate,
+    primaryTaskId: patch.primaryTaskId ?? current.primaryTaskId ?? null,
+    maintenanceTaskIds: Array.isArray(patch.maintenanceTaskIds)
+      ? [...new Set(patch.maintenanceTaskIds.filter(Boolean))].slice(0, 2)
+      : (current.maintenanceTaskIds || []),
+    stopDoing: Array.isArray(patch.stopDoing) ? patch.stopDoing.filter(Boolean) : (current.stopDoing || []),
+    continueDoing: Array.isArray(patch.continueDoing) ? patch.continueDoing.filter(Boolean) : (current.continueDoing || []),
+    outcomes: patch.outcomes && typeof patch.outcomes === 'object' ? patch.outcomes : (current.outcomes || {}),
+    yesterdayClosure: patch.yesterdayClosure && typeof patch.yesterdayClosure === 'object'
+      ? patch.yesterdayClosure
+      : (current.yesterdayClosure || {}),
+    notes: String(patch.notes ?? current.notes ?? ''),
+    source: String(patch.source || current.source || 'hq'),
+    updatedAt: now(),
+  };
+  db.prepare(`
+    INSERT INTO hq_daily_briefs (
+      review_date, primary_task_id, maintenance_task_ids_json, stop_doing_json,
+      continue_doing_json, outcomes_json, yesterday_closure_json, notes, source, raw_json, updated_at
+    )
+    VALUES (
+      @review_date, @primary_task_id, @maintenance_task_ids_json, @stop_doing_json,
+      @continue_doing_json, @outcomes_json, @yesterday_closure_json, @notes, @source, @raw_json, @updated_at
+    )
+    ON CONFLICT(review_date) DO UPDATE SET
+      primary_task_id=excluded.primary_task_id,
+      maintenance_task_ids_json=excluded.maintenance_task_ids_json,
+      stop_doing_json=excluded.stop_doing_json,
+      continue_doing_json=excluded.continue_doing_json,
+      outcomes_json=excluded.outcomes_json,
+      yesterday_closure_json=excluded.yesterday_closure_json,
+      notes=excluded.notes,
+      source=excluded.source,
+      raw_json=excluded.raw_json,
+      updated_at=excluded.updated_at
+  `).run({
+    review_date: reviewDate,
+    primary_task_id: next.primaryTaskId,
+    maintenance_task_ids_json: json(next.maintenanceTaskIds),
+    stop_doing_json: json(next.stopDoing),
+    continue_doing_json: json(next.continueDoing),
+    outcomes_json: json(next.outcomes),
+    yesterday_closure_json: json(next.yesterdayClosure),
+    notes: next.notes,
+    source: next.source,
+    raw_json: json(next),
+    updated_at: next.updatedAt,
+  });
+  return rowToDailyBrief(db.prepare('SELECT * FROM hq_daily_briefs WHERE review_date=?').get(reviewDate));
+}
+
+function selectCommitmentTasks(tasks, brief, reviewDate) {
+  const open = tasks.filter((task) => !task.deleted && !task.isCompleted && !task.isRecurringTemplate);
+  const byId = new Map(open.map((task) => [task.id, task]));
+  const primary = byId.get(brief?.primaryTaskId)
+    || open.find((task) => task.commitmentDate === reviewDate && task.commitmentRole === 'primary')
+    || open.find((task) => Number(task.pinLevel) === 1)
+    || null;
+  const maintenance = (brief?.maintenanceTaskIds || []).map((id) => byId.get(id)).filter(Boolean);
+  [
+    ...open.filter((task) => task.commitmentDate === reviewDate && task.commitmentRole === 'maintenance'),
+    ...open.filter((task) => [2, 3].includes(Number(task.pinLevel))),
+  ].forEach((task) => {
+    if (task.id !== primary?.id && !maintenance.some((item) => item.id === task.id) && maintenance.length < 2) {
+      maintenance.push(task);
+    }
+  });
+  return { primary, maintenance };
+}
+
+function buildProjectHealth(mainlines, tasks) {
+  const reference = Date.now();
+  return mainlines
+    .filter((mainline) => ['active', 'maintenance'].includes(mainline.status))
+    .map((mainline) => {
+      const projectTasks = tasks.filter((task) => task.mainlineId === mainline.id && !task.deleted && !task.isRecurringTemplate);
+      const openTasks = projectTasks.filter((task) => !task.isCompleted);
+      const lastProgressAt = [mainline.updatedAt, ...projectTasks.map((task) => task.updatedAt || task.completedAt)]
+        .filter(Boolean)
+        .sort((left, right) => new Date(right) - new Date(left))[0] || mainline.createdAt;
+      const staleDays = lastProgressAt
+        ? Math.max(0, Math.floor((reference - new Date(lastProgressAt).getTime()) / 86400000))
+        : 0;
+      const nextAction = openTasks
+        .sort((left, right) => new Date(left.dueDate || left.scheduledAt || left.createdAt) - new Date(right.dueDate || right.scheduledAt || right.createdAt))[0] || null;
+      const health = mainline.blocker ? 'blocked' : (!nextAction ? 'needs_action' : (staleDays >= 7 ? 'stale' : 'healthy'));
+      return {
+        ...mainline,
+        nextAction,
+        openTaskCount: openTasks.length,
+        completedTaskCount: projectTasks.length - openTasks.length,
+        lastProgressAt,
+        staleDays,
+        health,
+      };
+    });
+}
+
+function buildHqSnapshot(reviewDate) {
+  const brief = rowToDailyBrief(db.prepare('SELECT * FROM hq_daily_briefs WHERE review_date=?').get(reviewDate));
+  const tasks = db.prepare('SELECT * FROM tasks ORDER BY sort_order, created_at').all().map(rowToTask);
+  const mainlines = db.prepare('SELECT * FROM mainlines ORDER BY sort_order, created_at').all().map(rowToMainline);
+  const decisions = db.prepare("SELECT * FROM hq_decisions WHERE status='open' ORDER BY CASE urgency WHEN 'high' THEN 0 ELSE 1 END, updated_at DESC")
+    .all()
+    .map(rowToDecision);
+  const commitments = selectCommitmentTasks(tasks, brief, reviewDate);
+  const aiTasks = tasks.filter((task) => !task.deleted && !task.isCompleted && task.executionMode === 'ai');
+  return {
+    reviewDate,
+    brief: brief || {
+      reviewDate,
+      primaryTaskId: commitments.primary?.id || null,
+      maintenanceTaskIds: commitments.maintenance.map((task) => task.id),
+      stopDoing: [],
+      continueDoing: [],
+      outcomes: {},
+      yesterdayClosure: {},
+      notes: '',
+      source: 'derived',
+    },
+    commitments,
+    projects: buildProjectHealth(mainlines, tasks),
+    decisions,
+    ai: {
+      open: aiTasks.length,
+      needsInput: aiTasks.filter((task) => task.executionState === 'needs_input').length,
+      needsReview: aiTasks.filter((task) => task.executionState === 'needs_review').length,
+    },
+    generatedAt: now(),
+  };
 }
 
 app.get('/health', (req, res) => {
@@ -357,6 +540,174 @@ app.patch('/v1/daily-quote', (req, res) => {
     dailyQuoteHistory: next.history,
   });
   res.json(next);
+});
+
+app.get('/v1/hq/today', (req, res) => {
+  const reviewDate = validDateKey(req.query.date) || todayKey();
+  res.json(buildHqSnapshot(reviewDate));
+});
+
+app.get('/v1/hq/daily-briefs/:date', (req, res) => {
+  const reviewDate = validDateKey(req.params.date);
+  if (!reviewDate) return res.status(400).json({ error: 'invalid_date' });
+  const brief = rowToDailyBrief(db.prepare('SELECT * FROM hq_daily_briefs WHERE review_date=?').get(reviewDate));
+  return res.json(brief || {
+    reviewDate,
+    primaryTaskId: null,
+    maintenanceTaskIds: [],
+    stopDoing: [],
+    continueDoing: [],
+    outcomes: {},
+    yesterdayClosure: {},
+    notes: '',
+    source: 'empty',
+  });
+});
+
+app.post('/v1/hq/daily-briefs/:date', (req, res) => {
+  const reviewDate = validDateKey(req.params.date);
+  if (!reviewDate) return res.status(400).json({ error: 'invalid_date' });
+  return res.json(upsertDailyBrief(reviewDate, req.body || {}));
+});
+
+app.get('/v1/hq/decisions', (req, res) => {
+  const status = String(req.query.status || '').trim();
+  const rows = status
+    ? db.prepare('SELECT * FROM hq_decisions WHERE status=? ORDER BY updated_at DESC').all(status)
+    : db.prepare('SELECT * FROM hq_decisions ORDER BY updated_at DESC').all();
+  res.json(rows.map(rowToDecision));
+});
+
+app.post('/v1/hq/decisions', (req, res) => {
+  const createdAt = req.body.createdAt || now();
+  const decision = {
+    ...req.body,
+    id: req.body.id || uid(),
+    title: String(req.body.title || '').trim(),
+    context: String(req.body.context || ''),
+    status: req.body.status === 'resolved' ? 'resolved' : 'open',
+    urgency: req.body.urgency === 'high' ? 'high' : 'normal',
+    resolution: String(req.body.resolution || ''),
+    mainlineId: req.body.mainlineId || null,
+    taskId: req.body.taskId || null,
+    dueDate: req.body.dueDate || null,
+    createdAt,
+    resolvedAt: req.body.status === 'resolved' ? (req.body.resolvedAt || now()) : null,
+    updatedAt: now(),
+  };
+  if (!decision.title) return res.status(400).json({ error: 'title_required' });
+  db.prepare(`
+    INSERT INTO hq_decisions (
+      id, title, context, status, urgency, resolution, mainline_id, task_id,
+      due_date, created_at, resolved_at, updated_at, raw_json
+    )
+    VALUES (
+      @id, @title, @context, @status, @urgency, @resolution, @mainline_id, @task_id,
+      @due_date, @created_at, @resolved_at, @updated_at, @raw_json
+    )
+    ON CONFLICT(id) DO UPDATE SET
+      title=excluded.title,
+      context=excluded.context,
+      status=excluded.status,
+      urgency=excluded.urgency,
+      resolution=excluded.resolution,
+      mainline_id=excluded.mainline_id,
+      task_id=excluded.task_id,
+      due_date=excluded.due_date,
+      resolved_at=excluded.resolved_at,
+      updated_at=excluded.updated_at,
+      raw_json=excluded.raw_json
+  `).run({
+    id: decision.id,
+    title: decision.title,
+    context: decision.context,
+    status: decision.status,
+    urgency: decision.urgency,
+    resolution: decision.resolution,
+    mainline_id: decision.mainlineId,
+    task_id: decision.taskId,
+    due_date: decision.dueDate,
+    created_at: decision.createdAt,
+    resolved_at: decision.resolvedAt,
+    updated_at: decision.updatedAt,
+    raw_json: json(decision),
+  });
+  return res.status(201).json(rowToDecision(db.prepare('SELECT * FROM hq_decisions WHERE id=?').get(decision.id)));
+});
+
+app.patch('/v1/hq/decisions/:id', (req, res) => {
+  const existing = db.prepare('SELECT * FROM hq_decisions WHERE id=?').get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'not_found' });
+  const current = rowToDecision(existing);
+  const nextStatus = req.body.status === 'resolved' ? 'resolved' : (req.body.status === 'open' ? 'open' : current.status);
+  const next = {
+    ...current,
+    ...req.body,
+    id: current.id,
+    title: String(req.body.title ?? current.title).trim(),
+    context: String(req.body.context ?? current.context ?? ''),
+    status: nextStatus,
+    urgency: (req.body.urgency ?? current.urgency) === 'high' ? 'high' : 'normal',
+    resolution: String(req.body.resolution ?? current.resolution ?? ''),
+    mainlineId: req.body.mainlineId ?? current.mainlineId ?? null,
+    taskId: req.body.taskId ?? current.taskId ?? null,
+    dueDate: req.body.dueDate ?? current.dueDate ?? null,
+    resolvedAt: nextStatus === 'resolved' ? (req.body.resolvedAt || current.resolvedAt || now()) : null,
+    updatedAt: now(),
+  };
+  if (!next.title) return res.status(400).json({ error: 'title_required' });
+  db.prepare(`
+    UPDATE hq_decisions SET
+      title=@title, context=@context, status=@status, urgency=@urgency, resolution=@resolution,
+      mainline_id=@mainline_id, task_id=@task_id, due_date=@due_date, resolved_at=@resolved_at,
+      updated_at=@updated_at, raw_json=@raw_json
+    WHERE id=@id
+  `).run({
+    id: next.id,
+    title: next.title,
+    context: next.context,
+    status: next.status,
+    urgency: next.urgency,
+    resolution: next.resolution,
+    mainline_id: next.mainlineId,
+    task_id: next.taskId,
+    due_date: next.dueDate,
+    resolved_at: next.resolvedAt,
+    updated_at: next.updatedAt,
+    raw_json: json(next),
+  });
+  return res.json(rowToDecision(db.prepare('SELECT * FROM hq_decisions WHERE id=?').get(next.id)));
+});
+
+app.delete('/v1/hq/decisions/:id', (req, res) => {
+  db.prepare('DELETE FROM hq_decisions WHERE id=?').run(req.params.id);
+  res.status(204).end();
+});
+
+app.get('/v1/daily-snapshot', (req, res) => {
+  const reviewDate = validDateKey(req.query.date);
+  if (!reviewDate) return res.status(400).json({ error: 'invalid_date' });
+  const tasks = db.prepare('SELECT * FROM tasks').all().map(rowToTask);
+  const touchesDate = (task) => [
+    task.scheduledAt,
+    task.dueDate,
+    task.completedAt,
+    task.createdAt,
+    task.updatedAt,
+    ...(task.progressLogs || []).map((log) => log.at || log.updatedAt),
+  ].some((value) => String(value || '').slice(0, 10) === reviewDate);
+  const selectedTasks = tasks.filter((task) => !task.deleted && !task.isRecurringTemplate && touchesDate(task));
+  const mainlines = db.prepare('SELECT * FROM mainlines ORDER BY sort_order, created_at').all().map(rowToMainline);
+  const brief = rowToDailyBrief(db.prepare('SELECT * FROM hq_daily_briefs WHERE review_date=?').get(reviewDate));
+  return res.json({
+    reviewDate,
+    brief,
+    tasks: selectedTasks,
+    completedTasks: selectedTasks.filter((task) => task.isCompleted && String(task.completedAt || '').slice(0, 10) === reviewDate),
+    progressTasks: selectedTasks.filter((task) => (task.progressLogs || []).some((log) => String(log.at || log.updatedAt || '').slice(0, 10) === reviewDate)),
+    mainlines,
+    generatedAt: now(),
+  });
 });
 
 app.post('/v1/boxes', (req, res) => {

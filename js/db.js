@@ -1661,6 +1661,8 @@ async function apiRequest(path, options = {}) {
   return response.json();
 }
 
+export { apiRequest as requestTaskboxApi };
+
 function scheduleApiRequest(path, options = {}) {
   const config = getApiConfig();
   if (!config.enabled) return false;

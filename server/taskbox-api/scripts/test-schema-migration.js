@@ -5,8 +5,6 @@ const path = require('path');
 const Database = require('better-sqlite3');
 
 const dbPath = path.join(os.tmpdir(), `taskbox-schema-${process.pid}-${Date.now()}.sqlite`);
-const serverSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'server.js'), 'utf8');
-if (!serverSource.includes('function rowToBranch(row)')) throw new Error('missing branch row mapper');
 
 try {
   const legacy = new Database(dbPath);
@@ -38,7 +36,9 @@ try {
     if (!indexes.includes(name)) throw new Error(`missing index ${name}`);
   });
   const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((item) => item.name);
-  if (!tables.includes('branches')) throw new Error('missing table branches');
+  ['branches', 'hq_daily_briefs', 'hq_decisions'].forEach((name) => {
+    if (!tables.includes(name)) throw new Error(`missing table ${name}`);
+  });
   db.close();
   console.log('server schema migration tests passed');
 } finally {

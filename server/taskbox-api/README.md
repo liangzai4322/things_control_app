@@ -40,6 +40,10 @@ npm run import-json -- /opt/taskbox-api/seed
 - `GET/PATCH /v1/daily-quote`: daily quote archive.
 - `GET /v1/points` plus transaction and reward write routes.
 - `/v1/smallworld/:realm`: pavilion/tower reads and item-level writes.
+- `GET /v1/hq/today`: aggregated Life HQ cockpit for one date.
+- `GET/POST /v1/hq/daily-briefs/:date`: daily command brief and review result upsert.
+- `/v1/hq/decisions`: decision queue record-level CRUD.
+- `GET /v1/daily-snapshot`: evidence snapshot consumed by 日省.
 
 SQLite schema lives in `schema.sql`. `raw_json` is a compatibility fallback; query-critical fields use dedicated columns and indexes.
 

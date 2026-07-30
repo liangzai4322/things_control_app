@@ -93,10 +93,21 @@ function route(options = {}) {
   applyTheme();
   const parts = (location.hash || '#home').replace('#', '').split('/').filter(Boolean);
   const [path, param, subParam] = parts;
+  document.body.classList.toggle('hq-mode', path === 'hq');
 
   if (path === 'home') {
     renderHome(app);
     maybeResetViewPosition(options);
+    return;
+  }
+
+  if (path === 'hq') {
+    const load = ROUTE_MODULE_CACHE.hq || import('./hq-page.js');
+    ROUTE_MODULE_CACHE.hq = load;
+    load.then(({ renderHqPage }) => {
+      renderHqPage(app, { refreshRemote: true });
+      maybeResetViewPosition(options);
+    });
     return;
   }
 

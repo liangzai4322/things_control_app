@@ -226,3 +226,40 @@ CREATE TABLE IF NOT EXISTS sw_items (
 );
 
 CREATE INDEX IF NOT EXISTS idx_sw_items_floor ON sw_items(realm, floor_id);
+
+CREATE TABLE IF NOT EXISTS hq_daily_briefs (
+  review_date TEXT PRIMARY KEY,
+  primary_task_id TEXT,
+  maintenance_task_ids_json TEXT NOT NULL DEFAULT '[]',
+  stop_doing_json TEXT NOT NULL DEFAULT '[]',
+  continue_doing_json TEXT NOT NULL DEFAULT '[]',
+  outcomes_json TEXT NOT NULL DEFAULT '{}',
+  yesterday_closure_json TEXT NOT NULL DEFAULT '{}',
+  notes TEXT,
+  source TEXT NOT NULL DEFAULT 'hq',
+  raw_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (primary_task_id) REFERENCES tasks(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_hq_daily_briefs_updated_at ON hq_daily_briefs(updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS hq_decisions (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  context TEXT,
+  status TEXT NOT NULL DEFAULT 'open',
+  urgency TEXT NOT NULL DEFAULT 'normal',
+  resolution TEXT,
+  mainline_id TEXT,
+  task_id TEXT,
+  due_date TEXT,
+  created_at TEXT NOT NULL,
+  resolved_at TEXT,
+  updated_at TEXT NOT NULL,
+  raw_json TEXT NOT NULL,
+  FOREIGN KEY (mainline_id) REFERENCES mainlines(id) ON DELETE SET NULL,
+  FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_hq_decisions_status_updated ON hq_decisions(status, updated_at DESC);

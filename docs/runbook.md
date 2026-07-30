@@ -1,6 +1,6 @@
 # TaskBox 运维手册
 
-最后核对：2026-07-16。
+最后核对：2026-07-30。
 
 ## 本地验证
 
@@ -47,6 +47,13 @@ API 目录默认 `/opt/taskbox-api`，数据库默认 `/opt/taskbox-api/data/tas
 5. 验证认证健康检查为 `200`、未认证访问为 `401`、生产 Origin 的 OPTIONS 为 `204`。
 6. 用测试记录完成新增、修改、删除，再清理测试记录。
 
+人生参谋部发布后再验证：
+
+1. `GET /v1/hq/today?date=YYYY-MM-DD` 返回 `brief / commitments / projects / decisions / ai`。
+2. 新建一条临时决策、标记已决定并删除测试记录。
+3. `GET /v1/daily-snapshot?date=YYYY-MM-DD` 只返回目标日期相关记录。
+4. GitHub Pages 的 `#hq` 可打开，编辑今日表单可见，未配置 Token 时仍能显示本地快照。
+
 ## 故障检查
 
 - 页面一直加载：先检查 Pages 静态资源与 Service Worker 缓存版本，再检查 `/health` 和浏览器 Network。
@@ -54,6 +61,8 @@ API 目录默认 `/opt/taskbox-api`，数据库默认 `/opt/taskbox-api/data/tas
 - 拉取失败但本地仍有数据：保留 localStorage，不要清站点数据；恢复 API 后主动拉取或触发下一次写入。
 - 修改后出现重复：检查客户端记录 ID、服务端 `POST` 幂等逻辑和周期任务 `recurrenceKey` 唯一性。
 - 页面显示旧内容：确认新构建已发布、Service Worker 缓存名已更新，并做一次强制刷新。
+- 参谋部只显示本地快照：检查浏览器 API Token、`/v1/hq/today` 状态码和服务器是否已执行最新 `schema.sql`。
+- 日省没有派发到盒子：检查本机 `TASKBOX_API_TOKEN` 环境变量，并单独运行 `sync_daily_review_to_hq.py` 查看不含凭据的 JSON 结果。
 
 ## 回滚
 
