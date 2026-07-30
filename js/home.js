@@ -458,7 +458,8 @@ export function renderHome(app) {
           <div class="hero-copy">
             <p class="eyebrow">${escapeHtml(formatToday(now))}</p>
             <h1 class="hero-title">${escapeHtml(getGreeting(now))}</h1>
-            <p class="hero-subtitle">把任务拆进盒子，也把行动放回具体的一天。</p>
+            <span class="home-role-badge">BOX EXECUTION · 副面板</span>
+            <p class="hero-subtitle">承接参谋部派发，把行动放回具体的一天。</p>
           </div>
           <div class="row gap8 hero-tools">
             <button class="icon-btn icon-btn-ghost hq-entry-tool" id="hqEntry" aria-label="进入人生参谋部" title="人生参谋部">参</button>
@@ -645,7 +646,7 @@ export function renderHome(app) {
   app.querySelectorAll('[data-agenda-open]').forEach((button) => {
     button.addEventListener('click', () => {
       const task = taskMap.get(button.dataset.agendaOpen);
-      if (task) navigate(`#box/${task.boxId}`);
+      if (task) navigate(`#box/${encodeURIComponent(task.boxId)}/${encodeURIComponent(task.id)}`);
     });
   });
   app.querySelectorAll('[data-agenda-complete]').forEach((button) => {

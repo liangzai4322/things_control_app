@@ -78,6 +78,7 @@ GitHub Pages (dist)
 - `#hq`：今日驾驶舱、项目中心、待决策队列和系统接入口。
 - `#hq/week`：本周作战室，展示唯一实验、主瓶颈、记分牌和下周资源分配。
 - `#hq/month`：本月参谋会，展示经营裁决、业务组合、战略决策、三层目标和下月资源分配。
+- 无 Hash 路由默认落到`#hq`；全局`workspace-switch`只负责主副面板导航，不复制业务数据。
 - TaskBox：行动执行层，管理任务、场景、进度和完成证据。
 - 日省：复盘层，开始前读取 `/daily-snapshot`、HQ 快照和 7 天承诺状态生成事实包，结束后把次日 `1 个主动作 + 2 个维护动作`回写到 TaskBox。
 - `hq_daily_briefs`：按日期保存行动驾驶舱、外部结果、停止做、继续做和昨日闭环。
@@ -88,7 +89,7 @@ GitHub Pages (dist)
 
 - `GET /v1/hq/today?date=YYYY-MM-DD`
 - `GET /v1/hq/review-status?date=YYYY-MM-DD&days=7`
-- `GET /v1/hq/periods/:type/current?date=YYYY-MM-DD`
+- `GET /v1/hq/periods/:type/current?date=YYYY-MM-DD&offset=-1`
 - `GET/POST/DELETE /v1/hq/periods/:type/:key`
 - `GET /v1/hq/periods?type=week|month&limit=N`
 - `GET/POST /v1/hq/daily-briefs/:date`
@@ -100,6 +101,8 @@ GitHub Pages (dist)
 `hq_daily_briefs.raw_json`中的`reviewCompletedAt`用于区分“上一份日省生成的今日计划”和“今天已经完成的日省”；`reviewArtifacts`保存私有飞书入口、认知卡片入口和本地 Markdown 路径，不复制日省全文。
 
 周期数据遵循“月省定资源边界 → 周省定唯一实验 → 日省定当天动作”的下行约束；执行证据从盒子向日省、周省、月省逐层聚合。周省和月省不批量创建普通任务，避免周期记分牌污染行动盒子。
+
+参谋部进入盒子使用`#box/:boxId/:taskId`深链。路由把`taskId`交给盒子详情页，详情页展开可能折叠的任务分组、滚动到目标任务并显示指挥上下文。周实验从周期缓存读取，并通过周期 API 异步刷新；所属项目和任务角色继续来自本地记录级任务字段，因此离线时仍有基本上下文。
 
 - 快照：`GET /taskbox`、`GET /points`。
 - 盒子：`POST /boxes`、`PATCH /boxes/:id`、`DELETE /boxes/:id`。

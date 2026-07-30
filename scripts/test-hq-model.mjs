@@ -4,6 +4,7 @@ import {
   normalizeHqBrief,
   normalizePeriodSnapshot,
   normalizeReviewStatus,
+  resolveTaskCommandContext,
   selectHqCommitments,
 } from '../js/hq-model.js';
 
@@ -67,5 +68,17 @@ assert.equal(period.review.status, 'synced');
 assert.equal(period.review.experiment.action, '连续使用周期面板 7 天');
 assert.equal(period.derived.dailyReviewCount, 4);
 assert.equal(period.derived.commitments.rate, 75);
+
+const commandContext = resolveTaskCommandContext({
+  id: 'main',
+  mainlineId: 'project',
+  commitmentRole: 'primary',
+  commitmentDate: reviewDate,
+  commitmentSource: 'hq',
+}, [{ id: 'project', name: '人生参谋部' }], period);
+assert.equal(commandContext.source, 'hq');
+assert.equal(commandContext.roleLabel, '今日主动作');
+assert.equal(commandContext.project.name, '人生参谋部');
+assert.equal(commandContext.experiment.action, '连续使用周期面板 7 天');
 
 console.log('hq model tests passed');

@@ -1,8 +1,8 @@
-import { getBoxes, getBranches, getDeferredTasksByBox, getDeletedTasksByBox, getMainlines, getSettings, getTaskById, getTasksByBox, getUsageLogs, recordPoolUsage, updateTask, deleteTask, deleteRecurringSeries, reorderTasks, updateBox, addRecurringTask, addTask, playSound, restoreTask, pullDataFromCloud } from './db.js';
+import { getBoxes, getBranches, getDeferredTasksByBox, getDeletedTasksByBox, getMainlines, getSettings, getTaskById, getTasksByBox, getUsageLogs, recordPoolUsage, requestTaskboxApi, updateTask, deleteTask, deleteRecurringSeries, reorderTasks, updateBox, addRecurringTask, addTask, playSound, restoreTask, pullDataFromCloud } from './db.js';
 import { navigate, openSheet, showToast } from './app.js';
 import { openLuckyWheel } from './lucky-wheel.js';
 import { getPointsBalance, getTaskPointValue, recordPointsTransaction, reconcileCompletedTaskPoints, syncTaskCompletionPoints } from './points-store.js';
-import { formatDueLabel as formatDueDateLabel, formatScheduledLabel, fromDateTimeLocalValue, getBoxDailySentence, getDeadlinePresetValue, getSchedulePresetValue, isTaskNeedsReschedule, isTaskOverdue, toDateTimeLocalValue } from './task-utils.js';
+import { formatDueLabel as formatDueDateLabel, formatScheduledLabel, fromDateTimeLocalValue, getBoxDailySentence, getDeadlinePresetValue, getSchedulePresetValue, isTaskNeedsReschedule, isTaskOverdue, localDateKey, toDateTimeLocalValue } from './task-utils.js';
 import { getRecurrenceLabel } from './recurrence.js';
 import { bindRecurrenceEditor, renderRecurrenceEditor } from './recurrence-ui.js';
 import { openBoxTypeChangeSheet } from './box-type-sheet.js';
@@ -10,6 +10,7 @@ import { isIdeaBox, renderCoreBoxNav } from './core-box-nav.js';
 import { bindMainlineTaskFields, renderMainlineTaskFields } from './mainline-fields.js';
 import { bindDeviceContextField, formatVisibleAfter, getDefaultDeferredUntil, getDeviceContextLabel, isTaskContextMismatch, isTaskReleased, renderDeviceContextField } from './task-visibility.js';
 import { bindExecutionModeField, getExecutionModeLabel, renderExecutionModeField } from './task-execution.js';
+import { resolveTaskCommandContext } from './hq-model.js';
 import {
   BOX_TYPE_COLLECTION,
   BOX_TYPE_POOL,
@@ -67,6 +68,65 @@ function escapeHtml(value = '') {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;');
+}
+
+function readCachedWeekSnapshot() {
+  try {
+    return JSON.parse(localStorage.getItem('taskbox_hq_period_cache_v1') || '{}').week || {};
+  } catch {
+    return {};
+  }
+}
+
+function compactContextText(value = '', fallback = '最近周省同步后显示') {
+  const text = String(value || '').trim();
+  if (!text) return fallback;
+  return text.length > 96 ? `${text.slice(0, 96)}…` : text;
+}
+
+function renderTaskCommandContext(task, mainlines, periodSnapshot) {
+  const context = resolveTaskCommandContext(task, mainlines, periodSnapshot);
+  return `
+    <section class="task-command-context" data-command-context>
+      <div class="task-command-context-head">
+        <div><span>COMMAND LINK</span><strong>${context.source === 'hq' ? '从参谋部进入执行' : '盒子执行上下文'}</strong></div>
+        <button type="button" id="returnToHq">返回参谋部 ↗</button>
+      </div>
+      <div class="task-command-chain">
+        <article class="week"><span>本周实验</span><strong data-context-experiment>${escapeHtml(compactContextText(context.experiment.action))}</strong></article>
+        <i>→</i>
+        <article class="project"><span>所属项目</span><strong>${escapeHtml(context.project?.name || '尚未归入项目')}</strong></article>
+        <i>→</i>
+        <article class="action"><span>当前角色</span><strong>${escapeHtml(context.roleLabel)}</strong></article>
+      </div>
+      <div class="task-command-current"><span>正在执行</span><strong>${escapeHtml(task.content)}</strong>${context.project ? `<button type="button" id="openContextProject" data-mainline="${escapeHtml(context.project.id)}">查看项目</button>` : ''}</div>
+    </section>
+  `;
+}
+
+async function hydrateTaskCommandContext(app, task, mainlines) {
+  try {
+    const snapshot = await requestTaskboxApi(`/hq/periods/week/current?date=${encodeURIComponent(localDateKey(new Date()))}&offset=-1`);
+    if (!snapshot) return;
+    const context = resolveTaskCommandContext(task, mainlines, snapshot);
+    const target = app.querySelector('[data-context-experiment]');
+    if (target) target.textContent = compactContextText(context.experiment.action);
+  } catch {
+    // Cached command context remains visible while offline.
+  }
+}
+
+function focusTaskInBox(app, taskId) {
+  const item = [...app.querySelectorAll('.task-item')].find((element) => element.dataset.id === taskId);
+  if (!item) return;
+  let parent = item.parentElement;
+  while (parent && parent !== app) {
+    parent.classList?.remove('collapsed');
+    parent = parent.parentElement;
+  }
+  item.classList.add('command-focus');
+  requestAnimationFrame(() => item.scrollIntoView({ behavior: 'smooth', block: 'center' }));
+  setTimeout(() => item.classList.remove('command-focus'), 3200);
 }
 
 function getPriorityColor(priority) {
@@ -581,7 +641,7 @@ function renderTypeSummary(boxType, activeItems, secondaryItems, usageLogs) {
   ];
 }
 
-export function renderBoxDetail(app, boxId) {
+export function renderBoxDetail(app, boxId, { focusTaskId = null, commandOrigin = null } = {}) {
   closeTaskContextMenu();
   const boxes = getBoxes();
   const box = boxes.find((item) => item.id === boxId);
@@ -591,6 +651,15 @@ export function renderBoxDetail(app, boxId) {
   const deferredTasks = getDeferredTasksByBox(boxId);
   const deletedTasks = getDeletedTasksByBox(boxId);
   const taskMap = new Map([...tasks, ...deferredTasks].map((task) => [task.id, task]));
+  const mainlines = getMainlines();
+  const focusedTask = focusTaskId ? taskMap.get(focusTaskId) || null : null;
+  const commandTask = focusedTask && String(commandOrigin || '').startsWith('hq-')
+    ? {
+        ...focusedTask,
+        commitmentSource: 'hq',
+        commitmentRole: commandOrigin === 'hq-maintenance' ? 'maintenance' : 'primary',
+      }
+    : focusedTask;
   const boxType = inferBoxType(box);
   const typeDefinition = getBoxTypeDefinition(boxType);
   const usageLogs = getUsageLogs({ boxId });
@@ -662,6 +731,8 @@ export function renderBoxDetail(app, boxId) {
         </div>
       </section>
 
+      ${commandTask ? renderTaskCommandContext(commandTask, mainlines, readCachedWeekSnapshot()) : ''}
+
       <section class="task-section-header">
         <div>
           <p class="eyebrow">${sectionEyebrow}</p>
@@ -711,6 +782,8 @@ export function renderBoxDetail(app, boxId) {
   `;
 
   app.querySelector('#backBtn').addEventListener('click', () => navigate('#home'));
+  app.querySelector('#returnToHq')?.addEventListener('click', () => navigate('#hq'));
+  app.querySelector('#openContextProject')?.addEventListener('click', (event) => navigate(`#mainline/${encodeURIComponent(event.currentTarget.dataset.mainline)}`));
   app.querySelector('#detailPullBtn').addEventListener('click', async () => {
     try {
       const result = await pullDataFromCloud({ force: true });
@@ -808,6 +881,10 @@ export function renderBoxDetail(app, boxId) {
   });
 
   bindItemEvents(app, box, taskMap);
+  if (commandTask) {
+    hydrateTaskCommandContext(app, commandTask, mainlines);
+    focusTaskInBox(app, focusedTask.id);
+  }
 }
 
 function taskItem(task, box) {
@@ -823,6 +900,9 @@ function taskItem(task, box) {
   const branch = task.branchId ? getBranches().find((item) => item.id === task.branchId) : null;
   const released = isTaskReleased(task);
   const deferNote = String(task.deferNote || '').trim();
+  const commitmentLabel = task.commitmentSource === 'hq'
+    ? (task.commitmentRole === 'primary' ? '参谋部 · 主动作' : '参谋部 · 维护动作')
+    : '';
 
   return `
     <article class="task-item execution-${escapeHtml(task.executionMode || 'self')} ${task.isCompleted ? 'done' : ''} ${pinLevel ? 'pinned' : ''} ${overdue ? 'overdue' : ''} ${needsReschedule ? 'needs-reschedule' : ''} ${released ? '' : 'deferred'}" data-id="${task.id}" style="${getBoxPinStyle(box)}">
@@ -844,6 +924,7 @@ function taskItem(task, box) {
             ${task.recurrence ? `<span class="task-chip recurrence-chip">↻ ${escapeHtml(getRecurrenceLabel(task.recurrence))}</span>` : ''}
             ${mainline ? `<span class="task-chip mainline-task-chip">◆ ${escapeHtml(mainline.name)}</span>` : ''}
             ${branch ? `<span class="task-chip branch-task-chip">${escapeHtml(branch.icon)} ${escapeHtml(branch.name)}</span>` : ''}
+            ${commitmentLabel ? `<span class="task-chip hq-context-chip">⌁ ${escapeHtml(commitmentLabel)}</span>` : ''}
             <span class="task-chip">${taskProgress}%</span>
             ${pointsValue > 0 ? `<span class="task-chip points-chip">+${pointsValue} 分</span>` : ''}
           </div>

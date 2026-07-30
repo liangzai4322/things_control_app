@@ -89,11 +89,22 @@ function maybeResetViewPosition(options = {}) {
   if (!options.preserveScroll) requestAnimationFrame(resetViewPosition);
 }
 
+function syncWorkspaceSwitch(path) {
+  const active = path === 'hq' ? 'hq' : 'boxes';
+  document.querySelectorAll('[data-workspace]').forEach((link) => {
+    const selected = link.dataset.workspace === active;
+    link.classList.toggle('active', selected);
+    if (selected) link.setAttribute('aria-current', 'page');
+    else link.removeAttribute('aria-current');
+  });
+}
+
 function route(options = {}) {
   applyTheme();
-  const parts = (location.hash || '#home').replace('#', '').split('/').filter(Boolean);
-  const [path, param, subParam] = parts;
+  const parts = (location.hash || '#hq').replace('#', '').split('/').filter(Boolean);
+  const [path, param, subParam, contextParam] = parts;
   document.body.classList.toggle('hq-mode', path === 'hq');
+  syncWorkspaceSwitch(path);
 
   if (path === 'home') {
     renderHome(app);
@@ -115,7 +126,7 @@ function route(options = {}) {
     const load = ROUTE_MODULE_CACHE.box || import('./box-detail.js');
     ROUTE_MODULE_CACHE.box = load;
     load.then(({ renderBoxDetail }) => {
-      renderBoxDetail(app, param);
+      renderBoxDetail(app, param, { focusTaskId: subParam || null, commandOrigin: contextParam || null });
       maybeResetViewPosition(options);
     });
     return;
@@ -184,7 +195,7 @@ function route(options = {}) {
     return;
   }
 
-  location.hash = '#home';
+  location.hash = '#hq';
 }
 
 function registerServiceWorker() {

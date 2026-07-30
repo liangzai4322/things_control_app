@@ -112,7 +112,7 @@ function renderPrimaryAction(task) {
       <div class="hq-action-progress">
         <span>${Math.max(0, Math.min(100, Number(task.progress) || 0))}%</span>
         <i><b style="width:${Math.max(0, Math.min(100, Number(task.progress) || 0))}%"></b></i>
-        <button data-open-task="${escapeHtml(task.id)}">进入行动</button>
+        <button data-open-task="${escapeHtml(task.id)}" data-command-role="primary">进入行动</button>
       </div>
     </article>
   `;
@@ -129,7 +129,7 @@ function renderMaintenance(tasks) {
         <strong>${task ? escapeHtml(task.content) : '留空，不临时塞任务'}</strong>
         <small>${task ? escapeHtml(taskMeta(task) || '维持系统正常运转') : '最多两个维护动作'}</small>
       </div>
-      ${task ? `<button data-open-task="${escapeHtml(task.id)}" aria-label="进入任务">↗</button>` : ''}
+      ${task ? `<button data-open-task="${escapeHtml(task.id)}" data-command-role="maintenance" aria-label="进入任务">↗</button>` : ''}
     </article>
   `).join('');
 }
@@ -257,6 +257,7 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
             <p>${escapeHtml(formatDateTitle(snapshot.reviewDate))} · COMMAND ${snapshot.reviewDate.replaceAll('-', '')}</p>
             <h1>人生参谋部</h1>
             <span>定方向，派行动，看结果。</span>
+            <small class="hq-role-badge">MAIN PANEL · 主面板</small>
           </div>
           <div class="hq-command-tools">
             <span class="${remote ? 'online' : ''}">${remote ? '云端已连接' : '本地快照'}</span>
@@ -539,7 +540,8 @@ function bindPageEvents(app, snapshot) {
   app.querySelectorAll('[data-open-task]').forEach((button) => {
     button.addEventListener('click', () => {
       const task = getTasks().find((item) => item.id === button.dataset.openTask);
-      if (task?.boxId) navigate(`#box/${task.boxId}`);
+      const role = button.dataset.commandRole === 'maintenance' ? 'maintenance' : 'primary';
+      if (task?.boxId) navigate(`#box/${encodeURIComponent(task.boxId)}/${encodeURIComponent(task.id)}/hq-${role}`);
     });
   });
   app.querySelectorAll('[data-mainline]').forEach((button) => {

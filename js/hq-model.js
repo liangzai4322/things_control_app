@@ -111,6 +111,34 @@ export function selectHqCommitments(tasks = [], briefInput = {}, reviewDate = ''
   return { primary, maintenance };
 }
 
+export function resolveTaskCommandContext(task = {}, mainlines = [], periodSnapshot = {}) {
+  const project = task.mainlineId
+    ? mainlines.find((item) => item.id === task.mainlineId) || null
+    : null;
+  const period = normalizePeriodSnapshot(periodSnapshot, 'week');
+  const role = task.commitmentRole === 'primary'
+    ? 'primary'
+    : task.commitmentRole === 'maintenance'
+      ? 'maintenance'
+      : 'execution';
+  const roleLabel = role === 'primary'
+    ? '今日主动作'
+    : role === 'maintenance'
+      ? '今日维护动作'
+      : '盒子执行任务';
+  return {
+    source: ['hq', 'daily_review'].includes(task.commitmentSource) ? 'hq' : 'box',
+    role,
+    roleLabel,
+    commitmentDate: task.commitmentDate || '',
+    project: project ? { id: project.id, name: project.name } : null,
+    experiment: {
+      periodKey: period.periodKey,
+      action: period.review.experiment?.action || '',
+    },
+  };
+}
+
 export function buildHqProjectHealth(mainlines = [], tasks = [], referenceTime = new Date()) {
   const reference = new Date(referenceTime).getTime();
   return mainlines
