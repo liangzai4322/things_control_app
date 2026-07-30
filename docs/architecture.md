@@ -18,7 +18,7 @@ GitHub Pages (dist)
 ## 前端结构
 
 - `js/app.js`: 路由、底部 Sheet、Toast 和按路由懒加载。
-- `js/db.js`: 盒子、任务、主线、里程碑、设置、本地缓存和同步队列。
+- `js/db.js`: 盒子、任务、主线、支线、里程碑、设置、本地缓存和同步队列。
 - `js/home.js`: 首页、日期视图、盒子墙和主线概览。
 - `js/box-detail.js`: 三类盒子的详情、编辑、右键菜单、完成/删除/还原。
 - `js/recurrence.js`、`js/recurrence-ui.js`: 周期规则计算和编辑控件。
@@ -26,7 +26,8 @@ GitHub Pages (dist)
 - `js/task-execution.js`: 任务执行者模式、编辑器选择控件和显示标签。
 - `js/points-store.js`: 积分账户、奖励、流水和任务完成对账。
 - `js/small-world.js`: 珍宝阁、弑神塔和转盘入口。
-- `js/mainline-page.js`: 主线、里程碑和关联任务页面。
+- `js/mainline-page.js`: 主线、支线入口、里程碑和关联任务页面。
+- `js/branch-page.js`: 支线编辑器、独立详情、完成流程和支线行动编辑器。
 - `scripts/build-app.mjs`: JavaScript/CSS 压缩、哈希、Service Worker 生成和 `dist/` 组装。
 
 ## 同步模型
@@ -52,6 +53,7 @@ GitHub Pages (dist)
 | `boxes` | 单个盒子及类型配置 |
 | `tasks` | 单个任务、池项目、清单项或周期模板/实例；设备、执行方式、释放时间、暂存状态和进度日志使用独立列 |
 | `mainlines` | 单条主线 |
+| `branches` | 主线下的一条可独立推进、完成和复盘的支线 |
 | `milestones` | 单个主线里程碑 |
 | `usage_logs` | 放松池等项目的一次使用记录 |
 | `points_account` | 积分账户配置 |
@@ -73,6 +75,7 @@ GitHub Pages (dist)
 - 盒子：`POST /boxes`、`PATCH /boxes/:id`、`DELETE /boxes/:id`。
 - 任务：`POST /tasks`、`PATCH /tasks/:id`、`DELETE /tasks/:id`。
 - 主线：`POST /mainlines`、`PATCH /mainlines/:id`、`DELETE /mainlines/:id`。
+- 支线：`POST /branches`、`PATCH /branches/:id`、`DELETE /branches/:id`。
 - 里程碑：`POST /milestones`、`PATCH /milestones/:id`、`DELETE /milestones/:id`。
 - 每日一句：`GET /daily-quote`、`PATCH /daily-quote`。
 - 积分：流水和奖励的记录级新增/修改接口。

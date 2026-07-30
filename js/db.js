@@ -118,6 +118,7 @@ function normalize(data = {}) {
         nextRunAt: t.nextRunAt || null,
         occurrenceStatus: t.occurrenceStatus || null,
         mainlineId: t.mainlineId || null,
+        branchId: t.branchId || null,
         milestoneId: t.milestoneId || null,
         deviceContext: normalizeDeviceContext(t.deviceContext),
         executionMode: normalizeExecutionMode(t.executionMode),
@@ -156,6 +157,25 @@ function normalize(data = {}) {
       createdAt: mainline.createdAt || new Date().toISOString(),
       updatedAt: mainline.updatedAt || mainline.createdAt || new Date().toISOString(),
     })).filter((mainline) => mainline.name),
+    branches: (Array.isArray(data.branches) ? data.branches : []).map((branch, index) => ({
+      ...branch,
+      id: branch.id || uid(),
+      mainlineId: branch.mainlineId || null,
+      name: String(branch.name || '').trim(),
+      description: String(branch.description || '').trim(),
+      branchType: ['project', 'travel', 'experiment', 'growth', 'relationship', 'life'].includes(branch.branchType) ? branch.branchType : 'project',
+      status: ['idea', 'planned', 'active', 'wrapping', 'completed', 'paused', 'abandoned'].includes(branch.status) ? branch.status : 'planned',
+      icon: String(branch.icon || '◇'),
+      color: String(branch.color || '#337a78'),
+      targetDate: branch.targetDate || null,
+      nextAction: String(branch.nextAction || '').trim(),
+      completionCriteria: String(branch.completionCriteria || '').trim(),
+      review: String(branch.review || '').trim(),
+      sortOrder: Number(branch.sortOrder ?? index),
+      completedAt: branch.status === 'completed' ? (branch.completedAt || new Date().toISOString()) : null,
+      createdAt: branch.createdAt || new Date().toISOString(),
+      updatedAt: branch.updatedAt || branch.createdAt || new Date().toISOString(),
+    })).filter((branch) => branch.mainlineId && branch.name),
     milestones: (Array.isArray(data.milestones) ? data.milestones : []).map((milestone, index) => ({
       ...milestone,
       id: milestone.id || uid(),
@@ -325,6 +345,7 @@ function duplicateTaskFingerprint(task) {
     task.recurrenceTemplateId || '',
     task.isRecurringTemplate ? 'template' : 'task',
     task.mainlineId || '',
+    task.branchId || '',
     task.milestoneId || '',
     task.deviceContext || '',
     task.executionMode || '',
@@ -482,6 +503,14 @@ export const getMainlines = () => [...getData().mainlines].sort((left, right) =>
     || Number(left.sortOrder || 0) - Number(right.sortOrder || 0)
     || taskTime(left.createdAt) - taskTime(right.createdAt);
 });
+export const getBranches = (mainlineId = null) => [...getData().branches]
+  .filter((branch) => !mainlineId || branch.mainlineId === mainlineId)
+  .sort((left, right) => {
+    const statusRank = { active: 0, wrapping: 1, planned: 2, idea: 3, paused: 4, completed: 5, abandoned: 6 };
+    return (statusRank[left.status] ?? 9) - (statusRank[right.status] ?? 9)
+      || Number(left.sortOrder || 0) - Number(right.sortOrder || 0)
+      || taskTime(left.createdAt) - taskTime(right.createdAt);
+  });
 export const getMilestones = (mainlineId = null) => [...getData().milestones]
   .filter((milestone) => !mainlineId || milestone.mainlineId === mainlineId)
   .sort((left, right) => Number(left.sortOrder || 0) - Number(right.sortOrder || 0) || taskTime(left.createdAt) - taskTime(right.createdAt));
@@ -644,6 +673,7 @@ export function addTask(task) {
       scheduledAt: task.scheduledAt ?? null,
       dueDate: task.dueDate ?? null,
       mainlineId: task.mainlineId || null,
+      branchId: task.branchId || null,
       milestoneId: task.milestoneId || null,
       deviceContext: normalizeDeviceContext(task.deviceContext, 'desktop'),
       executionMode: normalizeExecutionMode(task.executionMode),
@@ -703,6 +733,7 @@ function buildRecurringOccurrence(template, scheduledAt, data) {
     scheduledAt,
     dueDate: getOccurrenceDueAt(recurrence, scheduledAt),
     mainlineId: template.mainlineId || null,
+    branchId: template.branchId || null,
     milestoneId: template.milestoneId || null,
     deviceContext: normalizeDeviceContext(template.deviceContext),
     executionMode: normalizeExecutionMode(template.executionMode),
@@ -825,6 +856,7 @@ export function addRecurringTask(task, recurrenceInput) {
       scheduledAt: firstRunAt,
       dueDate: getOccurrenceDueAt(recurrence, firstRunAt),
       mainlineId: task.mainlineId || null,
+      branchId: task.branchId || null,
       milestoneId: task.milestoneId || null,
       deviceContext: normalizeDeviceContext(task.deviceContext, 'desktop'),
       executionMode: normalizeExecutionMode(task.executionMode),
@@ -895,7 +927,7 @@ export function updateRecurringTemplate(templateId, patch = {}) {
   };
   if (patch.dueDate !== undefined) recurrenceInput.deadlineOffsetMinutes = null;
   const recurrence = normalizeRecurrenceRule(recurrenceInput, anchorAt, dueDate);
-  const sharedFields = ['content', 'boxId', 'priority', 'weight', 'pointsValue', 'note', 'pinLevel', 'pinned', 'mainlineId', 'milestoneId', 'deviceContext', 'executionMode'];
+  const sharedFields = ['content', 'boxId', 'priority', 'weight', 'pointsValue', 'note', 'pinLevel', 'pinned', 'mainlineId', 'branchId', 'milestoneId', 'deviceContext', 'executionMode'];
   sharedFields.forEach((key) => {
     if (patch[key] !== undefined) template[key] = patch[key];
   });
@@ -1034,10 +1066,12 @@ export function deleteMainline(mainlineId) {
   updateData((data) => {
     const before = data.mainlines.length;
     data.mainlines = data.mainlines.filter((item) => item.id !== mainlineId);
+    data.branches = data.branches.filter((item) => item.mainlineId !== mainlineId);
     data.milestones = data.milestones.filter((item) => item.mainlineId !== mainlineId);
     data.tasks.forEach((task) => {
       if (task.mainlineId !== mainlineId) return;
       task.mainlineId = null;
+      task.branchId = null;
       task.milestoneId = null;
       task.updatedAt = new Date().toISOString();
     });
@@ -1045,6 +1079,81 @@ export function deleteMainline(mainlineId) {
     return data;
   }, { skipCloud: true });
   if (removed) scheduleApiRequest(`/mainlines/${encodeURIComponent(mainlineId)}`, { method: 'DELETE' });
+  return removed;
+}
+
+export function addBranch(mainlineId, payload = {}) {
+  const name = String(payload.name || '').trim();
+  if (!mainlineId || !name) throw new Error('branch required');
+  let created = null;
+  updateData((data) => {
+    if (!data.mainlines.some((mainline) => mainline.id === mainlineId)) throw new Error('mainline not found');
+    const activeStatuses = new Set(['idea', 'planned', 'active', 'wrapping']);
+    const activeCount = data.branches.filter((branch) => branch.mainlineId === mainlineId && activeStatuses.has(branch.status)).length;
+    const status = payload.status || 'planned';
+    if (activeStatuses.has(status) && activeCount >= 6) throw new Error('branch limit');
+    if (data.branches.some((branch) => branch.mainlineId === mainlineId && branch.name === name && branch.status !== 'abandoned')) throw new Error('branch exists');
+    const timestamp = new Date().toISOString();
+    const peers = data.branches.filter((branch) => branch.mainlineId === mainlineId);
+    created = {
+      id: uid(),
+      mainlineId,
+      name,
+      description: String(payload.description || '').trim(),
+      branchType: payload.branchType || 'project',
+      status,
+      icon: payload.icon || '◇',
+      color: payload.color || '#337a78',
+      targetDate: payload.targetDate || null,
+      nextAction: String(payload.nextAction || '').trim(),
+      completionCriteria: String(payload.completionCriteria || '').trim(),
+      review: String(payload.review || '').trim(),
+      sortOrder: peers.length,
+      completedAt: status === 'completed' ? timestamp : null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    data.branches.push(created);
+    return data;
+  }, { skipCloud: true });
+  scheduleApiRequest('/branches', { method: 'POST', body: JSON.stringify(created) });
+  return created;
+}
+
+export function updateBranch(branchId, patch = {}) {
+  let updated = null;
+  updateData((data) => {
+    const branch = data.branches.find((item) => item.id === branchId);
+    if (!branch) return data;
+    const nextStatus = patch.status || branch.status;
+    const activeStatuses = new Set(['idea', 'planned', 'active', 'wrapping']);
+    if (!activeStatuses.has(branch.status) && activeStatuses.has(nextStatus)) {
+      const activeCount = data.branches.filter((item) => item.mainlineId === branch.mainlineId && item.id !== branch.id && activeStatuses.has(item.status)).length;
+      if (activeCount >= 6) throw new Error('branch limit');
+    }
+    Object.assign(branch, patch, { updatedAt: new Date().toISOString() });
+    branch.completedAt = branch.status === 'completed' ? (branch.completedAt || branch.updatedAt) : null;
+    updated = { ...branch };
+    return data;
+  }, { skipCloud: true });
+  if (updated) scheduleApiRequest(`/branches/${encodeURIComponent(branchId)}`, { method: 'PATCH', body: JSON.stringify(updated) });
+  return updated;
+}
+
+export function deleteBranch(branchId) {
+  let removed = false;
+  updateData((data) => {
+    const before = data.branches.length;
+    data.branches = data.branches.filter((branch) => branch.id !== branchId);
+    data.tasks.forEach((task) => {
+      if (task.branchId !== branchId) return;
+      task.branchId = null;
+      task.updatedAt = new Date().toISOString();
+    });
+    removed = before !== data.branches.length;
+    return data;
+  }, { skipCloud: true });
+  if (removed) scheduleApiRequest(`/branches/${encodeURIComponent(branchId)}`, { method: 'DELETE' });
   return removed;
 }
 
@@ -1154,7 +1263,7 @@ export function restoreTask(task) {
 
 export function updateTask(taskId, patch) {
   const taskPatch = { ...(patch || {}) };
-  const cloudCriticalKeys = new Set(['content', 'boxId', 'priority', 'weight', 'pointsValue', 'progress', 'pinLevel', 'pinned', 'scheduledAt', 'dueDate', 'isCompleted', 'deleted', 'deletedAt', 'sortOrder', 'completedAt', 'note', 'recurrence', 'nextRunAt', 'occurrenceStatus', 'itemType', 'durationMinutes', 'cooldownMinutes', 'usageCount', 'lastUsedAt', 'pointsCost', 'url', 'tags', 'favorite', 'archived', 'mainlineId', 'milestoneId', 'deviceContext', 'executionMode', 'visibleAfter', 'deferredAt', 'deferNote', 'progressLogs']);
+  const cloudCriticalKeys = new Set(['content', 'boxId', 'priority', 'weight', 'pointsValue', 'progress', 'pinLevel', 'pinned', 'scheduledAt', 'dueDate', 'isCompleted', 'deleted', 'deletedAt', 'sortOrder', 'completedAt', 'note', 'recurrence', 'nextRunAt', 'occurrenceStatus', 'itemType', 'durationMinutes', 'cooldownMinutes', 'usageCount', 'lastUsedAt', 'pointsCost', 'url', 'tags', 'favorite', 'archived', 'mainlineId', 'branchId', 'milestoneId', 'deviceContext', 'executionMode', 'visibleAfter', 'deferredAt', 'deferNote', 'progressLogs']);
   const shouldCloudPush = Object.keys(taskPatch).some((key) => cloudCriticalKeys.has(key));
   let updated = null;
   let previous = null;
@@ -1562,8 +1671,8 @@ function scheduleApiRequest(path, options = {}) {
       return null;
     }
   })();
-  const recordMatch = path.match(/^\/(tasks|boxes|mainlines|milestones)\/([^/?]+)/);
-  const collectionMatch = path.match(/^\/(tasks|boxes|mainlines|milestones)$/);
+  const recordMatch = path.match(/^\/(tasks|boxes|mainlines|branches|milestones)\/([^/?]+)/);
+  const collectionMatch = path.match(/^\/(tasks|boxes|mainlines|branches|milestones)$/);
   const queueKey = recordMatch
     ? `${recordMatch[1]}:${decodeURIComponent(recordMatch[2])}`
     : (collectionMatch && body?.id ? `${collectionMatch[1]}:${body.id}` : path);
@@ -1617,6 +1726,7 @@ function mergeData(local, cloud) {
     boxes: [...local.boxes, ...cloud.boxes],
     tasks: [...local.tasks, ...cloud.tasks],
     mainlines: [...(local.mainlines || []), ...(cloud.mainlines || [])],
+    branches: [...(local.branches || []), ...(cloud.branches || [])],
     milestones: [...(local.milestones || []), ...(cloud.milestones || [])],
     usageLogs: [...(local.usageLogs || []), ...(cloud.usageLogs || [])],
     meta: { updatedAt: new Date().toISOString() },
@@ -1664,6 +1774,12 @@ function mergeData(local, cloud) {
   };
   merged.mainlines = mergeRecordList(merged.mainlines);
   const validMainlineIds = new Set(merged.mainlines.map((mainline) => mainline.id));
+  merged.branches = mergeRecordList(merged.branches).filter((branch) => validMainlineIds.has(branch.mainlineId));
+  const validBranchIds = new Set(merged.branches.map((branch) => branch.id));
+  merged.tasks = merged.tasks.map((task) => ({
+    ...task,
+    branchId: task.branchId && validBranchIds.has(task.branchId) ? task.branchId : null,
+  }));
   merged.milestones = mergeRecordList(merged.milestones).filter((milestone) => validMainlineIds.has(milestone.mainlineId));
 
   return merged;
@@ -1675,6 +1791,7 @@ function syncContentFingerprint(data) {
     boxes: stable(data.boxes),
     tasks: stable(data.tasks),
     mainlines: stable(data.mainlines),
+    branches: stable(data.branches),
     milestones: stable(data.milestones),
     usageLogs: stable(data.usageLogs),
   });

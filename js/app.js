@@ -120,6 +120,16 @@ function route(options = {}) {
     return;
   }
 
+  if (path === 'branch') {
+    const load = ROUTE_MODULE_CACHE.branch || import('./branch-page.js');
+    ROUTE_MODULE_CACHE.branch = load;
+    load.then(({ renderBranchPage }) => {
+      renderBranchPage(app, param);
+      maybeResetViewPosition(options);
+    });
+    return;
+  }
+
   if (path === 'settings') {
     const load = ROUTE_MODULE_CACHE.settings || import('./settings.js');
     ROUTE_MODULE_CACHE.settings = load;

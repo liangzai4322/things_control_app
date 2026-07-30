@@ -26,6 +26,7 @@ const taskColumns = new Set(db.prepare("PRAGMA table_info('tasks')").all().map((
   ['next_run_at', 'TEXT'],
   ['occurrence_status', 'TEXT'],
   ['mainline_id', 'TEXT'],
+  ['branch_id', 'TEXT'],
   ['milestone_id', 'TEXT'],
   ['device_context', "TEXT DEFAULT 'universal'"],
   ['execution_mode', "TEXT DEFAULT 'self'"],
@@ -39,6 +40,7 @@ const taskColumns = new Set(db.prepare("PRAGMA table_info('tasks')").all().map((
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_recurrence_key ON tasks(recurrence_key) WHERE recurrence_key IS NOT NULL');
 db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_recurrence_template_id ON tasks(recurrence_template_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_mainline_id ON tasks(mainline_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_branch_id ON tasks(branch_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_milestone_id ON tasks(milestone_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_visible_after ON tasks(visible_after)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_device_context ON tasks(device_context)');

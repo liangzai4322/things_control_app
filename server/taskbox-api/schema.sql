@@ -40,6 +40,29 @@ CREATE TABLE IF NOT EXISTS mainlines (
 
 CREATE INDEX IF NOT EXISTS idx_mainlines_status_order ON mainlines(status, sort_order);
 
+CREATE TABLE IF NOT EXISTS branches (
+  id TEXT PRIMARY KEY,
+  mainline_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  branch_type TEXT NOT NULL DEFAULT 'project',
+  status TEXT NOT NULL DEFAULT 'planned',
+  icon TEXT,
+  color TEXT,
+  target_date TEXT,
+  next_action TEXT,
+  completion_criteria TEXT,
+  review TEXT,
+  sort_order INTEGER DEFAULT 0,
+  completed_at TEXT,
+  created_at TEXT,
+  updated_at TEXT NOT NULL,
+  raw_json TEXT NOT NULL,
+  FOREIGN KEY (mainline_id) REFERENCES mainlines(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_branches_mainline_status_order ON branches(mainline_id, status, sort_order);
+
 CREATE TABLE IF NOT EXISTS milestones (
   id TEXT PRIMARY KEY,
   mainline_id TEXT NOT NULL,
@@ -73,6 +96,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   next_run_at TEXT,
   occurrence_status TEXT,
   mainline_id TEXT,
+  branch_id TEXT,
   milestone_id TEXT,
   device_context TEXT NOT NULL DEFAULT 'universal',
   execution_mode TEXT NOT NULL DEFAULT 'self',
@@ -90,7 +114,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   created_at TEXT,
   updated_at TEXT NOT NULL,
   raw_json TEXT NOT NULL,
-  FOREIGN KEY (box_id) REFERENCES boxes(id) ON DELETE SET NULL
+  FOREIGN KEY (box_id) REFERENCES boxes(id) ON DELETE SET NULL,
+  FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_box_id ON tasks(box_id);

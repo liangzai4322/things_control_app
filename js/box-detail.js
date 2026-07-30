@@ -1,4 +1,4 @@
-import { getBoxes, getDeferredTasksByBox, getDeletedTasksByBox, getMainlines, getSettings, getTaskById, getTasksByBox, getUsageLogs, recordPoolUsage, updateTask, deleteTask, deleteRecurringSeries, reorderTasks, updateBox, addRecurringTask, addTask, playSound, restoreTask, pullDataFromCloud } from './db.js';
+import { getBoxes, getBranches, getDeferredTasksByBox, getDeletedTasksByBox, getMainlines, getSettings, getTaskById, getTasksByBox, getUsageLogs, recordPoolUsage, updateTask, deleteTask, deleteRecurringSeries, reorderTasks, updateBox, addRecurringTask, addTask, playSound, restoreTask, pullDataFromCloud } from './db.js';
 import { navigate, openSheet, showToast } from './app.js';
 import { openLuckyWheel } from './lucky-wheel.js';
 import { getPointsBalance, getTaskPointValue, recordPointsTransaction, reconcileCompletedTaskPoints, syncTaskCompletionPoints } from './points-store.js';
@@ -820,6 +820,7 @@ function taskItem(task, box) {
   const pointsValue = getTaskPointValue(task, box);
   const pinLevel = getTaskPinLevel(task);
   const mainline = task.mainlineId ? getMainlines().find((item) => item.id === task.mainlineId) : null;
+  const branch = task.branchId ? getBranches().find((item) => item.id === task.branchId) : null;
   const released = isTaskReleased(task);
   const deferNote = String(task.deferNote || '').trim();
 
@@ -842,6 +843,7 @@ function taskItem(task, box) {
             ${task.dueDate ? `<span class="task-chip ${overdue ? 'overdue-chip' : ''}">${escapeHtml(formatDueDateLabel(task.dueDate))}</span>` : ''}
             ${task.recurrence ? `<span class="task-chip recurrence-chip">↻ ${escapeHtml(getRecurrenceLabel(task.recurrence))}</span>` : ''}
             ${mainline ? `<span class="task-chip mainline-task-chip">◆ ${escapeHtml(mainline.name)}</span>` : ''}
+            ${branch ? `<span class="task-chip branch-task-chip">${escapeHtml(branch.icon)} ${escapeHtml(branch.name)}</span>` : ''}
             <span class="task-chip">${taskProgress}%</span>
             ${pointsValue > 0 ? `<span class="task-chip points-chip">+${pointsValue} 分</span>` : ''}
           </div>

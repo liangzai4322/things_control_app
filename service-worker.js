@@ -1,4 +1,4 @@
-const CACHE_NAME = 'taskbox-v35-dedupe-rank-ai-entry';
+const CACHE_NAME = 'taskbox-v36-side-quests';
 const CACHE_FILES = [
   './',
   './index.html',
@@ -14,6 +14,7 @@ const CACHE_FILES = [
   './js/core-box-nav.js',
   './js/mainline-fields.js',
   './js/mainline-page.js',
+  './js/branch-page.js',
   './js/recurrence.js',
   './js/recurrence-ui.js',
   './js/home.js',

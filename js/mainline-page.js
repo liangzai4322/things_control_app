@@ -5,6 +5,7 @@ import {
   deleteMainline,
   deleteMilestone,
   getBoxes,
+  getBranches,
   getMainlines,
   getMilestones,
   getSettings,
@@ -13,6 +14,7 @@ import {
   updateMilestone,
 } from './db.js';
 import { navigate, openSheet, showToast } from './app.js';
+import { BRANCH_STATUS_LABELS, openBranchEditor } from './branch-page.js';
 import { isTaskBox } from './box-types.js';
 import { renderCoreBoxNav } from './core-box-nav.js';
 import { getTaskPointValue } from './points-store.js';
@@ -175,6 +177,7 @@ function openMilestoneEditor(mainline, milestone, onDone) {
 
 function openMainlineTaskEditor(mainline, onDone) {
   const boxes = getBoxes().filter(isTaskBox);
+  const branches = getBranches(mainline.id).filter((branch) => !['completed', 'abandoned'].includes(branch.status));
   const milestones = getMilestones(mainline.id).filter((milestone) => milestone.status !== 'completed');
   const defaultBox = boxes.find((box) => box.color === 'important') || boxes[0];
   if (!defaultBox) return showToast('先创建一个待办类型盒子');
@@ -186,8 +189,9 @@ function openMainlineTaskEditor(mainline, onDone) {
       <label>具体行动<input id="lineTaskContent" class="input" placeholder="下一步要做什么"></label>
       <div class="mainline-editor-grid">
         <label>所属盒子<select id="lineTaskBox" class="input">${boxes.map((box) => `<option value="${box.id}" ${box.id === defaultBox.id ? 'selected' : ''}>${escapeHtml(box.name)}</option>`).join('')}</select></label>
-        <label>里程碑<select id="lineTaskMilestone" class="input"><option value="">暂不绑定</option>${milestones.map((milestone) => `<option value="${milestone.id}">${escapeHtml(milestone.title)}</option>`).join('')}</select></label>
+        <label>所属支线<select id="lineTaskBranch" class="input"><option value="">暂不绑定</option>${branches.map((branch) => `<option value="${branch.id}">${escapeHtml(branch.icon)} ${escapeHtml(branch.name)}</option>`).join('')}</select></label>
       </div>
+      <label>里程碑<select id="lineTaskMilestone" class="input"><option value="">暂不绑定</option>${milestones.map((milestone) => `<option value="${milestone.id}">${escapeHtml(milestone.title)}</option>`).join('')}</select></label>
       <label>计划时间<input id="lineTaskScheduled" class="input" type="datetime-local"></label>
       <label>截止时间<input id="lineTaskDue" class="input" type="datetime-local"></label>
       ${renderDeviceContextField('desktop', 'mainline-task-device')}
@@ -210,6 +214,7 @@ function openMainlineTaskEditor(mainline, onDone) {
       content,
       boxId: root.querySelector('#lineTaskBox').value,
       mainlineId: mainline.id,
+      branchId: root.querySelector('#lineTaskBranch').value || null,
       milestoneId: root.querySelector('#lineTaskMilestone').value || null,
       scheduledAt: fromDateTimeLocalValue(root.querySelector('#lineTaskScheduled').value),
       dueDate: fromDateTimeLocalValue(root.querySelector('#lineTaskDue').value),
@@ -228,9 +233,11 @@ export function renderMainlinePage(app, mainlineId) {
   const mainline = getMainlines().find((item) => item.id === mainlineId);
   if (!mainline) return navigate('#home');
   const milestones = getMilestones(mainline.id);
+  const branches = getBranches(mainline.id);
   const tasks = getTasks().filter((task) => task.mainlineId === mainline.id);
   const boxes = getBoxes();
   const boxMap = new Map(boxes.map((box) => [box.id, box]));
+  const branchMap = new Map(branches.map((branch) => [branch.id, branch]));
   const metrics = mainlineMetrics(mainline, milestones, tasks);
   const color = safeColor(mainline.color);
 
@@ -262,6 +269,24 @@ export function renderMainlinePage(app, mainlineId) {
         ` : '<div><strong>主线断档</strong><span>现在补一条足够具体的下一步行动。</span></div>'}
         <button class="btn primary compact" id="addMainlineTask">＋ 下一步</button>
       </section>
+      <section class="section-heading mainline-section-heading branch-lane-heading"><div><p class="eyebrow">Side Quests</p><h2>主线支线</h2></div><button class="btn subtle compact" id="addBranch">＋ 添加</button></section>
+      <section class="branch-lane">
+        ${branches.length ? branches.map((branch) => {
+          const branchTasks = tasks.filter((task) => task.branchId === branch.id);
+          const openCount = branchTasks.filter((task) => !task.isCompleted).length;
+          return `
+            <button class="branch-card ${branch.status === 'completed' ? 'completed' : ''}" data-open-branch="${branch.id}" style="--branch-color:${safeColor(branch.color)}">
+              <span class="branch-card-icon">${escapeHtml(branch.icon || '◇')}</span>
+              <span class="branch-card-copy">
+                <small>${escapeHtml(BRANCH_STATUS_LABELS[branch.status] || branch.status)} · ${formatDate(branch.targetDate)}</small>
+                <strong>${escapeHtml(branch.name)}</strong>
+                <em>${escapeHtml(branch.nextAction || (openCount ? `${openCount} 个行动待推进` : '打开支线补下一步'))}</em>
+              </span>
+              <b>${openCount}</b>
+            </button>
+          `;
+        }).join('') : '<button class="branch-card branch-card-empty" id="emptyAddBranch"><span class="branch-card-icon">＋</span><span class="branch-card-copy"><small>Side Quest</small><strong>添加第一条支线</strong><em>旅行、实验、项目，都可以单独形成闭环。</em></span></button>'}
+      </section>
       <section class="section-heading mainline-section-heading"><div><p class="eyebrow">Milestones</p><h2>阶段里程碑</h2></div><button class="btn subtle compact" id="addMilestone">＋ 添加</button></section>
       <section class="mainline-milestones">
         ${milestones.length ? milestones.map((milestone, index) => `
@@ -275,7 +300,7 @@ export function renderMainlinePage(app, mainlineId) {
       <section class="mainline-task-list">
         ${tasks.length ? [...tasks].sort((a, b) => Number(a.isCompleted) - Number(b.isCompleted) || getTaskContextRank(a, getSettings()) - getTaskContextRank(b, getSettings()) || new Date(a.dueDate || a.createdAt) - new Date(b.dueDate || b.createdAt)).map((task) => `
           <button class="mainline-task-row execution-${escapeHtml(task.executionMode || 'self')} ${task.isCompleted ? 'completed' : ''}" data-open-task-box="${task.boxId}">
-            <i>${task.isCompleted ? '✓' : (task.executionMode === 'ai' ? '✦' : '')}</i><span><strong>${escapeHtml(task.content)}</strong><small>${escapeHtml(boxMap.get(task.boxId)?.name || '盒子')} · ${task.executionMode === 'ai' ? '✦ ' : ''}${escapeHtml(getExecutionModeLabel(task.executionMode))} · ${formatDate(task.dueDate || task.scheduledAt)}</small></span>
+            <i>${task.isCompleted ? '✓' : (task.executionMode === 'ai' ? '✦' : '')}</i><span><strong>${escapeHtml(task.content)}</strong><small>${branchMap.get(task.branchId) ? `${escapeHtml(branchMap.get(task.branchId).icon)} ${escapeHtml(branchMap.get(task.branchId).name)} · ` : ''}${escapeHtml(boxMap.get(task.boxId)?.name || '盒子')} · ${task.executionMode === 'ai' ? '✦ ' : ''}${escapeHtml(getExecutionModeLabel(task.executionMode))} · ${formatDate(task.dueDate || task.scheduledAt)}</small></span>
           </button>
         `).join('') : '<p class="mainline-no-tasks">还没有关联任务。</p>'}
       </section>
@@ -286,6 +311,10 @@ export function renderMainlinePage(app, mainlineId) {
   app.querySelector('#editMainline').addEventListener('click', () => openMainlineEditor(mainline, (saved) => saved ? renderMainlinePage(app, mainline.id) : navigate('#home')));
   app.querySelector('#addMilestone').addEventListener('click', () => openMilestoneEditor(mainline, null, () => renderMainlinePage(app, mainline.id)));
   app.querySelector('#addMainlineTask').addEventListener('click', () => openMainlineTaskEditor(mainline, () => renderMainlinePage(app, mainline.id)));
+  const addBranch = () => openBranchEditor(null, mainline.id, () => renderMainlinePage(app, mainline.id));
+  app.querySelector('#addBranch').addEventListener('click', addBranch);
+  app.querySelector('#emptyAddBranch')?.addEventListener('click', addBranch);
+  app.querySelectorAll('[data-open-branch]').forEach((button) => button.addEventListener('click', () => navigate(`#branch/${button.dataset.openBranch}`)));
   app.querySelectorAll('[data-toggle-milestone]').forEach((button) => button.addEventListener('click', () => {
     const milestone = milestones.find((item) => item.id === button.dataset.toggleMilestone);
     updateMilestone(milestone.id, { status: milestone.status === 'completed' ? 'open' : 'completed' });

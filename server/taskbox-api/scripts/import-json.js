@@ -30,6 +30,7 @@ const taskColumns = new Set(db.prepare("PRAGMA table_info('tasks')").all().map((
   ['next_run_at', 'TEXT'],
   ['occurrence_status', 'TEXT'],
   ['mainline_id', 'TEXT'],
+  ['branch_id', 'TEXT'],
   ['milestone_id', 'TEXT'],
   ['device_context', "TEXT DEFAULT 'universal'"],
   ['visible_after', 'TEXT'],
@@ -42,6 +43,7 @@ const taskColumns = new Set(db.prepare("PRAGMA table_info('tasks')").all().map((
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_recurrence_key ON tasks(recurrence_key) WHERE recurrence_key IS NOT NULL');
 db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_recurrence_template_id ON tasks(recurrence_template_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_mainline_id ON tasks(mainline_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_branch_id ON tasks(branch_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_milestone_id ON tasks(milestone_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_visible_after ON tasks(visible_after)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_device_context ON tasks(device_context)');
@@ -79,6 +81,24 @@ const upsertMainline = db.prepare(`
     updated_at=excluded.updated_at, raw_json=excluded.raw_json
 `);
 
+const upsertBranch = db.prepare(`
+  INSERT INTO branches (
+    id, mainline_id, name, description, branch_type, status, icon, color, target_date,
+    next_action, completion_criteria, review, sort_order, completed_at, created_at, updated_at, raw_json
+  )
+  VALUES (
+    @id, @mainline_id, @name, @description, @branch_type, @status, @icon, @color, @target_date,
+    @next_action, @completion_criteria, @review, @sort_order, @completed_at, @created_at, @updated_at, @raw_json
+  )
+  ON CONFLICT(id) DO UPDATE SET
+    mainline_id=excluded.mainline_id, name=excluded.name, description=excluded.description,
+    branch_type=excluded.branch_type, status=excluded.status, icon=excluded.icon, color=excluded.color,
+    target_date=excluded.target_date, next_action=excluded.next_action,
+    completion_criteria=excluded.completion_criteria, review=excluded.review,
+    sort_order=excluded.sort_order, completed_at=excluded.completed_at, created_at=excluded.created_at,
+    updated_at=excluded.updated_at, raw_json=excluded.raw_json
+`);
+
 const upsertMilestone = db.prepare(`
   INSERT INTO milestones (
     id, mainline_id, title, status, target_date, sort_order, completed_at,
@@ -99,13 +119,13 @@ const upsertTask = db.prepare(`
   INSERT INTO tasks (
     id, box_id, content, is_completed, sort_order, priority, weight, points_value, progress,
     is_recurring_template, recurrence_template_id, recurrence_key, recurrence_json, next_run_at, occurrence_status,
-    mainline_id, milestone_id, device_context, execution_mode, visible_after, deferred_at, defer_note, progress_logs_json,
+    mainline_id, branch_id, milestone_id, device_context, execution_mode, visible_after, deferred_at, defer_note, progress_logs_json,
     scheduled_at, due_date, deleted, deleted_at, note, sync_key, completed_at, created_at, updated_at, raw_json
   )
   VALUES (
     @id, @box_id, @content, @is_completed, @sort_order, @priority, @weight, @points_value, @progress,
     @is_recurring_template, @recurrence_template_id, @recurrence_key, @recurrence_json, @next_run_at, @occurrence_status,
-    @mainline_id, @milestone_id, @device_context, @execution_mode, @visible_after, @deferred_at, @defer_note, @progress_logs_json,
+    @mainline_id, @branch_id, @milestone_id, @device_context, @execution_mode, @visible_after, @deferred_at, @defer_note, @progress_logs_json,
     @scheduled_at, @due_date, @deleted, @deleted_at, @note, @sync_key, @completed_at, @created_at, @updated_at, @raw_json
   )
   ON CONFLICT(id) DO UPDATE SET
@@ -115,7 +135,7 @@ const upsertTask = db.prepare(`
     is_recurring_template=excluded.is_recurring_template, recurrence_template_id=excluded.recurrence_template_id,
     recurrence_key=excluded.recurrence_key, recurrence_json=excluded.recurrence_json,
     next_run_at=excluded.next_run_at, occurrence_status=excluded.occurrence_status,
-    mainline_id=excluded.mainline_id, milestone_id=excluded.milestone_id,
+    mainline_id=excluded.mainline_id, branch_id=excluded.branch_id, milestone_id=excluded.milestone_id,
     device_context=excluded.device_context, execution_mode=excluded.execution_mode, visible_after=excluded.visible_after,
     deferred_at=excluded.deferred_at, defer_note=excluded.defer_note, progress_logs_json=excluded.progress_logs_json,
     scheduled_at=excluded.scheduled_at, due_date=excluded.due_date,
@@ -246,6 +266,27 @@ function importTaskbox() {
       raw_json: json(mainline),
     });
   }
+  for (const branch of data.branches || []) {
+    upsertBranch.run({
+      id: branch.id,
+      mainline_id: branch.mainlineId,
+      name: branch.name || '',
+      description: branch.description || null,
+      branch_type: branch.branchType || 'project',
+      status: branch.status || 'planned',
+      icon: branch.icon || '◇',
+      color: branch.color || '#287a78',
+      target_date: branch.targetDate || null,
+      next_action: branch.nextAction || null,
+      completion_criteria: branch.completionCriteria || null,
+      review: branch.review || null,
+      sort_order: Number(branch.sortOrder ?? 0),
+      completed_at: branch.completedAt || null,
+      created_at: branch.createdAt || null,
+      updated_at: branch.updatedAt || data.meta?.updatedAt || now(),
+      raw_json: json(branch),
+    });
+  }
   for (const milestone of data.milestones || []) {
     upsertMilestone.run({
       id: milestone.id,
@@ -278,6 +319,7 @@ function importTaskbox() {
       next_run_at: task.nextRunAt || null,
       occurrence_status: task.occurrenceStatus || null,
       mainline_id: task.mainlineId || null,
+      branch_id: task.branchId || null,
       milestone_id: task.milestoneId || null,
       device_context: ['desktop', 'mobile', 'universal'].includes(task.deviceContext) ? task.deviceContext : 'universal',
       execution_mode: ['self', 'ai', 'hybrid'].includes(task.executionMode) ? task.executionMode : 'self',
@@ -416,6 +458,7 @@ tx();
 const counts = {
   boxes: db.prepare('SELECT COUNT(*) AS n FROM boxes').get().n,
   mainlines: db.prepare('SELECT COUNT(*) AS n FROM mainlines').get().n,
+  branches: db.prepare('SELECT COUNT(*) AS n FROM branches').get().n,
   milestones: db.prepare('SELECT COUNT(*) AS n FROM milestones').get().n,
   tasks: db.prepare('SELECT COUNT(*) AS n FROM tasks').get().n,
   rewards: db.prepare('SELECT COUNT(*) AS n FROM points_rewards').get().n,

@@ -34,6 +34,7 @@ const taskColumns = new Set(db.prepare("PRAGMA table_info('tasks')").all().map((
   ['next_run_at', 'TEXT'],
   ['occurrence_status', 'TEXT'],
   ['mainline_id', 'TEXT'],
+  ['branch_id', 'TEXT'],
   ['milestone_id', 'TEXT'],
   ['device_context', "TEXT DEFAULT 'universal'"],
   ['execution_mode', "TEXT DEFAULT 'self'"],
@@ -47,6 +48,7 @@ const taskColumns = new Set(db.prepare("PRAGMA table_info('tasks')").all().map((
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_recurrence_key ON tasks(recurrence_key) WHERE recurrence_key IS NOT NULL');
 db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_recurrence_template_id ON tasks(recurrence_template_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_mainline_id ON tasks(mainline_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_branch_id ON tasks(branch_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_milestone_id ON tasks(milestone_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_visible_after ON tasks(visible_after)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_device_context ON tasks(device_context)');
@@ -181,6 +183,7 @@ function rowToTask(row) {
     nextRunAt: row.next_run_at,
     occurrenceStatus: row.occurrence_status,
     mainlineId: row.mainline_id,
+    branchId: row.branch_id,
     milestoneId: row.milestone_id,
     deviceContext: row.device_context || 'universal',
     executionMode: row.execution_mode || 'self',
@@ -288,6 +291,7 @@ app.get('/v1/taskbox', (req, res) => {
   const boxes = db.prepare('SELECT * FROM boxes ORDER BY sort_order, name').all().map(rowToBox);
   const tasks = db.prepare('SELECT * FROM tasks ORDER BY sort_order, created_at').all().map(rowToTask);
   const mainlines = db.prepare('SELECT * FROM mainlines ORDER BY sort_order, created_at').all().map(rowToMainline);
+  const branches = db.prepare('SELECT * FROM branches ORDER BY mainline_id, sort_order, created_at').all().map(rowToBranch);
   const milestones = db.prepare('SELECT * FROM milestones ORDER BY mainline_id, sort_order, created_at').all().map(rowToMilestone);
   const usageLogs = db.prepare('SELECT * FROM usage_logs ORDER BY used_at DESC LIMIT 2000').all().map(rowToUsageLog);
   const settings = getMeta('taskbox_settings', {});
@@ -296,6 +300,7 @@ app.get('/v1/taskbox', (req, res) => {
     boxes,
     tasks,
     mainlines,
+    branches,
     milestones,
     usageLogs,
     settings: {
@@ -440,9 +445,69 @@ app.patch('/v1/mainlines/:id', (req, res) => {
 app.delete('/v1/mainlines/:id', (req, res) => {
   if (!db.prepare('SELECT 1 FROM mainlines WHERE id=?').get(req.params.id)) return res.status(404).json({ error: 'mainline_not_found' });
   db.transaction(() => {
-    db.prepare('UPDATE tasks SET mainline_id=NULL, milestone_id=NULL WHERE mainline_id=?').run(req.params.id);
+    db.prepare('UPDATE tasks SET mainline_id=NULL, branch_id=NULL, milestone_id=NULL WHERE mainline_id=?').run(req.params.id);
+    db.prepare('DELETE FROM branches WHERE mainline_id=?').run(req.params.id);
     db.prepare('DELETE FROM milestones WHERE mainline_id=?').run(req.params.id);
     db.prepare('DELETE FROM mainlines WHERE id=?').run(req.params.id);
+  })();
+  return res.status(204).end();
+});
+
+function branchParams(branch) {
+  return {
+    id: branch.id,
+    mainline_id: branch.mainlineId,
+    name: branch.name || '',
+    description: branch.description || null,
+    branch_type: branch.branchType || 'project',
+    status: branch.status || 'planned',
+    icon: branch.icon || '◇',
+    color: branch.color || '#337a78',
+    target_date: branch.targetDate || null,
+    next_action: branch.nextAction || null,
+    completion_criteria: branch.completionCriteria || null,
+    review: branch.review || null,
+    sort_order: Number(branch.sortOrder ?? 0),
+    completed_at: branch.status === 'completed' ? (branch.completedAt || now()) : null,
+    created_at: branch.createdAt || now(),
+    updated_at: branch.updatedAt || now(),
+    raw_json: json(branch),
+  };
+}
+
+app.post('/v1/branches', (req, res) => {
+  const branch = { ...req.body, id: req.body.id || uid(), createdAt: req.body.createdAt || now(), updatedAt: now() };
+  if (!db.prepare('SELECT 1 FROM mainlines WHERE id=?').get(branch.mainlineId)) return res.status(409).json({ error: 'mainline_not_found' });
+  const existing = db.prepare('SELECT * FROM branches WHERE id=?').get(branch.id);
+  if (existing) return res.json(rowToBranch(existing));
+  db.prepare(`
+    INSERT INTO branches (id, mainline_id, name, description, branch_type, status, icon, color, target_date,
+      next_action, completion_criteria, review, sort_order, completed_at, created_at, updated_at, raw_json)
+    VALUES (@id, @mainline_id, @name, @description, @branch_type, @status, @icon, @color, @target_date,
+      @next_action, @completion_criteria, @review, @sort_order, @completed_at, @created_at, @updated_at, @raw_json)
+  `).run(branchParams(branch));
+  res.status(201).json(branch);
+});
+
+app.patch('/v1/branches/:id', (req, res) => {
+  const current = db.prepare('SELECT * FROM branches WHERE id=?').get(req.params.id);
+  if (!current) return res.status(404).json({ error: 'branch_not_found' });
+  const next = mergeRaw(current.raw_json, { ...req.body, id: req.params.id, updatedAt: now() });
+  if (!db.prepare('SELECT 1 FROM mainlines WHERE id=?').get(next.mainlineId)) return res.status(409).json({ error: 'mainline_not_found' });
+  db.prepare(`
+    UPDATE branches SET mainline_id=@mainline_id, name=@name, description=@description, branch_type=@branch_type,
+      status=@status, icon=@icon, color=@color, target_date=@target_date, next_action=@next_action,
+      completion_criteria=@completion_criteria, review=@review, sort_order=@sort_order, completed_at=@completed_at,
+      created_at=@created_at, updated_at=@updated_at, raw_json=@raw_json WHERE id=@id
+  `).run(branchParams(next));
+  res.json(next);
+});
+
+app.delete('/v1/branches/:id', (req, res) => {
+  if (!db.prepare('SELECT 1 FROM branches WHERE id=?').get(req.params.id)) return res.status(404).json({ error: 'branch_not_found' });
+  db.transaction(() => {
+    db.prepare('UPDATE tasks SET branch_id=NULL WHERE branch_id=?').run(req.params.id);
+    db.prepare('DELETE FROM branches WHERE id=?').run(req.params.id);
   })();
   return res.status(204).end();
 });
@@ -506,11 +571,11 @@ app.post('/v1/tasks', (req, res) => {
   db.prepare(`
     INSERT INTO tasks (id, box_id, content, is_completed, sort_order, priority, weight, points_value, progress,
       is_recurring_template, recurrence_template_id, recurrence_key, recurrence_json, next_run_at, occurrence_status,
-      mainline_id, milestone_id, device_context, execution_mode, visible_after, deferred_at, defer_note, progress_logs_json,
+      mainline_id, branch_id, milestone_id, device_context, execution_mode, visible_after, deferred_at, defer_note, progress_logs_json,
       scheduled_at, due_date, deleted, deleted_at, note, sync_key, completed_at, created_at, updated_at, raw_json)
     VALUES (@id, @box_id, @content, @is_completed, @sort_order, @priority, @weight, @points_value, @progress,
       @is_recurring_template, @recurrence_template_id, @recurrence_key, @recurrence_json, @next_run_at, @occurrence_status,
-      @mainline_id, @milestone_id, @device_context, @execution_mode, @visible_after, @deferred_at, @defer_note, @progress_logs_json,
+      @mainline_id, @branch_id, @milestone_id, @device_context, @execution_mode, @visible_after, @deferred_at, @defer_note, @progress_logs_json,
       @scheduled_at, @due_date, @deleted, @deleted_at, @note, @sync_key, @completed_at, @created_at, @updated_at, @raw_json)
   `).run(taskParams(task));
   res.status(201).json(task);
@@ -525,7 +590,7 @@ app.patch('/v1/tasks/:id', (req, res) => {
       priority=@priority, weight=@weight, points_value=@points_value, progress=@progress,
       is_recurring_template=@is_recurring_template, recurrence_template_id=@recurrence_template_id,
       recurrence_key=@recurrence_key, recurrence_json=@recurrence_json, next_run_at=@next_run_at,
-      occurrence_status=@occurrence_status, mainline_id=@mainline_id, milestone_id=@milestone_id,
+      occurrence_status=@occurrence_status, mainline_id=@mainline_id, branch_id=@branch_id, milestone_id=@milestone_id,
       device_context=@device_context, execution_mode=@execution_mode, visible_after=@visible_after, deferred_at=@deferred_at,
       defer_note=@defer_note, progress_logs_json=@progress_logs_json,
       scheduled_at=@scheduled_at, due_date=@due_date,
@@ -562,6 +627,7 @@ function taskParams(task) {
     next_run_at: task.nextRunAt || null,
     occurrence_status: task.occurrenceStatus || null,
     mainline_id: task.mainlineId || null,
+    branch_id: task.branchId || null,
     milestone_id: task.milestoneId || null,
     device_context: ['desktop', 'mobile', 'universal'].includes(task.deviceContext) ? task.deviceContext : 'universal',
     execution_mode: ['self', 'ai', 'hybrid'].includes(task.executionMode) ? task.executionMode : 'self',
