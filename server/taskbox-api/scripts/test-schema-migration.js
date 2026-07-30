@@ -5,6 +5,8 @@ const path = require('path');
 const Database = require('better-sqlite3');
 
 const dbPath = path.join(os.tmpdir(), `taskbox-schema-${process.pid}-${Date.now()}.sqlite`);
+const serverSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'server.js'), 'utf8');
+if (!serverSource.includes('function rowToBranch(row)')) throw new Error('missing branch row mapper');
 
 try {
   const legacy = new Database(dbPath);

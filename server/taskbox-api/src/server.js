@@ -221,6 +221,28 @@ function rowToMainline(row) {
   };
 }
 
+function rowToBranch(row) {
+  return {
+    ...parseJson(row.raw_json, {}),
+    id: row.id,
+    mainlineId: row.mainline_id,
+    name: row.name,
+    description: row.description || '',
+    branchType: row.branch_type || 'project',
+    status: row.status || 'planned',
+    icon: row.icon || '◇',
+    color: row.color || '#337a78',
+    targetDate: row.target_date,
+    nextAction: row.next_action || '',
+    completionCriteria: row.completion_criteria || '',
+    review: row.review || '',
+    sortOrder: row.sort_order,
+    completedAt: row.completed_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function rowToMilestone(row) {
   return {
     ...parseJson(row.raw_json, {}),
