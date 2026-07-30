@@ -1,6 +1,8 @@
 # TaskBox / things_control_app
 
-TaskBox 是一个本地静态 Web 应用，用来做游戏化任务管理、积分、抽奖转盘和“小世界”奖励/挑战池。这个目录也放了一些内容导出脚本，用于把 SCYS、ZSXQ、飞书等来源整理成 Markdown 或 JSON 产物。
+最后核对：2026-07-31。
+
+TaskBox 是一个本地优先的个人行动与决策系统：人生参谋部是默认主面板，负责日、周、月三个时间尺度的判断、项目健康和行动派发；盒子是执行副面板，负责任务、场景、进度和证据。积分、抽奖转盘和“小世界”承担游戏化反馈。这个目录也放了一些内容导出脚本，用于把 SCYS、ZSXQ、飞书等来源整理成 Markdown 或 JSON 产物。
 
 ## TaskBox 本地运行
 
@@ -14,9 +16,14 @@ npm run preview
 
 然后访问 `http://127.0.0.1:4173/`。只调试未压缩源码时也可运行 `python -m http.server 8000` 并访问 `http://localhost:8000/`。主要入口文件：
 
+- 无 Hash 访问默认打开人生参谋部 `#hq`；盒子执行副面板位于 `#home`。
+- 页面顶部的“参谋部 / 盒子”切换器在所有路由保持可见。
+- 参谋部任务通过 `#box/:boxId/:taskId/hq-primary|hq-maintenance` 精确下钻，盒子显示周实验、所属项目和任务角色。
+- 执行结构是“主线 → 支线 → 任务”；`#mainline/:id` 管理项目全局，`#branch/:id` 用于独立推进、完成和复盘支线。
+
 - `index.html`: PWA 壳和 `js/app.js` 入口。
 - `css/style.css`: 全局界面样式。
-- `js/`: 任务墙、盒子详情、积分、AI 提取、设置和“小世界”等功能模块。
+- `js/`: 参谋部、任务墙、盒子详情、主线/支线、积分、AI 提取、设置和“小世界”等功能模块。
 - `data/`: “小世界”奖励池和挑战塔数据。
 - `assets/`: 图标、图片、音效占位说明。
 - `service-worker.js`: App shell 和静态资源缓存。
@@ -30,6 +37,7 @@ npm run preview
 - `docs/architecture.md`: 前端、同步、数据库与 API 架构。
 - `docs/runbook.md`: 本地验证、部署、备份和回滚。
 - `docs/production-build.md`: 线上压缩构建规则。
+- `docs/life-hq-roadmap.md`: 人生参谋部已实现边界与后续路线。
 
 ## 内容导出脚本
 

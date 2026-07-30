@@ -4,7 +4,7 @@
 
 This workspace has two jobs:
 
-1. A static local web app (`index.html`, `js/`, `css/`, `data/`, `service-worker.js`).
+1. A static local web app (`index.html`, `js/`, `css/`, `data/`, `service-worker.js`) whose default surface is Life HQ (`#hq`) and whose execution surface is the box system (`#home`).
 2. A script workspace for exporting and normalizing SCYS, ZSXQ, Feishu, and related content into Markdown/JSON under `outputs/`.
 
 ## Working rules
@@ -12,6 +12,8 @@ This workspace has two jobs:
 - The web app has a `package.json`. Use `npm ci`, `npm run build`, and `npm run preview` for production-like verification; `python -m http.server 8000` is only the unbundled source fallback.
 - Production business data comes from `server/taskbox-api/` (SQLite + Express) through record-level API calls. Do not reintroduce Gist JSON as a fallback data source.
 - Frontend changes should preserve local-cache/offline behavior, record-level sync, and idempotent server writes.
+- Preserve the main/sub-panel contract: Life HQ owns decisions, project health, and daily/weekly/monthly direction; boxes own task execution and evidence. Cross-panel navigation uses the persistent workspace switch and task deep links, not duplicated records.
+- HQ task deep links use `#box/:boxId/:taskId/hq-primary|hq-maintenance`; box-only task links may omit the fourth segment. Keep task focus, command context, and return navigation working on desktop and mobile.
 - Put disposable browser/auth/debug artifacts in `tmp/`.
 - Put durable batch outputs in `outputs/<batch-name>/`.
 - After ZSXQ Markdown conversion/backfill/final merge, put only title-named per-article Markdown files larger than 60 KB in `outputs/太大/`, with a per-month `oversized_files_moved.json` / `.md` audit left in the month directory. Before moving, filenames should look like `<rank>_<topic_id>_<title>.md`; keep aggregate Markdown files such as `topics_normalized.md`, `articles_normalized.md`, `merged_feishu.md`, and `final_merged_articles.md` in the source month directory. Do not move JSON, DOCX, raw payloads, or auth/debug artifacts just because they are large.

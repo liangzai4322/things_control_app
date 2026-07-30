@@ -1,6 +1,6 @@
 # TaskBox 运维手册
 
-最后核对：2026-07-30。
+最后核对：2026-07-31。
 
 ## 本地验证
 
@@ -47,15 +47,26 @@ API 目录默认 `/opt/taskbox-api`，数据库默认 `/opt/taskbox-api/data/tas
 5. 验证认证健康检查为 `200`、未认证访问为 `401`、生产 Origin 的 OPTIONS 为 `204`。
 6. 用测试记录完成新增、修改、删除，再清理测试记录。
 
+主线/支线发布后再验证：
+
+1. `GET /v1/taskbox` 返回 `mainlines / branches / milestones / boxes`，且历史任务可在无 `branchId` 时正常加载。
+2. 为一条测试主线执行支线 POST → PATCH，再通过 `GET /v1/taskbox` 核对记录，并将测试任务的 `branchId` 指向该支线。
+3. 打开 `#mainline/:id` 和 `#branch/:id`，确认支线卡片、关联任务、完成标准与移动端横向列表正常。
+4. 删除测试支线后，确认任务仍保留且仅解除 `branchId`；最后清理测试主线和任务。
+
 人生参谋部发布后再验证：
 
-1. `GET /v1/hq/today?date=YYYY-MM-DD` 返回 `brief / commitments / projects / decisions / review / ai`。
-2. 新建一条临时决策、标记已决定并删除测试记录。
-3. `GET /v1/daily-snapshot?date=YYYY-MM-DD` 只返回目标日期相关记录。
-4. `GET /v1/hq/review-status?date=YYYY-MM-DD&days=7` 返回逐日承诺判定和事实计数。
-5. GitHub Pages 的 `#hq` 可打开，日省闭环卡与事实包抽屉可见，未配置 Token 时仍能显示本地快照。
-6. `#hq/week`与`#hq/month`可切换；周期 API 分别返回`review / derived / projects / decisions`。
-7. 对测试周期执行一次 POST → GET → DELETE，确认周省/月省按周期键幂等写入。
+1. 无 Hash 打开生产根地址，确认默认呈现`#hq`内容且“参谋部”切换项激活；切换到`#home`后“盒子”激活。
+2. `GET /v1/hq/today?date=YYYY-MM-DD` 返回 `brief / commitments / projects / decisions / review / ai`。
+3. 点击参谋部主动作，确认 URL 为`#box/:boxId/:taskId/hq-primary`，目标任务自动展开并高亮。
+4. 盒子指挥链应显示最近已完成周省的唯一实验、所属项目和“今日主动作”，并能返回参谋部或进入项目。
+5. 新建一条临时决策、标记已决定并删除测试记录。
+6. `GET /v1/daily-snapshot?date=YYYY-MM-DD` 只返回目标日期相关记录。
+7. `GET /v1/hq/review-status?date=YYYY-MM-DD&days=7` 返回逐日承诺判定和事实计数。
+8. GitHub Pages 的 `#hq` 可打开，日省闭环卡与事实包抽屉可见，未配置 Token 时仍能显示本地快照。
+9. `#hq/week`与`#hq/month`可切换；`offset=-1`周期 API 分别返回最近已完成周省/月省的`review / derived / projects / decisions`。
+10. 对测试周期执行一次 POST → GET → DELETE，确认周省/月省按周期键幂等写入。
+11. 在 1440px 与 390px 视口检查参谋部、盒子和任务指挥链：无横向溢出、控制台错误或失败资源请求。
 
 ## 故障检查
 
