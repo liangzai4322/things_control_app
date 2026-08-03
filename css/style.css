@@ -3068,6 +3068,26 @@ body.hq-mode .app-container {
   letter-spacing: .12em;
 }
 
+.workspace-switch-link > .workspace-brand-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  letter-spacing: 0;
+}
+
+.workspace-brand-mark img {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  box-shadow: 0 5px 12px rgba(2, 10, 24, .28);
+}
+
+.workspace-brand-mark i {
+  font: 900 8px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-style: normal;
+  letter-spacing: .12em;
+}
+
 .workspace-switch-link > strong { font-size: 13px; }
 .workspace-switch-link > small { color: inherit; font-size: 9px; opacity: .66; }
 .workspace-switch-link.active { color: #13223a; background: #f4a261; box-shadow: 0 8px 20px rgba(244, 162, 97, .2); }
@@ -3154,6 +3174,7 @@ body.hq-mode .app-container {
   .workspace-switch { top: max(6px, env(safe-area-inset-top)); width: calc(100% - 20px); margin-top: 6px; border-radius: 14px; }
   .workspace-switch-link { grid-template-columns: auto 1fr; gap: 6px; min-height: 40px; padding: 6px 9px; }
   .workspace-switch-link > small { display: none; }
+  .workspace-brand-mark i { display: none; }
   .task-command-context { margin-top: 16px; padding: 14px; border-radius: 15px; }
   .task-command-context-head { align-items: flex-start; }
   .task-command-chain { grid-template-columns: 1fr; }
