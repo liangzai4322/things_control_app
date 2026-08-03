@@ -11,6 +11,7 @@ import { bindMainlineTaskFields, renderMainlineTaskFields } from './mainline-fie
 import { bindDeviceContextField, formatVisibleAfter, getDefaultDeferredUntil, getDeviceContextLabel, isTaskContextMismatch, isTaskReleased, renderDeviceContextField } from './task-visibility.js';
 import { bindExecutionModeField, getExecutionModeLabel, renderExecutionModeField } from './task-execution.js';
 import { resolveTaskCommandContext } from './hq-model.js';
+import { createCompletionReceiptSnapshot, openCompletionReceiptSheet } from './completion-card.js';
 import {
   BOX_TYPE_COLLECTION,
   BOX_TYPE_POOL,
@@ -273,6 +274,25 @@ function getTaskPinLabel(task) {
   return option ? `置顶${option.label}` : '';
 }
 
+function getCompletionReceiptContext(task, box, pointsAwarded = null) {
+  return {
+    box,
+    mainline: task?.mainlineId ? getMainlines().find((item) => item.id === task.mainlineId) : null,
+    branch: task?.branchId ? getBranches().find((item) => item.id === task.branchId) : null,
+    pointsAwarded: pointsAwarded ?? getTaskPointValue(task, box),
+  };
+}
+
+function openTaskCompletionReceipt(task, box, pointsAwarded = null) {
+  if (!task?.isCompleted) return;
+  const context = getCompletionReceiptContext(task, box, pointsAwarded);
+  openCompletionReceiptSheet({
+    task,
+    ...context,
+    onPersist: (completionReceipt) => updateTask(task.id, { completionReceipt }),
+  });
+}
+
 function showUndo(task, onUndo, onExpire) {
   clearTimeout(undoTimer);
   document.querySelector('.undo-banner')?.remove();
@@ -497,6 +517,7 @@ function openTaskContextMenu(event, app, box, task) {
       </div>
     ` : ''}
     ${boxType === BOX_TYPE_TASK ? `<button type="button" data-action="${isTaskReleased(task) ? 'defer' : 'resume'}"><span class="task-context-action-icon" aria-hidden="true">${isTaskReleased(task) ? '☾' : '↥'}</span><span>${isTaskReleased(task) ? '今天收工' : '继续显示'}</span></button>` : ''}
+    ${task.isCompleted ? '<button type="button" data-action="receipt"><span class="task-context-action-icon" aria-hidden="true">◉</span><span>查看完成回执</span></button>' : ''}
     ${boxType === BOX_TYPE_POOL ? '<button type="button" data-action="use"><span class="task-context-action-icon" aria-hidden="true">✦</span><span>记录使用一次</span></button>' : ''}
     ${boxType === BOX_TYPE_COLLECTION ? `<button type="button" data-action="archive"><span class="task-context-action-icon" aria-hidden="true">⌑</span><span>${task.archived ? '移出归档' : '归档条目'}</span></button>` : ''}
     ${task.recurrenceTemplateId ? '<button type="button" data-action="stop-series" class="danger subtle-danger">停止整个周期</button>' : ''}
@@ -523,6 +544,10 @@ function openTaskContextMenu(event, app, box, task) {
     }
     if (action === 'defer') openDeferTaskSheet(app, box, task);
     if (action === 'resume') resumeTaskToday(app, box, task);
+    if (action === 'receipt') {
+      closeTaskContextMenu();
+      openTaskCompletionReceipt(task, box);
+    }
     if (action === 'use') {
       if (!commitPoolUsage(task)) return;
       closeTaskContextMenu();
@@ -932,6 +957,7 @@ function taskItem(task, box) {
           ${deferNote ? `<p class="task-note-preview defer-note-preview">续接点：${escapeHtml(deferNote.slice(0, 50))}${deferNote.length > 50 ? '…' : ''}</p>` : ''}
           <div class="mini-progress"><span style="width:${taskProgress}%; background:${color}"></span></div>
         </button>
+        ${task.isCompleted ? `<button class="task-receipt-btn" data-action="receipt" aria-label="查看 ${escapeHtml(task.content)} 的完成回执"><span aria-hidden="true">◉</span><small>回执</small></button>` : ''}
         <button class="grip task-more-btn" data-action="more" aria-label="打开 ${escapeHtml(task.content)} 的操作菜单">•••</button>
       </div>
     </article>
@@ -949,6 +975,7 @@ function bindItemEvents(app, box, taskMap) {
     const unarchiveButton = item.querySelector('[data-action="unarchive"]');
     const editButton = item.querySelector('[data-action="edit"]');
     const moreButton = item.querySelector('[data-action="more"]');
+    const receiptButton = item.querySelector('[data-action="receipt"]');
     if (!task || !editButton) return;
 
     checkButton?.addEventListener('click', (event) => {
@@ -961,17 +988,27 @@ function bindItemEvents(app, box, taskMap) {
         progress: checked ? 80 : 100,
         completedAt: checked ? null : new Date().toISOString(),
       };
+      if (!checked) {
+        nextTask.completionReceipt = createCompletionReceiptSnapshot(nextTask, getCompletionReceiptContext(nextTask, box));
+      }
       updateTask(taskId, {
         isCompleted: nextTask.isCompleted,
         progress: nextTask.progress,
         completedAt: nextTask.completedAt,
+        ...(!checked ? { completionReceipt: nextTask.completionReceipt } : {}),
       });
       const pointsResult = syncTaskCompletionPoints({ task: nextTask, box, completed: nextTask.isCompleted });
       playSound('complete');
       if (pointsResult.changed) {
         showToast(pointsResult.delta > 0 ? `已获得 +${pointsResult.delta} 积分` : `已回收 ${Math.abs(pointsResult.delta)} 积分`);
       }
+      if (nextTask.isCompleted) openTaskCompletionReceipt(nextTask, box, Math.max(0, pointsResult.delta || getTaskPointValue(nextTask, box)));
       setTimeout(() => renderBoxDetail(app, box.id), 220);
+    });
+
+    receiptButton?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      openTaskCompletionReceipt(task, box);
     });
 
     useButton?.addEventListener('click', (event) => {
@@ -1418,8 +1455,18 @@ function openTaskEditor({ taskId, boxId }, onDone) {
       isCompleted: done,
       completedAt: done ? (task?.completedAt || new Date().toISOString()) : null,
     };
+    const receiptContext = {
+      box: selectedBox,
+      mainline: payload.mainlineId ? getMainlines().find((item) => item.id === payload.mainlineId) : null,
+      branch: payload.branchId ? getBranches().find((item) => item.id === payload.branchId) : null,
+      pointsAwarded: getTaskPointValue({ ...task, ...payload }, selectedBox),
+    };
+    let completedTaskToOpen = null;
 
     if (task) {
+      if (!task.isCompleted && payload.isCompleted) {
+        payload.completionReceipt = createCompletionReceiptSnapshot({ ...task, ...payload, id: task.id }, receiptContext);
+      }
       const previousPointsValue = getTaskPointValue(task, taskBoxes.find((box) => box.id === task.boxId) || null);
       updateTask(task.id, payload);
       const nextTask = { ...task, ...payload, id: task.id };
@@ -1432,11 +1479,15 @@ function openTaskEditor({ taskId, boxId }, onDone) {
       if (pointsResult.changed) {
         showToast(pointsResult.delta > 0 ? `积分已调整 +${pointsResult.delta}` : `积分已调整 ${pointsResult.delta}`);
       }
+      if (!task.isCompleted && nextTask.isCompleted) completedTaskToOpen = nextTask;
     } else {
       const recurrence = recurrenceEditor.getValue();
       const created = recurrence ? addRecurringTask(payload, recurrence) : addTask(payload);
       if (created?.isCompleted) {
         const pointsResult = syncTaskCompletionPoints({ task: created, box: selectedBox, completed: true });
+        const completionReceipt = createCompletionReceiptSnapshot(created, receiptContext);
+        updateTask(created.id, { completionReceipt });
+        completedTaskToOpen = { ...created, completionReceipt };
         if (pointsResult.changed) showToast(`已获得 +${pointsResult.delta} 积分`);
       }
       if (recurrence) showToast('周期任务已创建');
@@ -1444,6 +1495,9 @@ function openTaskEditor({ taskId, boxId }, onDone) {
 
     close();
     onDone();
+    if (completedTaskToOpen) {
+      setTimeout(() => openTaskCompletionReceipt(completedTaskToOpen, selectedBox, receiptContext.pointsAwarded), 260);
+    }
   };
   root.querySelector('#saveBtn').addEventListener('click', saveTask);
   root.addEventListener('keydown', (event) => {

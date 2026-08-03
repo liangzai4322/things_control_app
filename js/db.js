@@ -138,6 +138,7 @@ function normalize(data = {}) {
         archived: Boolean(t.archived),
         duplicateIds: Array.isArray(t.duplicateIds) ? [...new Set(t.duplicateIds.filter((id) => id && id !== t.id))] : [],
         note: t.note ?? [t.reflection, t.review, t.summaryText].filter(Boolean).join('\n').trim(),
+        completionReceipt: t.completionReceipt && typeof t.completionReceipt === 'object' ? { ...t.completionReceipt } : null,
         syncKey: t.syncKey || `${t.createdAt || ''}::${t.content || ''}`,
         updatedAt: t.updatedAt || t.createdAt || new Date().toISOString()
       };
@@ -696,6 +697,7 @@ export function addTask(task) {
       deleted: false,
       deletedAt: null,
       note: task.note ?? '',
+      completionReceipt: task.completionReceipt && typeof task.completionReceipt === 'object' ? { ...task.completionReceipt } : null,
       sortOrder: maxOrder + 1,
       completedAt: task.completedAt ?? null,
       createdAt: new Date().toISOString(),
@@ -745,6 +747,7 @@ function buildRecurringOccurrence(template, scheduledAt, data) {
     deleted: false,
     deletedAt: null,
     note: template.note || '',
+    completionReceipt: null,
     sortOrder: maxOrder + 1,
     completedAt: null,
     createdAt,
@@ -1263,7 +1266,7 @@ export function restoreTask(task) {
 
 export function updateTask(taskId, patch) {
   const taskPatch = { ...(patch || {}) };
-  const cloudCriticalKeys = new Set(['content', 'boxId', 'priority', 'weight', 'pointsValue', 'progress', 'pinLevel', 'pinned', 'scheduledAt', 'dueDate', 'isCompleted', 'deleted', 'deletedAt', 'sortOrder', 'completedAt', 'note', 'recurrence', 'nextRunAt', 'occurrenceStatus', 'itemType', 'durationMinutes', 'cooldownMinutes', 'usageCount', 'lastUsedAt', 'pointsCost', 'url', 'tags', 'favorite', 'archived', 'mainlineId', 'branchId', 'milestoneId', 'deviceContext', 'executionMode', 'visibleAfter', 'deferredAt', 'deferNote', 'progressLogs']);
+  const cloudCriticalKeys = new Set(['content', 'boxId', 'priority', 'weight', 'pointsValue', 'progress', 'pinLevel', 'pinned', 'scheduledAt', 'dueDate', 'isCompleted', 'deleted', 'deletedAt', 'sortOrder', 'completedAt', 'note', 'completionReceipt', 'recurrence', 'nextRunAt', 'occurrenceStatus', 'itemType', 'durationMinutes', 'cooldownMinutes', 'usageCount', 'lastUsedAt', 'pointsCost', 'url', 'tags', 'favorite', 'archived', 'mainlineId', 'branchId', 'milestoneId', 'deviceContext', 'executionMode', 'visibleAfter', 'deferredAt', 'deferNote', 'progressLogs']);
   const shouldCloudPush = Object.keys(taskPatch).some((key) => cloudCriticalKeys.has(key));
   let updated = null;
   let previous = null;

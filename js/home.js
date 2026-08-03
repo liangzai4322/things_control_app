@@ -1,4 +1,4 @@
-import { addBox, addRecurringTask, addTask, deleteBox, deleteRecurringSeries, getBoxes, getMainlines, getMilestones, getRecurringTemplates, getSettings, getTasks, getTimelineTasks, playSound, pullDataFromCloud, setHomePinnedBox, setRecurringTemplatePaused, updateRecurringTemplate, updateTask } from './db.js';
+import { addBox, addRecurringTask, addTask, deleteBox, deleteRecurringSeries, getBoxes, getBranches, getMainlines, getMilestones, getRecurringTemplates, getSettings, getTasks, getTimelineTasks, playSound, pullDataFromCloud, setHomePinnedBox, setRecurringTemplatePaused, updateRecurringTemplate, updateTask } from './db.js';
 import { navigate, openSheet, showToast } from './app.js';
 import { getPointsSummary, getTaskPointValue, syncTaskCompletionPoints } from './points-store.js';
 import { getRecurrenceLabel } from './recurrence.js';
@@ -8,6 +8,7 @@ import { renderCoreBoxNav } from './core-box-nav.js';
 import { bindMainlineTaskFields, renderMainlineTaskFields } from './mainline-fields.js';
 import { bindDeviceContextField, getDeviceContextLabel, getTaskContextRank, isTaskReleased, renderDeviceContextField } from './task-visibility.js';
 import { bindExecutionModeField, getExecutionModeLabel, renderExecutionModeField } from './task-execution.js';
+import { createCompletionReceiptSnapshot, openCompletionReceiptSheet } from './completion-card.js';
 import {
   BOX_TYPE_COLLECTION,
   BOX_TYPE_POOL,
@@ -656,10 +657,26 @@ export function renderHome(app) {
       if (!task || !box) return;
       button.classList.add('checked');
       const nextTask = { ...task, isCompleted: true, progress: 100, completedAt: new Date().toISOString() };
-      updateTask(task.id, { isCompleted: true, progress: 100, completedAt: nextTask.completedAt });
+      const mainline = nextTask.mainlineId ? getMainlines().find((item) => item.id === nextTask.mainlineId) : null;
+      const branch = nextTask.branchId ? getBranches().find((item) => item.id === nextTask.branchId) : null;
+      nextTask.completionReceipt = createCompletionReceiptSnapshot(nextTask, {
+        box,
+        mainline,
+        branch,
+        pointsAwarded: getTaskPointValue(nextTask, box),
+      });
+      updateTask(task.id, { isCompleted: true, progress: 100, completedAt: nextTask.completedAt, completionReceipt: nextTask.completionReceipt });
       const pointsResult = syncTaskCompletionPoints({ task: nextTask, box, completed: true });
       playSound('complete');
       showToast(pointsResult.changed ? `已完成 · +${pointsResult.delta} 积分` : '任务已完成');
+      openCompletionReceiptSheet({
+        task: nextTask,
+        box,
+        mainline,
+        branch,
+        pointsAwarded: Math.max(0, pointsResult.delta || getTaskPointValue(nextTask, box)),
+        onPersist: (completionReceipt) => updateTask(task.id, { completionReceipt }),
+      });
       setTimeout(() => renderHome(app), 180);
     });
   });
