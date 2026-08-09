@@ -89,6 +89,25 @@ child.stderr.on('data', (chunk) => { serverError += chunk.toString('utf8'); });
       color: 'important',
       sortOrder: 0,
     });
+    const firstCandidateTask = await request('/v1/tasks', 'POST', {
+      id: 'integration-candidate-task-a',
+      boxId: 'integration-brief-box',
+      content: '解除集成测试项目阻塞',
+      syncKey: 'hq-candidate:mainline:integration-project:risk',
+      candidateDedupeKey: 'mainline:integration-project:risk',
+      candidateSourceSystemId: 'mainline',
+      candidateSourceRef: 'integration-project',
+    });
+    const repeatedCandidateTask = await request('/v1/tasks', 'POST', {
+      id: 'integration-candidate-task-b',
+      boxId: 'integration-brief-box',
+      content: '重复提交不应创建副本',
+      syncKey: 'hq-candidate:mainline:integration-project:risk',
+    });
+    if (firstCandidateTask.id !== repeatedCandidateTask.id
+      || firstCandidateTask.candidateDedupeKey !== 'mainline:integration-project:risk') {
+      throw new Error('candidate task syncKey idempotency mismatch');
+    }
     await request('/v1/tasks', 'POST', {
       id: 'integration-primary-task',
       boxId: 'integration-brief-box',
@@ -278,6 +297,23 @@ child.stderr.on('data', (chunk) => { serverError += chunk.toString('utf8'); });
       || fencedNull.currentActionTaskId !== null
       || fencedNull.strategicCommitmentSnapshot !== null) {
       throw new Error('fenced primary null did not preserve the P0 authoritative-clear contract');
+    }
+    const candidateBrief = await request('/v1/hq/daily-briefs/2026-08-01', 'POST', {
+      primaryTaskId: 'integration-primary-task',
+      currentActionTaskId: null,
+      candidateState: {
+        dismissals: {
+          'task:integration-handoff-task': {
+            reason: 'manual_skip',
+            at: '2026-08-01T01:00:00.000Z',
+            until: '2026-08-01T05:00:00.000Z',
+          },
+        },
+        accepted: [],
+      },
+    });
+    if (candidateBrief.candidateState?.dismissals?.['task:integration-handoff-task']?.reason !== 'manual_skip') {
+      throw new Error('P2 candidate state did not round-trip through daily brief raw JSON');
     }
     await request('/v1/hq/decisions', 'POST', {
       id: 'integration-decision',

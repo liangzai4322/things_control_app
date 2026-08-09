@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "npm run test:recurrence && npm run test:box-types && npm run test:visibility && npm run test:db-visibility && npm run test:branches && npm run test:completion-receipt && npm run test:hq && npm run test:calendar && npm run test:app-storage && npm run test:daily-review && npm run test:period-review && npm --prefix server/taskbox-api run test:schema && npm --prefix server/taskbox-api run test:hq",
+    "test": "npm run test:recurrence && npm run test:box-types && npm run test:visibility && npm run test:db-visibility && npm run test:branches && npm run test:completion-receipt && npm run test:hq && npm run test:hq-candidates && npm run test:calendar && npm run test:app-storage && npm run test:daily-review && npm run test:period-review && npm --prefix server/taskbox-api run test:schema && npm --prefix server/taskbox-api run test:hq",
     "build": "node scripts/build-app.mjs",
     "preview": "python scripts/serve_app.py --port 4173 --dir dist",
     "test:recurrence": "node scripts/test-recurrence.mjs",
@@ -14,6 +14,7 @@
     "test:branches": "node scripts/test-branches.mjs",
     "test:completion-receipt": "node scripts/test-completion-receipt.mjs",
     "test:hq": "node scripts/test-hq-model.mjs",
+    "test:hq-candidates": "node scripts/test-hq-candidates.mjs",
     "test:calendar": "node scripts/test-db-calendar.mjs",
     "test:app-storage": "node scripts/test-app-storage.mjs",
     "test:daily-review": "node scripts/test-daily-review-bridge.mjs",

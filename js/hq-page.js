@@ -1,4 +1,5 @@
 import {
+  addTask,
   getBoxes,
   getApiSyncState,
   getPendingApiMutationCount,
@@ -28,6 +29,7 @@ import {
 import { openCompletionReceiptSheet } from './completion-card.js';
 import { bindHqDimensionNav, renderHqDimensionNav, renderHqPeriodPage } from './hq-period-page.js';
 import { isTaskReleased } from './task-visibility.js';
+import { buildHqActionCandidates, dismissHqCandidate } from './hq-candidates.js';
 
 const HQ_CACHE_KEY = 'taskbox_hq_cache_v1';
 let hqRenderVersion = 0;
@@ -145,7 +147,7 @@ function renderActionSeat(actionState) {
         <div>
           <p>${completed ? 'CURRENT ACTION · 当前行动席位空置' : 'CURRENT ACTION · 当前行动席位'}</p>
           <strong>${completed ? '今天的战略承诺已经闭环' : (strategic ? '当前没有执行中的接棒动作' : '今天还没有原始战略承诺')}</strong>
-          <small>${completed ? 'P1 不自动推荐低价值任务；可从已有盒子任务中手动选择接棒。' : '先确定一件能产生外部结果的行动。'}</small>
+          <small>${completed ? '候选先过资格门槛，再按可解释投产比排序；确认后才接棒。' : '先确定一件能产生外部结果的行动。'}</small>
         </div>
         <div class="hq-empty-actions">
           <button id="editBriefEmpty">${strategic ? '从盒子选择当前动作' : '设置今日承诺'}</button>
@@ -170,6 +172,37 @@ function renderActionSeat(actionState) {
         <button data-open-task="${escapeHtml(task.id)}" data-command-role="primary">进入行动</button>
       </div>
     </article>
+  `;
+}
+
+function renderActionCandidates(candidates = [], actionState = {}) {
+  if (actionState.currentAction) return '';
+  if (!candidates.length) return `
+    <section class="hq-candidate-dock empty">
+      <div><span>NEXT BEST</span><strong>当前没有达到 55 分门槛的候选</strong><small>不为了填满席位推荐低价值任务；仍可手动选择。</small></div>
+      <button id="hqManualCandidate">手动选择</button>
+    </section>
+  `;
+  return `
+    <section class="hq-candidate-dock">
+      <header><div><span>NEXT BEST · ROI ENGINE</span><h3>下一件高投产比行动</h3></div><small>最多 3 项 · 确认后进入行动席位</small></header>
+      <div class="hq-candidate-list">${candidates.map((candidate, index) => `
+        <article class="hq-candidate-card ${index === 0 ? 'recommended' : ''}">
+          <div class="hq-candidate-score"><strong>${candidate.score}</strong><span>ROI</span></div>
+          <div class="hq-candidate-copy">
+            <p>${index === 0 ? '优先推荐' : `候选 ${index + 1}`} · ${escapeHtml(candidate.reason)}</p>
+            <h4>${escapeHtml(candidate.title)}</h4>
+            <small>完成标准：${escapeHtml(candidate.completionCriteria)}</small>
+            <i>${candidate.estimatedMinutes ? `预计 ${candidate.estimatedMinutes} 分钟` : '预计时间待补充'} · ${candidate.sourceSystemId === 'mainline' ? '主线系统信号，确认后创建任务' : '盒子已有任务，来源可追溯'}</i>
+          </div>
+          <div class="hq-candidate-actions">
+            <button class="primary" data-confirm-candidate="${escapeHtml(candidate.id)}">设为当前动作</button>
+            <button data-skip-candidate="${escapeHtml(candidate.id)}">跳过 4 小时</button>
+          </div>
+        </article>
+      `).join('')}</div>
+      <button class="hq-candidate-manual" id="hqManualCandidate">从盒子手动选择</button>
+    </section>
   `;
 }
 
@@ -321,8 +354,15 @@ function renderSystem(system) {
 function renderSnapshot(app, snapshot, { remote = false } = {}) {
   const brief = normalizeHqBrief(snapshot.brief, snapshot.reviewDate);
   const actionState = snapshot.actionState || buildHqActionState(getTasks(), brief, snapshot.reviewDate);
-  const maintenance = snapshot.commitments?.maintenance || [];
   const projects = snapshot.projects || [];
+  const candidates = buildHqActionCandidates({
+    tasks: getTasks(),
+    mainlines: getMainlines(),
+    projects,
+    brief,
+    reviewDate: snapshot.reviewDate,
+  });
+  const maintenance = snapshot.commitments?.maintenance || [];
   const decisions = snapshot.decisions || [];
   const closure = brief.yesterdayClosure || {};
   const riskCount = projects.filter((project) => ['blocked', 'stale', 'needs_action'].includes(project.health)).length;
@@ -361,6 +401,7 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
         <div class="hq-zone-label"><span>01</span><p>今日行动驾驶舱</p><small>只承诺 1 个主动作 + 2 个维护动作</small></div>
         <div class="hq-action-stack">
           ${renderActionSeat(actionState)}
+          ${renderActionCandidates(candidates, actionState)}
           <div class="hq-maintenance-grid">${renderMaintenance(maintenance)}</div>
         </div>
         <aside class="hq-closure-card">
@@ -425,7 +466,7 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
     </main>
   `;
 
-  bindPageEvents(app, snapshot);
+  bindPageEvents(app, snapshot, candidates);
 }
 
 function renderTaskOptions(tasks, selectedId, excludedIds = []) {
@@ -511,7 +552,7 @@ function openBriefEditor(app, snapshot) {
       ${strategicField}
       <label>当前行动席位
         <select class="input" id="hqCurrentAction">${renderTaskOptions(tasks, brief.currentActionTaskId)}</select>
-        <small>原始承诺完成后可从已有任务手动接棒；P1 不自动评分或创建候选。</small>
+        <small>候选引擎负责推荐；这里保留人工选择，用于并列分或主动替换。</small>
       </label>
       <div class="hq-form-pair">
         <label>维护动作 1
@@ -668,7 +709,7 @@ function openDecisionEditor(app, snapshot) {
   });
 }
 
-function bindPageEvents(app, snapshot) {
+function bindPageEvents(app, snapshot, candidates = []) {
   bindHqDimensionNav(app);
   app.querySelector('#hqBack').addEventListener('click', () => navigate('#home'));
   app.querySelector('#hqRefresh').addEventListener('click', async () => {
@@ -679,6 +720,97 @@ function bindPageEvents(app, snapshot) {
   app.querySelector('#hqEditBrief').addEventListener('click', () => openBriefEditor(app, snapshot));
   app.querySelector('#hqReviewEvidence')?.addEventListener('click', () => openReviewEvidence(snapshot));
   app.querySelector('#editBriefEmpty')?.addEventListener('click', () => openBriefEditor(app, snapshot));
+  app.querySelector('#hqManualCandidate')?.addEventListener('click', () => openBriefEditor(app, snapshot));
+  app.querySelectorAll('[data-confirm-candidate]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const candidate = candidates.find((item) => item.id === button.dataset.confirmCandidate);
+      if (!candidate) return;
+      button.disabled = true;
+      let task = getTasks().find((item) => item.id === candidate.taskId)
+        || getTasks().find((item) => item.candidateDedupeKey === candidate.dedupeKey)
+        || getTasks().find((item) => item.syncKey === `hq-candidate:${candidate.dedupeKey}`)
+        || null;
+      if (!task && candidate.sourceSystemId !== 'taskbox') {
+        const boxes = getBoxes();
+        const targetBox = boxes.find((item) => item.color === 'important' || item.name === '重要盒')
+          || boxes.find((item) => item.boxType === 'todo')
+          || boxes[0]
+          || null;
+        if (targetBox) {
+          task = addTask({
+            content: candidate.title,
+            note: candidate.completionCriteria,
+            boxId: candidate.suggestedBoxId || targetBox.id,
+            priority: 2,
+            durationMinutes: candidate.estimatedMinutes || 0,
+            mainlineId: candidate.mainlineId || null,
+            deviceContext: 'universal',
+            executionMode: 'self',
+            syncKey: `hq-candidate:${candidate.dedupeKey}`,
+            candidateDedupeKey: candidate.dedupeKey,
+            candidateSourceSystemId: candidate.sourceSystemId,
+            candidateSourceRef: candidate.sourceRef,
+            roiInputs: candidate.roiInputs,
+          });
+        }
+      }
+      if (!task || task.isCompleted || task.deleted) {
+        showToast('候选事实已变化，正在重新计算');
+        renderHqPage(app, { refreshRemote: true });
+        return;
+      }
+      const brief = normalizeHqBrief(snapshot.brief, snapshot.reviewDate);
+      const accepted = [...brief.candidateState.accepted, {
+        candidateId: candidate.id,
+        dedupeKey: candidate.dedupeKey,
+        taskId: task.id,
+        score: candidate.score,
+        acceptedAt: new Date().toISOString(),
+      }].slice(-20);
+      const nextBrief = {
+        ...brief,
+        currentActionTaskId: task.id,
+        candidateState: { ...brief.candidateState, accepted },
+        source: 'hq_candidate',
+        updatedAt: new Date().toISOString(),
+      };
+      writeCache({ brief: nextBrief });
+      updateTask(task.id, {
+        commitmentRole: 'primary', commitmentDate: snapshot.reviewDate,
+        commitmentSource: 'hq_candidate', pinLevel: 1, pinned: true,
+      });
+      try {
+        const queuedMutation = queueTaskboxApiMutation(`/hq/daily-briefs/${snapshot.reviewDate}`, {
+          method: 'POST', body: JSON.stringify(nextBrief),
+        });
+        if (!queuedMutation) throw new Error('api_disabled');
+        await queuedMutation;
+        showToast('已接棒：当前行动席位已更新');
+      } catch {
+        showToast('已在本机接棒，恢复连接后自动同步');
+      }
+      renderHqPage(app, { refreshRemote: true });
+    });
+  });
+  app.querySelectorAll('[data-skip-candidate]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const candidate = candidates.find((item) => item.id === button.dataset.skipCandidate);
+      if (!candidate) return;
+      const brief = normalizeHqBrief(snapshot.brief, snapshot.reviewDate);
+      const nextBrief = {
+        ...brief,
+        candidateState: dismissHqCandidate(brief.candidateState, candidate),
+        source: 'hq_candidate',
+        updatedAt: new Date().toISOString(),
+      };
+      writeCache({ brief: nextBrief });
+      queueTaskboxApiMutation(`/hq/daily-briefs/${snapshot.reviewDate}`, {
+        method: 'POST', body: JSON.stringify(nextBrief),
+      })?.catch(() => null);
+      showToast('已跳过，4 小时内不再推荐');
+      renderHqPage(app, { refreshRemote: false });
+    });
+  });
   app.querySelector('#viewTodayOutcomes')?.addEventListener('click', () => {
     const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
     const outcomes = app.querySelector('#hqTodayOutcomes');

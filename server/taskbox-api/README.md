@@ -51,6 +51,8 @@ SQLite schema lives in `schema.sql`. `raw_json` is a compatibility fallback; que
 
 Task availability and routing fields are `device_context`, `execution_mode`, `visible_after`, `deferred_at`, `defer_note`, and `progress_logs_json`. Run `npm run test:schema` before deployment to verify an existing database can be upgraded in place.
 
+P2-created candidate tasks use `hq-candidate:<dedupeKey>` as `syncKey`. Repeated `POST /v1/tasks` calls with the same value return the existing record, while `candidateDedupeKey`, `candidateSourceSystemId`, `candidateSourceRef`, and `roiInputs` remain available through `raw_json` compatibility fields.
+
 ## Health Check
 
 ```bash

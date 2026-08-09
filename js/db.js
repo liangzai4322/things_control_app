@@ -699,7 +699,7 @@ export function addTask(task) {
     const box = data.boxes.find((item) => item.id === task.boxId);
     const maxOrder = Math.max(-1, ...data.tasks.filter((t) => t.boxId === task.boxId && !t.isCompleted).map((t) => t.sortOrder));
     created = {
-      id: uid(),
+      id: task.id || uid(),
       content: task.content,
       boxId: task.boxId,
       priority: task.priority ?? null,
@@ -735,11 +735,15 @@ export function addTask(task) {
       deletedAt: null,
       note: task.note ?? '',
       completionReceipt: task.completionReceipt && typeof task.completionReceipt === 'object' ? { ...task.completionReceipt } : null,
+      candidateDedupeKey: task.candidateDedupeKey || null,
+      candidateSourceSystemId: task.candidateSourceSystemId || null,
+      candidateSourceRef: task.candidateSourceRef || null,
+      roiInputs: task.roiInputs && typeof task.roiInputs === 'object' ? { ...task.roiInputs } : null,
       sortOrder: maxOrder + 1,
       completedAt: task.completedAt ?? null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      syncKey: `${new Date().toISOString()}::${task.content}`,
+      syncKey: task.syncKey || `${new Date().toISOString()}::${task.content}`,
     };
     data.tasks.push(created);
     return data;

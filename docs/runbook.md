@@ -74,6 +74,8 @@ API 目录默认 `/opt/taskbox-api`，数据库默认 `/opt/taskbox-api/data/tas
 
 2026-08-09 已完成 P1 生产收尾：前端/桥接全量测试、API schema/HQ 集成测试通过，`npm run build` 生成 Build ID `b96ffcdfc533`，`git diff --check` 仅报告既存 LF/CRLF warning。API 发布后认证健康为 200、未认证为 401、生产 Origin 预检为 204，线上 HQ 字段探针确认`primaryTaskId`与`currentActionTaskId`同时存在，`taskbox-api.service`保持 active。P1 回滚点为`/opt/taskbox-api/backups/p1-action-seat-20260809T022214Z`；P0 回滚点继续保留。
 
+2026-08-09 P2 发布候选：候选专项、全量`npm test`、API schema/HQ/候选 syncKey 幂等与`npm run build`通过，Build ID 为`a485fa88a115`。浏览器完成原始承诺、战略战果、候选跳过、冷却空状态、排序、确认接棒，以及“无下一步主线→原生候选→双击确认→重要盒仅一条任务→项目恢复推进中”；390px/1440px 无横向溢出，控制台无错误。缓存回归覆盖“部分更新保留承诺、显式 null 仍清空”。发布后应核对 Pages Build ID、候选资源字符串和 API 健康状态。
+
 ### 任务中枢桥接验证
 
 桥接脚本位于`D:\note_new\06-日常输入_输出\.agents\skills\任务中枢\scripts\task_hub_bridge.py`。先使用`--dry-run`验证认证、盒子匹配和任务字段，不产生远端测试记录：

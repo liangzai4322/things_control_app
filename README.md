@@ -43,7 +43,7 @@ npm run preview
 - `docs/life-hq-roadmap.md`: 人生参谋部已实现边界与后续路线。
 - `docs/hq-primary-action-system-loop-v2.md`: 主动作席位、投产比候选和子系统闭环的唯一待实施方案；当前代码尚未实现其中的候选引擎与接棒语义。
 
-P0 已于 2026-08-07 完成端到端收尾：客户端同步、弱网、离线与缓存收敛路径通过，服务端显式 `primaryTaskId: null` 清空已发布生产。P1 已于 2026-08-09 完成生产发布：`primaryTaskId` 保留原始战略承诺，`currentActionTaskId` 表达当前行动席位，完成任务退出席位并进入今日战果，回执复用 `completionReceipt`；服务端 daily brief fence 兼容旧式 `generation` 和新式 per-client sequence，旧回放不会覆盖新事实。全量测试、Build ID `b96ffcdfc533`、API schema/HQ 集成测试、认证健康 200、未认证 401、生产 Origin 预检 204 与线上 HQ 字段探针均通过。P2–P4 的投产比候选、自动接棒和子系统 registry 仍是后续方案。
+P0 已于 2026-08-07 完成端到端收尾，P1 已于 2026-08-09 完成生产发布，生产 Build ID 为`b96ffcdfc533`。P2 已完成本地发布候选：现有任务经过资格门槛、九维 ROI 评分、55 分阈值、最多三项排序与四小时冷却，确认后幂等复用原任务；主线系统的“阻塞/缺下一步”事实可直接形成原生候选，确认后按稳定`syncKey`在重要盒幂等创建任务并关联原项目。部分 daily brief 更新与已有 brief 合并，只有显式`primaryTaskId: null`才清空原始承诺。全量测试、API 幂等测试、390px/1440px 及真实“完成→候选→跳过/确认→建任务→项目恢复”浏览器验收通过，本地 Build ID 为`a485fa88a115`；本批正在发布，P3–P4 仍待后续。
 
 ## 内容导出脚本
 

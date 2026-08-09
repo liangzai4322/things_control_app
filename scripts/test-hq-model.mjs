@@ -32,6 +32,7 @@ assert.equal(normalized.reviewDate, reviewDate);
 assert.deepEqual(normalized.maintenanceTaskIds, ['maintenance-a', 'maintenance-b']);
 assert.equal(normalized.strategicCommitmentTaskId, 'main');
 assert.equal(normalized.currentActionTaskId, 'main');
+assert.deepEqual(normalized.candidateState, { dismissals: {}, accepted: [] });
 
 const authoritativeClear = normalizeHqBrief({
   primaryTaskId: null,
@@ -73,6 +74,15 @@ assert.equal(scopedCache.brief, undefined);
 assert.equal(readHqCacheDate(scopedCache, reviewDate).brief.primaryTaskId, 'main');
 assert.equal(readHqCacheDate(scopedCache, '2026-07-31').brief.primaryTaskId, null);
 assert.deepEqual(readHqCacheDate(scopedCache, '2026-07-31').decisions, [{ id: 'decision' }]);
+const partialBriefCache = mergeHqCacheDate(scopedCache, {
+  brief: { reviewDate, currentActionTaskId: null, candidateState: { dismissals: { skipped: { until: '2026-07-30T12:00:00.000Z' } } } },
+}, reviewDate);
+const preservedStrategicBrief = readHqCacheDate(partialBriefCache, reviewDate).brief;
+assert.equal(preservedStrategicBrief.strategicCommitmentTaskId, 'main');
+assert.equal(preservedStrategicBrief.currentActionTaskId, null);
+assert.ok(preservedStrategicBrief.candidateState.dismissals.skipped);
+const clearedBriefCache = mergeHqCacheDate(partialBriefCache, { brief: { primaryTaskId: null } }, reviewDate);
+assert.equal(readHqCacheDate(clearedBriefCache, reviewDate).brief.strategicCommitmentTaskId, null);
 
 assert.equal(describeHqSyncState({ authBlocked: true, pendingCount: 2 }).label, '认证失效 · 2 项待同步');
 assert.equal(describeHqSyncState({ deadLetterCount: 1 }).label, '同步失败 · 1 项需处理');

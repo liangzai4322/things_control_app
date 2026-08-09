@@ -46,6 +46,14 @@ export function normalizeHqBrief(brief = {}, reviewDate = '') {
     strategicCommitmentTaskId,
     strategicCommitmentSnapshot,
     currentActionTaskId,
+    candidateState: brief.candidateState && typeof brief.candidateState === 'object'
+      ? {
+        dismissals: brief.candidateState.dismissals && typeof brief.candidateState.dismissals === 'object'
+          ? brief.candidateState.dismissals
+          : {},
+        accepted: Array.isArray(brief.candidateState.accepted) ? brief.candidateState.accepted : [],
+      }
+      : { dismissals: {}, accepted: [] },
     maintenanceTaskIds: Array.isArray(brief.maintenanceTaskIds)
       ? [...new Set(brief.maintenanceTaskIds.filter(Boolean))].slice(0, 2)
       : [],
@@ -84,6 +92,9 @@ export function mergeHqCacheDate(cache = {}, patch = {}, reviewDate = '') {
     : {};
   const existing = cache.byReviewDate?.[reviewDate] || legacy;
   const { decisions, ...scopedPatch } = patch;
+  const mergedBrief = scopedPatch.brief && typeof scopedPatch.brief === 'object'
+    ? { ...(existing.brief || {}), ...scopedPatch.brief }
+    : existing.brief;
   const next = {
     ...cache,
     ...(Array.isArray(decisions) ? { decisions } : {}),
@@ -92,6 +103,7 @@ export function mergeHqCacheDate(cache = {}, patch = {}, reviewDate = '') {
       [reviewDate]: {
         ...existing,
         ...scopedPatch,
+        ...(mergedBrief ? { brief: mergedBrief } : {}),
         reviewDate,
         updatedAt: new Date().toISOString(),
       },
