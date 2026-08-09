@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { webcrypto } from 'node:crypto';
 
 const storage = new Map();
-globalThis.crypto = webcrypto;
+if (!globalThis.crypto) globalThis.crypto = webcrypto;
 globalThis.localStorage = {
   getItem(key) { return storage.has(key) ? storage.get(key) : null; },
   setItem(key, value) { storage.set(key, String(value)); },

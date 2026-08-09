@@ -366,14 +366,121 @@ function todayKey() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Singapore' }).format(new Date());
 }
 
+function dateKeyInReviewTimezone(value) {
+  const date = new Date(value || 0);
+  if (Number.isNaN(date.getTime())) return '';
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Singapore',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function normalizeDailyBriefMutationMetadata(value) {
+  if (!value || typeof value !== 'object') return null;
+  const mutationId = String(value.mutationId || '').trim();
+  const clientId = String(value.clientId || '').trim();
+  const sequence = Number(value.sequence);
+  const generation = String(value.generation || '').trim();
+  if (!mutationId) return null;
+  if (!clientId) return { legacy: true, mutationId };
+  if (Number.isSafeInteger(sequence) && sequence >= 1) return { clientId, mutationId, sequence, generation };
+  if (generation) return { clientId, mutationId, generation };
+  return { legacy: true, mutationId };
+}
+
+function normalizeDailyBriefFence(value) {
+  if (!value || typeof value !== 'object' || !value.enforced) return null;
+  const byClient = Object.fromEntries(Object.entries(value.byClient || {})
+    .filter(([clientId, sequence]) => clientId && Number.isSafeInteger(Number(sequence)) && Number(sequence) >= 1)
+    .map(([clientId, sequence]) => [clientId, Number(sequence)]));
+  const lastGeneration = String(value.lastGeneration || '').trim();
+  return { enforced: true, byClient, lastGeneration };
+}
+function staleDailyBriefFenceError(brief) {
+  const error = new Error('daily_brief_stale_sequence');
+  error.code = 'daily_brief_stale_sequence';
+  error.status = 409;
+  error.brief = brief;
+  return error;
+}
+
 function upsertDailyBrief(reviewDate, patch = {}) {
   const existing = db.prepare('SELECT * FROM hq_daily_briefs WHERE review_date=?').get(reviewDate);
   const current = rowToDailyBrief(existing) || {};
+  const incomingMutation = normalizeDailyBriefMutationMetadata(patch._syncMutation);
+  const storedFence = normalizeDailyBriefFence(current._syncFence);
+  const hasMutationPayload = Object.keys(patch).some((key) => key !== '_syncMutation');
+  if (storedFence && hasMutationPayload) {
+    const staleClientSequence = Number.isSafeInteger(incomingMutation?.sequence)
+      && incomingMutation.sequence <= (storedFence.byClient[incomingMutation.clientId] || 0);
+    const staleGeneration = incomingMutation?.generation && storedFence.lastGeneration
+      && incomingMutation.generation <= storedFence.lastGeneration;
+    if (!incomingMutation || incomingMutation.legacy || staleClientSequence || staleGeneration) {
+      return current;
+    }
+  }
+  let nextFence = storedFence;
+  if (incomingMutation && !incomingMutation.legacy) {
+    const byClient = { ...(storedFence?.byClient || {}) };
+    if (Number.isSafeInteger(incomingMutation.sequence) && incomingMutation.sequence >= 1) {
+      byClient[incomingMutation.clientId] = incomingMutation.sequence;
+    }
+    const lastGeneration = incomingMutation.generation && incomingMutation.generation > (storedFence?.lastGeneration || '')
+      ? incomingMutation.generation
+      : (storedFence?.lastGeneration || '');
+    nextFence = { enforced: true, byClient, lastGeneration };
+  }
+const existingStrategicCommitmentTaskId = current.strategicCommitmentTaskId || current.primaryTaskId || null;
+  // P0 compatibility contract: an explicit primaryTaskId:null is the
+  // authoritative full clear, regardless of which P1 companion fields are
+  // present in the same patch. A standalone currentActionTaskId:null only
+  // vacates the action seat and preserves the original commitment.
+  const clearsStrategicCommitment = Object.hasOwn(patch, 'primaryTaskId')
+    && patch.primaryTaskId === null;
+  const assignsLegacyPrimary = Object.hasOwn(patch, 'primaryTaskId')
+    && Boolean(patch.primaryTaskId)
+    && !Object.hasOwn(patch, 'strategicCommitmentTaskId')
+    && !Object.hasOwn(patch, 'currentActionTaskId');
+  let strategicCommitmentTaskId = existingStrategicCommitmentTaskId;
+  if (clearsStrategicCommitment) strategicCommitmentTaskId = null;
+  else if (!existingStrategicCommitmentTaskId && Object.hasOwn(patch, 'strategicCommitmentTaskId')) strategicCommitmentTaskId = patch.strategicCommitmentTaskId || null;
+  else if (!existingStrategicCommitmentTaskId && Object.hasOwn(patch, 'primaryTaskId')) strategicCommitmentTaskId = patch.primaryTaskId || null;
+
+  const requestedSnapshot = patch.strategicCommitmentSnapshot && typeof patch.strategicCommitmentSnapshot === 'object'
+    ? patch.strategicCommitmentSnapshot
+    : null;
+  const strategicTask = strategicCommitmentTaskId
+    ? rowToTask(db.prepare('SELECT * FROM tasks WHERE id=?').get(strategicCommitmentTaskId))
+    : null;
+  const strategicCommitmentSnapshot = clearsStrategicCommitment
+    ? null
+    : current.strategicCommitmentSnapshot || (strategicCommitmentTaskId
+      ? {
+        taskId: strategicCommitmentTaskId,
+        content: String(requestedSnapshot?.content || strategicTask?.content || ''),
+        committedAt: requestedSnapshot?.committedAt || now(),
+      }
+      : null);
+
+  let currentActionTaskId = Object.hasOwn(current, 'currentActionTaskId')
+    ? (current.currentActionTaskId || null)
+    : strategicCommitmentTaskId;
+  if (clearsStrategicCommitment) currentActionTaskId = null;
+  else if (assignsLegacyPrimary && !existingStrategicCommitmentTaskId) currentActionTaskId = patch.primaryTaskId;
+  else if (Object.hasOwn(patch, 'currentActionTaskId')) currentActionTaskId = patch.currentActionTaskId || null;
   const next = {
     ...current,
     ...patch,
     reviewDate,
-    primaryTaskId: patch.primaryTaskId ?? current.primaryTaskId ?? null,
+    _syncFence: nextFence || undefined,
+    primaryTaskId: strategicCommitmentTaskId,
+    strategicCommitmentTaskId,
+    strategicCommitmentSnapshot,
+    currentActionTaskId,
     maintenanceTaskIds: Array.isArray(patch.maintenanceTaskIds)
       ? [...new Set(patch.maintenanceTaskIds.filter(Boolean))].slice(0, 2)
       : (current.maintenanceTaskIds || []),
@@ -423,12 +530,27 @@ function upsertDailyBrief(reviewDate, patch = {}) {
   return rowToDailyBrief(db.prepare('SELECT * FROM hq_daily_briefs WHERE review_date=?').get(reviewDate));
 }
 
-function selectCommitmentTasks(tasks, brief, reviewDate) {
-  const open = tasks.filter((task) => !task.deleted && !task.isCompleted && !task.isRecurringTemplate);
+function isOpenActionTask(task, mainlines = null) {
+  if (!task || task.deleted || task.isCompleted || task.isRecurringTemplate) return false;
+  const visibleAfter = task.visibleAfter ? new Date(task.visibleAfter).getTime() : 0;
+  if (Number.isFinite(visibleAfter) && visibleAfter > Date.now()) return false;
+  if (!task.mainlineId || !Array.isArray(mainlines)) return true;
+  const mainline = mainlines.find((item) => item.id === task.mainlineId);
+  return Boolean(mainline && ['active', 'maintenance'].includes(mainline.status));
+}
+
+function selectCommitmentTasks(tasks, brief, reviewDate, mainlines = null) {
+  const open = tasks.filter((task) => isOpenActionTask(task, mainlines));
   const byId = new Map(open.map((task) => [task.id, task]));
-  const primary = byId.get(brief?.primaryTaskId)
-    || open.find((task) => task.commitmentDate === reviewDate && task.commitmentRole === 'primary')
-    || open.find((task) => Number(task.pinLevel) === 1)
+  const strategicCommitmentTaskId = brief?.strategicCommitmentTaskId || brief?.primaryTaskId || null;
+  const currentActionTaskId = Object.hasOwn(brief || {}, 'currentActionTaskId')
+    ? (brief.currentActionTaskId || null)
+    : strategicCommitmentTaskId;
+  const primary = byId.get(currentActionTaskId)
+    || (!strategicCommitmentTaskId
+      ? open.find((task) => task.commitmentDate === reviewDate && task.commitmentRole === 'primary')
+        || open.find((task) => Number(task.pinLevel) === 1)
+      : null)
     || null;
   const maintenance = (brief?.maintenanceTaskIds || []).map((id) => byId.get(id)).filter(Boolean);
   [
@@ -440,6 +562,49 @@ function selectCommitmentTasks(tasks, brief, reviewDate) {
     }
   });
   return { primary, maintenance };
+}
+
+function buildHqActionState(tasks, brief, reviewDate, commitments, mainlines = null) {
+  const visible = tasks.filter((task) => task?.id && !task.deleted && !task.isRecurringTemplate);
+  const byId = new Map(visible.map((task) => [task.id, task]));
+  const strategicCommitmentTaskId = brief?.strategicCommitmentTaskId || brief?.primaryTaskId || commitments.primary?.id || null;
+  const currentActionTaskId = Object.hasOwn(brief || {}, 'currentActionTaskId')
+    ? (brief.currentActionTaskId || null)
+    : strategicCommitmentTaskId;
+  const strategicTask = byId.get(strategicCommitmentTaskId) || null;
+  const commitmentSnapshot = brief?.strategicCommitmentSnapshot && typeof brief.strategicCommitmentSnapshot === 'object'
+    ? brief.strategicCommitmentSnapshot
+    : null;
+  const strategicCommitment = strategicTask
+    ? { ...strategicTask, content: commitmentSnapshot?.content || strategicTask.content }
+    : commitmentSnapshot
+      ? {
+        id: commitmentSnapshot.taskId || strategicCommitmentTaskId,
+        content: commitmentSnapshot.content || '原始承诺任务记录暂不可用',
+        committedAt: commitmentSnapshot.committedAt || null,
+        unavailable: true,
+      }
+      : null;
+  const currentCandidate = byId.get(currentActionTaskId) || commitments.primary || null;
+  const currentAction = isOpenActionTask(currentCandidate, mainlines)
+    ? currentCandidate
+    : null;
+  const outcomes = visible
+    .filter((task) => task.isCompleted && dateKeyInReviewTimezone(task.completedAt || task.completionReceipt?.completedAt) === reviewDate)
+    .sort((left, right) => new Date(right.completedAt || right.updatedAt || 0) - new Date(left.completedAt || left.updatedAt || 0))
+    .map((task) => ({ ...task, isStrategicCommitment: task.id === strategicCommitmentTaskId }));
+  return {
+    status: currentAction
+      ? 'active'
+      : strategicCommitment?.isCompleted
+        ? 'awaiting_candidate'
+        : strategicCommitment
+          ? 'seat_empty'
+          : 'uncommitted',
+    strategicCommitment,
+    currentAction,
+    outcomes,
+  };
 }
 
 function buildProjectHealth(mainlines, tasks) {
@@ -484,7 +649,7 @@ function taskTouchesDate(task, reviewDate) {
     task.createdAt,
     task.updatedAt,
     ...(task.progressLogs || []).map((log) => log.at || log.updatedAt),
-  ].some((value) => String(value || '').slice(0, 10) === reviewDate);
+  ].some((value) => dateKeyInReviewTimezone(value) === reviewDate);
 }
 
 function validPeriodType(value) {
@@ -579,7 +744,7 @@ function buildPeriodDerived(info, tasks, projects) {
     task.updatedAt,
     ...(task.progressLogs || []).map((log) => log.at || log.updatedAt),
   ].some((value) => {
-    const date = String(value || '').slice(0, 10);
+    const date = dateKeyInReviewTimezone(value);
     return date >= info.startDate && date <= info.endDate;
   });
   const periodTasks = tasks.filter((task) => !task.deleted && !task.isRecurringTemplate && touchesRange(task));
@@ -596,7 +761,7 @@ function buildPeriodDerived(info, tasks, projects) {
     tasks: {
       touched: periodTasks.length,
       completed: periodTasks.filter((task) => {
-        const completedDate = String(task.completedAt || '').slice(0, 10);
+        const completedDate = dateKeyInReviewTimezone(task.completedAt);
         return task.isCompleted && completedDate >= info.startDate && completedDate <= info.endDate;
       }).length,
     },
@@ -720,20 +885,23 @@ function buildReviewStatus(reviewDate, tasks = [], requestedDays = 7) {
     completionRate: known.length ? Math.round((completedCount / known.length) * 100) : null,
     todayEvidence: {
       touched: touched.length,
-      completed: touched.filter((task) => task.isCompleted && String(task.completedAt || '').slice(0, 10) === reviewDate).length,
-      progress: touched.filter((task) => (task.progressLogs || []).some((log) => String(log.at || log.updatedAt || '').slice(0, 10) === reviewDate)).length,
+      completed: touched.filter((task) => task.isCompleted && dateKeyInReviewTimezone(task.completedAt) === reviewDate).length,
+      progress: touched.filter((task) => (task.progressLogs || []).some((log) => dateKeyInReviewTimezone(log.at || log.updatedAt) === reviewDate)).length,
     },
   };
 }
 
 function buildHqSnapshot(reviewDate) {
-  const brief = rowToDailyBrief(db.prepare('SELECT * FROM hq_daily_briefs WHERE review_date=?').get(reviewDate));
+  let brief = rowToDailyBrief(db.prepare('SELECT * FROM hq_daily_briefs WHERE review_date=?').get(reviewDate));
+  if (brief && (brief.strategicCommitmentTaskId || brief.primaryTaskId) && !brief.strategicCommitmentSnapshot) {
+    brief = upsertDailyBrief(reviewDate, {});
+  }
   const tasks = db.prepare('SELECT * FROM tasks ORDER BY sort_order, created_at').all().map(rowToTask);
   const mainlines = db.prepare('SELECT * FROM mainlines ORDER BY sort_order, created_at').all().map(rowToMainline);
   const decisions = db.prepare("SELECT * FROM hq_decisions WHERE status='open' ORDER BY CASE urgency WHEN 'high' THEN 0 ELSE 1 END, updated_at DESC")
     .all()
     .map(rowToDecision);
-  const commitments = selectCommitmentTasks(tasks, brief, reviewDate);
+  const commitments = selectCommitmentTasks(tasks, brief, reviewDate, mainlines);
   const aiTasks = tasks.filter((task) => !task.deleted && !task.isCompleted && task.executionMode === 'ai');
   return {
     reviewDate,
@@ -749,6 +917,7 @@ function buildHqSnapshot(reviewDate) {
       source: 'derived',
     },
     commitments,
+    actionState: buildHqActionState(tasks, brief, reviewDate, commitments, mainlines),
     projects: buildProjectHealth(mainlines, tasks),
     decisions,
     review: buildReviewStatus(reviewDate, tasks, 7),
@@ -890,7 +1059,14 @@ app.get('/v1/hq/daily-briefs/:date', (req, res) => {
 app.post('/v1/hq/daily-briefs/:date', (req, res) => {
   const reviewDate = validDateKey(req.params.date);
   if (!reviewDate) return res.status(400).json({ error: 'invalid_date' });
-  return res.json(upsertDailyBrief(reviewDate, req.body || {}));
+  try {
+    return res.json(upsertDailyBrief(reviewDate, req.body || {}));
+  } catch (error) {
+    if (error?.code === 'daily_brief_stale_sequence') {
+      return res.status(409).json({ error: error.code, brief: error.brief });
+    }
+    throw error;
+  }
 });
 
 app.get('/v1/hq/decisions', (req, res) => {
@@ -1018,7 +1194,7 @@ app.get('/v1/daily-snapshot', (req, res) => {
     task.createdAt,
     task.updatedAt,
     ...(task.progressLogs || []).map((log) => log.at || log.updatedAt),
-  ].some((value) => String(value || '').slice(0, 10) === reviewDate);
+  ].some((value) => dateKeyInReviewTimezone(value) === reviewDate);
   const selectedTasks = tasks.filter((task) => !task.deleted && !task.isRecurringTemplate && touchesDate(task));
   const mainlines = db.prepare('SELECT * FROM mainlines ORDER BY sort_order, created_at').all().map(rowToMainline);
   const brief = rowToDailyBrief(db.prepare('SELECT * FROM hq_daily_briefs WHERE review_date=?').get(reviewDate));
@@ -1026,8 +1202,8 @@ app.get('/v1/daily-snapshot', (req, res) => {
     reviewDate,
     brief,
     tasks: selectedTasks,
-    completedTasks: selectedTasks.filter((task) => task.isCompleted && String(task.completedAt || '').slice(0, 10) === reviewDate),
-    progressTasks: selectedTasks.filter((task) => (task.progressLogs || []).some((log) => String(log.at || log.updatedAt || '').slice(0, 10) === reviewDate)),
+    completedTasks: selectedTasks.filter((task) => task.isCompleted && dateKeyInReviewTimezone(task.completedAt) === reviewDate),
+    progressTasks: selectedTasks.filter((task) => (task.progressLogs || []).some((log) => dateKeyInReviewTimezone(log.at || log.updatedAt) === reviewDate)),
     mainlines,
     generatedAt: now(),
   });
@@ -1256,8 +1432,31 @@ app.delete('/v1/milestones/:id', (req, res) => {
   return res.status(204).end();
 });
 
+function normalizeTaskCompletionTransition(currentTask, patch, timestamp = now()) {
+  const next = { ...patch };
+  if (!Object.hasOwn(next, 'isCompleted')) return next;
+  if (next.isCompleted && !currentTask?.isCompleted) {
+    next.completedAt = next.completedAt || timestamp;
+    next.completionReceipt = next.completionReceipt || {
+      version: 1,
+      sourceTaskId: next.id || currentTask?.id || '',
+      createdAt: timestamp,
+      completedAt: next.completedAt,
+      content: String(next.content || currentTask?.content || ''),
+      note: String(next.note ?? currentTask?.note ?? ''),
+      source: 'taskbox-api',
+    };
+  } else if (!next.isCompleted && currentTask?.isCompleted) {
+    if (!Object.hasOwn(next, 'completedAt')) next.completedAt = null;
+    if (!Object.hasOwn(next, 'completionReceipt')) next.completionReceipt = null;
+  }
+  return next;
+}
+
 app.post('/v1/tasks', (req, res) => {
-  const task = { ...req.body, id: req.body.id || uid(), createdAt: req.body.createdAt || now(), updatedAt: now() };
+  const timestamp = now();
+  const initial = { ...req.body, id: req.body.id || uid(), createdAt: req.body.createdAt || timestamp, updatedAt: timestamp };
+  const task = normalizeTaskCompletionTransition(null, initial, timestamp);
   const existing = task.recurrenceKey
     ? db.prepare('SELECT * FROM tasks WHERE id=? OR recurrence_key=?').get(task.id, task.recurrenceKey)
     : (task.syncKey
@@ -1280,7 +1479,10 @@ app.post('/v1/tasks', (req, res) => {
 app.patch('/v1/tasks/:id', (req, res) => {
   const current = db.prepare('SELECT * FROM tasks WHERE id=?').get(req.params.id);
   if (!current) return res.status(404).json({ error: 'task_not_found' });
-  const next = mergeRaw(current.raw_json, { ...req.body, id: req.params.id, updatedAt: now() });
+  const timestamp = now();
+  const currentTask = rowToTask(current);
+  const taskPatch = normalizeTaskCompletionTransition(currentTask, { ...req.body, id: req.params.id }, timestamp);
+  const next = mergeRaw(current.raw_json, { ...taskPatch, updatedAt: timestamp });
   db.prepare(`
     UPDATE tasks SET box_id=@box_id, content=@content, is_completed=@is_completed, sort_order=@sort_order,
       priority=@priority, weight=@weight, points_value=@points_value, progress=@progress,

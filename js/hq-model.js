@@ -1,9 +1,51 @@
+import { isTaskReleased } from './task-visibility.js';
+
 const DAY_MS = 86400000;
+export const HQ_REVIEW_TIME_ZONE = 'Asia/Singapore';
+
+export function hqReviewDateKey(value) {
+  if (arguments.length === 0) value = new Date();
+  if (value === undefined || value === null || value === '') return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: HQ_REVIEW_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
 
 export function normalizeHqBrief(brief = {}, reviewDate = '') {
+  const clearsStrategicCommitment = Object.hasOwn(brief, 'primaryTaskId')
+    && brief.primaryTaskId === null;
+  const strategicCommitmentTaskId = clearsStrategicCommitment
+    ? null
+    : (brief.strategicCommitmentTaskId || brief.primaryTaskId || null);
+  const sourceSnapshot = brief.strategicCommitmentSnapshot && typeof brief.strategicCommitmentSnapshot === 'object'
+    ? brief.strategicCommitmentSnapshot
+    : null;
+  const strategicCommitmentSnapshot = !clearsStrategicCommitment
+    && sourceSnapshot && (sourceSnapshot.taskId || strategicCommitmentTaskId)
+    ? {
+      taskId: sourceSnapshot.taskId || strategicCommitmentTaskId,
+      content: String(sourceSnapshot.content || ''),
+      committedAt: sourceSnapshot.committedAt || null,
+    }
+    : null;
+  const currentActionTaskId = clearsStrategicCommitment
+    ? null
+    : Object.hasOwn(brief, 'currentActionTaskId')
+    ? (brief.currentActionTaskId || null)
+    : strategicCommitmentTaskId;
   return {
     reviewDate: brief.reviewDate || reviewDate,
-    primaryTaskId: brief.primaryTaskId || null,
+    primaryTaskId: strategicCommitmentTaskId,
+    strategicCommitmentTaskId,
+    strategicCommitmentSnapshot,
+    currentActionTaskId,
     maintenanceTaskIds: Array.isArray(brief.maintenanceTaskIds)
       ? [...new Set(brief.maintenanceTaskIds.filter(Boolean))].slice(0, 2)
       : [],
@@ -14,6 +56,79 @@ export function normalizeHqBrief(brief = {}, reviewDate = '') {
     notes: String(brief.notes || ''),
     source: brief.source || 'derived',
     updatedAt: brief.updatedAt || null,
+  };
+}
+
+export function readHqCacheDate(cache = {}, reviewDate = '') {
+  const scoped = cache.byReviewDate && typeof cache.byReviewDate === 'object'
+    ? cache.byReviewDate[reviewDate]
+    : null;
+  const legacy = !scoped && cache.brief?.reviewDate === reviewDate
+    ? { brief: cache.brief }
+    : {};
+  const selected = scoped && typeof scoped === 'object' ? scoped : legacy;
+  return {
+    ...selected,
+    reviewDate,
+    brief: normalizeHqBrief(selected.brief || {}, reviewDate),
+    decisions: Array.isArray(cache.decisions)
+      ? cache.decisions
+      : (Array.isArray(selected.decisions) ? selected.decisions : []),
+    updatedAt: selected.updatedAt || cache.updatedAt || null,
+  };
+}
+
+export function mergeHqCacheDate(cache = {}, patch = {}, reviewDate = '') {
+  const legacy = !cache.byReviewDate && cache.brief?.reviewDate === reviewDate
+    ? { brief: cache.brief }
+    : {};
+  const existing = cache.byReviewDate?.[reviewDate] || legacy;
+  const { decisions, ...scopedPatch } = patch;
+  const next = {
+    ...cache,
+    ...(Array.isArray(decisions) ? { decisions } : {}),
+    byReviewDate: {
+      ...(cache.byReviewDate || {}),
+      [reviewDate]: {
+        ...existing,
+        ...scopedPatch,
+        reviewDate,
+        updatedAt: new Date().toISOString(),
+      },
+    },
+    updatedAt: new Date().toISOString(),
+  };
+  delete next.brief;
+  return next;
+}
+
+export function describeHqSyncState(syncState = {}, { remote = false } = {}) {
+  const pending = Math.max(0, Number(syncState.pendingCount) || 0);
+  const dead = Math.max(0, Number(syncState.deadLetterCount) || 0);
+  if (syncState.authBlocked) return { className: 'pending', label: `认证失效 · ${pending} 项待同步` };
+  if (dead) return { className: 'unknown', label: `同步失败 · ${dead} 项需处理` };
+  if (syncState.offline || syncState.status === 'offline') {
+    return { className: 'unknown', label: `离线 · 本地事实${pending ? ` · ${pending} 项待同步` : ''}` };
+  }
+  if (pending) return { className: 'pending', label: `${pending} 项待同步` };
+  if (syncState.status === 'unknown') return { className: 'unknown', label: '数据未知 · 本地快照' };
+  return remote
+    ? { className: 'online', label: '云端已连接' }
+    : { className: '', label: '本地快照' };
+}
+
+export function freezeHqStrategicCommitmentSnapshot(briefInput = {}, tasks = [], reviewDate = '') {
+  const brief = normalizeHqBrief(briefInput, reviewDate);
+  if (brief.strategicCommitmentSnapshot || !brief.strategicCommitmentTaskId) return brief;
+  const task = tasks.find((item) => item.id === brief.strategicCommitmentTaskId);
+  if (!task) return brief;
+  return {
+    ...brief,
+    strategicCommitmentSnapshot: {
+      taskId: task.id,
+      content: String(task.content || ''),
+      committedAt: brief.updatedAt || new Date().toISOString(),
+    },
   };
 }
 
@@ -91,13 +206,16 @@ export function normalizePeriodSnapshot(snapshot = {}, periodType = 'week') {
   };
 }
 
-export function selectHqCommitments(tasks = [], briefInput = {}, reviewDate = '') {
+export function selectHqCommitments(tasks = [], briefInput = {}, reviewDate = '', mainlines = null) {
   const brief = normalizeHqBrief(briefInput, reviewDate);
-  const open = tasks.filter((task) => !task.deleted && !task.isCompleted && !task.isRecurringTemplate);
+  const open = tasks.filter((task) => isOpenCommitment(task, mainlines));
   const byId = new Map(open.map((task) => [task.id, task]));
-  const primary = byId.get(brief.primaryTaskId)
-    || open.find((task) => task.commitmentDate === reviewDate && task.commitmentRole === 'primary')
-    || open.find((task) => Number(task.pinLevel) === 1)
+  const hasStrategicCommitment = Boolean(brief.strategicCommitmentTaskId);
+  const primary = byId.get(brief.currentActionTaskId)
+    || (!hasStrategicCommitment
+      ? open.find((task) => task.commitmentDate === reviewDate && task.commitmentRole === 'primary')
+        || open.find((task) => Number(task.pinLevel) === 1)
+      : null)
     || null;
   const maintenance = brief.maintenanceTaskIds.map((id) => byId.get(id)).filter(Boolean);
   [
@@ -109,6 +227,140 @@ export function selectHqCommitments(tasks = [], briefInput = {}, reviewDate = ''
     }
   });
   return { primary, maintenance };
+}
+
+function completedOn(task, reviewDate) {
+  const completedAt = task?.completedAt || task?.completionReceipt?.completedAt;
+  return Boolean(task?.isCompleted && hqReviewDateKey(completedAt) === reviewDate);
+}
+
+export function buildHqActionState(tasks = [], briefInput = {}, reviewDate = '', mainlines = null) {
+  const brief = normalizeHqBrief(briefInput, reviewDate);
+  const visibleTasks = tasks.filter((task) => task?.id && !task.deleted && !task.isRecurringTemplate);
+  const byId = new Map(visibleTasks.map((task) => [task.id, task]));
+  const fallbackPrimary = !brief.strategicCommitmentTaskId
+    ? selectHqCommitments(visibleTasks, briefInput, reviewDate, mainlines).primary
+    : null;
+  const strategicTask = byId.get(brief.strategicCommitmentTaskId) || fallbackPrimary || null;
+  const strategicCommitment = strategicTask
+    ? {
+      ...strategicTask,
+      content: brief.strategicCommitmentSnapshot?.content || strategicTask.content,
+    }
+    : brief.strategicCommitmentSnapshot
+      ? {
+        id: brief.strategicCommitmentSnapshot.taskId,
+        content: brief.strategicCommitmentSnapshot.content || '原始承诺任务记录暂不可用',
+        committedAt: brief.strategicCommitmentSnapshot.committedAt,
+        unavailable: true,
+      }
+      : null;
+  const currentCandidate = byId.get(brief.currentActionTaskId) || fallbackPrimary || null;
+  const currentAction = isOpenCommitment(currentCandidate, mainlines) ? currentCandidate : null;
+  const outcomes = visibleTasks
+    .filter((task) => completedOn(task, reviewDate))
+    .sort((left, right) => taskVersion(right) - taskVersion(left))
+    .map((task) => ({
+      ...task,
+      isStrategicCommitment: task.id === brief.strategicCommitmentTaskId,
+      completionReceipt: task.completionReceipt && typeof task.completionReceipt === 'object'
+        ? task.completionReceipt
+        : null,
+    }));
+  const status = currentAction
+    ? 'active'
+    : strategicCommitment?.isCompleted
+      ? 'awaiting_candidate'
+      : strategicCommitment
+        ? 'seat_empty'
+        : 'uncommitted';
+  return {
+    status,
+    strategicCommitment,
+    currentAction,
+    outcomes,
+  };
+}
+
+function taskVersion(task = {}) {
+  const value = new Date(task.updatedAt || task.completedAt || task.createdAt || 0).getTime();
+  return Number.isFinite(value) ? value : 0;
+}
+
+function reconcileCommitmentTask(remoteTask, localById) {
+  if (!remoteTask?.id) return null;
+  const localTask = localById.get(remoteTask.id);
+  if (!localTask) return remoteTask;
+  const localVersion = taskVersion(localTask);
+  const remoteVersion = taskVersion(remoteTask);
+  if (localVersion > remoteVersion) return localTask;
+  if (localVersion === remoteVersion && localTask.isCompleted && !remoteTask.isCompleted) return localTask;
+  if (localVersion === remoteVersion && localTask.deleted && !remoteTask.deleted) return localTask;
+  return remoteTask;
+}
+
+function isOpenCommitment(task, mainlines = null) {
+  if (!task || task.deleted || task.isCompleted || task.isRecurringTemplate || !isTaskReleased(task)) return false;
+  if (!task.mainlineId || !Array.isArray(mainlines)) return true;
+  const mainline = mainlines.find((item) => item.id === task.mainlineId);
+  return Boolean(mainline && ['active', 'maintenance'].includes(mainline.status));
+}
+
+export function reconcileHqSnapshotCommitments(snapshot = {}, localTasks = []) {
+  const activeMainlines = Array.isArray(snapshot.projects) ? snapshot.projects : null;
+  const localById = new Map(localTasks.filter((task) => task?.id).map((task) => [task.id, task]));
+  const remoteCommitments = snapshot.commitments && typeof snapshot.commitments === 'object'
+    ? snapshot.commitments
+    : {};
+  const primaryCandidate = reconcileCommitmentTask(remoteCommitments.primary, localById);
+  const primary = isOpenCommitment(primaryCandidate, activeMainlines) ? primaryCandidate : null;
+  const maintenance = [];
+  (Array.isArray(remoteCommitments.maintenance) ? remoteCommitments.maintenance : []).forEach((task) => {
+    const candidate = reconcileCommitmentTask(task, localById);
+    if (!isOpenCommitment(candidate, activeMainlines)) return;
+    if (candidate.id === primary?.id || maintenance.some((item) => item.id === candidate.id)) return;
+    if (maintenance.length < 2) maintenance.push(candidate);
+  });
+  const reconciledSnapshot = {
+    ...snapshot,
+    commitments: {
+      ...remoteCommitments,
+      primary,
+      maintenance,
+    },
+  };
+  const remoteActionState = snapshot.actionState && typeof snapshot.actionState === 'object'
+    ? snapshot.actionState
+    : {};
+  const remoteTasks = [
+    remoteActionState.strategicCommitment,
+    remoteActionState.currentAction,
+    ...(Array.isArray(remoteActionState.outcomes) ? remoteActionState.outcomes : []),
+    primary,
+    ...maintenance,
+  ].filter((task) => task?.id);
+  const mergedById = new Map(remoteTasks.map((task) => [task.id, task]));
+  localTasks.filter((task) => task?.id).forEach((localTask) => {
+    const remoteTask = mergedById.get(localTask.id);
+    mergedById.set(localTask.id, remoteTask
+      ? reconcileCommitmentTask(remoteTask, new Map([[localTask.id, localTask]]))
+      : localTask);
+  });
+  return {
+    ...reconciledSnapshot,
+    actionState: buildHqActionState(
+      [...mergedById.values()],
+      snapshot.brief || { primaryTaskId: remoteCommitments.primary?.id || null },
+      snapshot.reviewDate || snapshot.brief?.reviewDate || '',
+      activeMainlines,
+    ),
+  };
+}
+
+export function resolveHqOutcomeTask(snapshot = {}, localTasks = [], taskId = '') {
+  return snapshot.actionState?.outcomes?.find((task) => task?.id === taskId)
+    || localTasks.find((task) => task?.id === taskId)
+    || null;
 }
 
 export function resolveTaskCommandContext(task = {}, mainlines = [], periodSnapshot = {}) {
@@ -172,7 +424,8 @@ export function buildLocalHqSnapshot({ reviewDate, brief, tasks = [], mainlines 
   return {
     reviewDate,
     brief: normalizedBrief,
-    commitments: selectHqCommitments(tasks, normalizedBrief, reviewDate),
+    commitments: selectHqCommitments(tasks, normalizedBrief, reviewDate, mainlines),
+    actionState: buildHqActionState(tasks, normalizedBrief, reviewDate, mainlines),
     projects: buildHqProjectHealth(mainlines, tasks),
     decisions: decisions.filter((decision) => decision.status !== 'resolved'),
     review: normalizeReviewStatus({}, reviewDate),

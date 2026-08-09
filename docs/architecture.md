@@ -1,6 +1,6 @@
 # TaskBox 架构
 
-最后核对：2026-07-31。
+最后核对：2026-08-07。
 
 ## 系统边界
 
@@ -28,22 +28,30 @@ GitHub Pages (dist)
 - `js/small-world.js`: 珍宝阁、弑神塔和转盘入口。
 - `js/mainline-page.js`: 主线、支线入口、里程碑和关联任务页面。
 - `js/branch-page.js`: 支线编辑器、独立详情、完成流程和支线行动编辑器。
+- `js/completion-card.js`: 完成回执快照、Canvas 分页绘制、PNG 保存和 Web Share 图片分享。
 - `scripts/build-app.mjs`: JavaScript/CSS 压缩、哈希、Service Worker 生成和 `dist/` 组装。
 
 ## 同步模型
 
 - 拉取服务器数据前会生成受限的遗留恢复计划：仅补传本地独有的语义化思路盒及其任务，避免把已主动删除的普通盒子重新创建。
 - 同名盒子合并时始终保留服务器记录 ID，本地任务通过 ID 映射归入服务器盒子，后续 PATCH 不会指向失效的本地 ID。
-- 任务合并先按 `id / syncKey / recurrenceKey` 去重，再对创建时间接近且时间语义一致的同内容副本做保守折叠。折叠后的主记录保存 `duplicateIds`，写入和删除会同步到别名记录。
+- 拉取开始前等待记录级写入队列稳定；云端与本地存在相同`id / syncKey / recurrenceKey`时，云端版本（包括`deleted=true` tombstone）是权威记录，避免旧浏览器时间戳让外部删除或替换失效。服务器从未见过的本地离线记录继续保留。
+- 每次记录级写入先持久化到`taskbox_api_mutation_outbox_v1`，成功后按 mutation ID 删除；失败项跨重载保留。主动拉取先重放 outbox，仍有失败项时停止整库合并，避免云端旧版本覆盖离线完成事实。
+- `taskbox_api_sync_state_v1`只保存最后成功/失败时间；HQ 根据 outbox、`navigator.onLine`和最近同步结果显示“云端已连接 / 待同步 / 离线 · 本地事实 / 数据未知”。
+- 同一来源任务完成身份合并后，再对创建时间接近且时间语义一致的同内容副本做保守折叠。折叠后的主记录保存 `duplicateIds`，写入和删除会同步到别名记录。
 
 1. 应用启动先读取本地缓存，确保首屏不等待网络。
 2. 存在 API Token 时拉取 `/v1/taskbox`、`/v1/points` 和小世界记录。
-3. 远端快照先标准化，再按记录 ID 与本地待同步数据合并。
-4. 本地 CRUD 立即更新 UI 和 localStorage，并把单条 `POST`、`PATCH` 或 `DELETE` 加入串行队列。
-5. 请求成功后清理对应待同步标记；失败保留本地状态，下一次写入或主动拉取继续处理。
+3. 远端快照先标准化；同身份任务采用云端版本，本地只补入云端没有对应身份的离线记录。
+4. 本地 CRUD 立即更新 UI 和 localStorage，把单条 `POST`、`PATCH` 或 `DELETE`同时写入持久化 outbox 和记录级串行队列。
+5. 请求成功后清理对应 outbox 项；失败保留本地状态，重载或主动拉取后按原顺序重放。
 6. `contentFingerprint` 只比较业务内容，避免 `updatedAt` 等噪声触发虚假的“Cloud synced”。
 
+人生参谋部读取`/hq/today`前会等待当前记录级变更队列结算。远端返回后，主动作和维护动作按任务`updatedAt`与最新本地记录合并：本地较新的完成/删除状态优先，版本相同时完成/删除优先，真正更新的远端版本仍可覆盖本地旧状态。HQ 页面同时使用渲染版本号和当前路由校验，避免更早发出的异步请求在切换面板后覆盖新页面。
+
 所有新增记录必须在客户端生成稳定 ID。服务端 `POST` 对同 ID 采用幂等更新，周期任务通过 `recurrenceKey` 额外防止重复实例。
+
+完成回执存在任务 `raw_json.completionReceipt` 中，不建立重复任务表。首次完成时固定标题、备注、完成时间、盒子、主线、支线和积分；之后编辑任务不会静默改写历史回执，只有用户选择“按最新任务内容重新生成”才更新快照。
 
 ## 数据表
 
@@ -103,9 +111,23 @@ GitHub Pages (dist)
 
 `hq_daily_briefs.raw_json`中的`reviewCompletedAt`用于区分“上一份日省生成的今日计划”和“今天已经完成的日省”；`reviewArtifacts`保存私有飞书入口、认知卡片入口和本地 Markdown 路径，不复制日省全文。
 
+`POST /v1/hq/daily-briefs/:date`区分“未传`primaryTaskId`”与“显式传`primaryTaskId: null`”：前者沿用原始战略承诺，后者清空承诺与席位。P1 生产语义中，`currentActionTaskId`驱动当前行动席位，`primaryTaskId`/`strategicCommitmentTaskId`保留原始承诺，完成证据进入`completionReceipt`/今日战果。daily brief 写入带 `_syncMutation`，服务端 fence 兼容旧式`generation`与新式 client sequence，过期回放返回当前 brief，不覆盖新事实。
+
 周期数据遵循“月省定资源边界 → 周省定唯一实验 → 日省定当天动作”的下行约束；执行证据从盒子向日省、周省、月省逐层聚合。周省和月省不批量创建普通任务，避免周期记分牌污染行动盒子。
 
 参谋部进入盒子使用`#box/:boxId/:taskId/hq-primary|hq-maintenance`深链；第四段明确链接来自参谋部及其任务角色。盒子内普通任务跳转可只使用前三段。路由把`taskId`与来源交给盒子详情页，详情页展开可能折叠的任务分组、滚动到目标任务并显示指挥上下文。周实验从周期缓存读取，并通过周期 API 异步刷新；所属项目和任务角色继续来自本地记录级任务字段或深链角色，因此离线时仍有基本上下文。
+
+### 任务中枢桥接
+
+任务中枢位于知识管理项目，是 TaskBox 的外部确认型写入端。它先把输入拆成明确任务、日期任务和 AI 可做任务，得到用户确认后才调用 API：
+
+```text
+用户 / 日省输入 → 任务中枢确认清单 → POST /tasks → TaskBox 执行
+                                             └→ HQ 共享任务视图
+明确主动作 / 维护动作 ───────────────────────→ POST /hq/daily-briefs/:date
+```
+
+普通任务只有一条 TaskBox 记录。HQ 复用任务、主线、支线和里程碑数据；仅驾驶舱承诺额外保存任务 ID。AI 任务通过`executionMode=ai`被 HQ 筛选，避免以“同步”为名制造双份记录。桥接脚本使用`syncKey`与内容、日期、盒子联合去重，并从现有私有 Token 位置读取认证。
 
 - 快照：`GET /taskbox`、`GET /points`。
 - 盒子：`POST /boxes`、`PATCH /boxes/:id`、`DELETE /boxes/:id`。

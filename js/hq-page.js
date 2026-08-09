@@ -1,17 +1,36 @@
 import {
   getBoxes,
+  getApiSyncState,
+  getPendingApiMutationCount,
   getMainlines,
   getTasks,
   pullDataFromCloud,
+  queueTaskboxApiMutation,
+  replayPendingApiMutations,
   requestTaskboxApi,
   updateTask,
+  waitForPendingApiMutations,
 } from './db.js';
 import { navigate, openSheet, showToast } from './app.js';
-import { buildLocalHqSnapshot, normalizeHqBrief, normalizeReviewStatus } from './hq-model.js';
+import {
+  buildHqActionState,
+  buildLocalHqSnapshot,
+  describeHqSyncState,
+  freezeHqStrategicCommitmentSnapshot,
+  hqReviewDateKey,
+  mergeHqCacheDate,
+  normalizeHqBrief,
+  normalizeReviewStatus,
+  readHqCacheDate,
+  reconcileHqSnapshotCommitments,
+  resolveHqOutcomeTask,
+} from './hq-model.js';
+import { openCompletionReceiptSheet } from './completion-card.js';
 import { bindHqDimensionNav, renderHqDimensionNav, renderHqPeriodPage } from './hq-period-page.js';
-import { localDateKey } from './task-utils.js';
+import { isTaskReleased } from './task-visibility.js';
 
 const HQ_CACHE_KEY = 'taskbox_hq_cache_v1';
+let hqRenderVersion = 0;
 const OUTCOME_FIELDS = [
   ['published', '发布'],
   ['conversations', '有效对话'],
@@ -43,7 +62,7 @@ function escapeHtml(value) {
     .replaceAll("'", '&#039;');
 }
 
-function readCache() {
+function readRawCache() {
   try {
     return JSON.parse(localStorage.getItem(HQ_CACHE_KEY) || '{}');
   } catch {
@@ -51,10 +70,14 @@ function readCache() {
   }
 }
 
-function writeCache(patch) {
-  const next = { ...readCache(), ...patch, updatedAt: new Date().toISOString() };
+function readCache(reviewDate = hqReviewDateKey()) {
+  return readHqCacheDate(readRawCache(), reviewDate);
+}
+
+function writeCache(patch, reviewDate = patch.brief?.reviewDate || patch.reviewDate || hqReviewDateKey()) {
+  const next = mergeHqCacheDate(readRawCache(), patch, reviewDate);
   localStorage.setItem(HQ_CACHE_KEY, JSON.stringify(next));
-  return next;
+  return readHqCacheDate(next, reviewDate);
 }
 
 function splitLines(value) {
@@ -91,23 +114,55 @@ function taskMeta(task) {
   return parts.join(' · ');
 }
 
-function renderPrimaryAction(task) {
+function formatCompletionTime(value) {
+  if (!value) return '完成时间未记录';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '完成时间未记录';
+  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+function renderStrategicCommitment(task) {
+  if (!task) return '';
+  const completedAt = task.completedAt || task.completionReceipt?.completedAt;
+  return `
+    <div class="hq-strategic-commitment ${task.isCompleted ? 'completed' : 'open'}">
+      <span>ORIGINAL COMMITMENT · 今日原始战略承诺</span>
+      <strong>${escapeHtml(task.content)}</strong>
+      <small>${task.isCompleted ? `已于 ${escapeHtml(formatCompletionTime(completedAt))} 完成，不因接棒动作改写` : '当日固定，用于日省核对承诺是否命中'}</small>
+    </div>
+  `;
+}
+
+function renderActionSeat(actionState) {
+  const strategic = actionState?.strategicCommitment || null;
+  const task = actionState?.currentAction || null;
   if (!task) {
+    const completed = actionState?.status === 'awaiting_candidate';
     return `
-      <button class="hq-primary-empty" id="editBriefEmpty">
-        <span>01</span>
-        <strong>今天还没有唯一主动作</strong>
-        <small>先确定一件能产生外部结果的行动。</small>
-      </button>
+      ${renderStrategicCommitment(strategic)}
+      <article class="hq-primary-empty ${completed ? 'commitment-complete' : ''}">
+        <span>${completed ? '✓' : '01'}</span>
+        <div>
+          <p>${completed ? 'CURRENT ACTION · 当前行动席位空置' : 'CURRENT ACTION · 当前行动席位'}</p>
+          <strong>${completed ? '今天的战略承诺已经闭环' : (strategic ? '当前没有执行中的接棒动作' : '今天还没有原始战略承诺')}</strong>
+          <small>${completed ? 'P1 不自动推荐低价值任务；可从已有盒子任务中手动选择接棒。' : '先确定一件能产生外部结果的行动。'}</small>
+        </div>
+        <div class="hq-empty-actions">
+          <button id="editBriefEmpty">${strategic ? '从盒子选择当前动作' : '设置今日承诺'}</button>
+          ${completed ? '<button class="subtle" id="viewTodayOutcomes">查看今日战果</button>' : ''}
+        </div>
+      </article>
     `;
   }
+  const isHandoff = strategic && strategic.id !== task.id;
   return `
+    ${renderStrategicCommitment(strategic)}
     <article class="hq-primary-action">
       <div class="hq-action-index"><span>NOW</span><strong>01</strong></div>
       <div class="hq-action-copy">
-        <p>今日唯一主动作</p>
+        <p>${isHandoff ? '当前行动席位 · 接棒动作' : '今日战略主动作 · 当前行动席位'}</p>
         <h2>${escapeHtml(task.content)}</h2>
-        <small>${escapeHtml(taskMeta(task) || '完成后留下明确证据')}</small>
+        <small>${escapeHtml(taskMeta(task) || (isHandoff ? '原始承诺保持不变，完成后进入今日战果' : '完成后留下明确证据'))}</small>
       </div>
       <div class="hq-action-progress">
         <span>${Math.max(0, Math.min(100, Number(task.progress) || 0))}%</span>
@@ -148,6 +203,30 @@ function renderOutcomes(outcomes = {}) {
       <span>${label}</span>
     </article>
   `).join('');
+}
+
+function renderTodayOutcomes(outcomes = []) {
+  if (!outcomes.length) {
+    return '<div class="hq-empty-panel compact"><strong>今天还没有完成回执</strong><span>在盒子完成任务后，原任务会带着完成证据进入这里。</span></div>';
+  }
+  return outcomes.map((task) => {
+    const receipt = task.completionReceipt || {};
+    const completedAt = task.completedAt || receipt.completedAt;
+    return `
+      <article class="hq-outcome-row ${task.isStrategicCommitment ? 'strategic' : ''}">
+        <span class="hq-outcome-check">✓</span>
+        <div>
+          <p>${task.isStrategicCommitment ? 'STRATEGIC WIN · 原始承诺' : 'DONE · 今日完成'}</p>
+          <strong>${escapeHtml(receipt.content || task.content)}</strong>
+          <small>${escapeHtml(receipt.note || task.note || '已完成，回执中暂未填写说明')}</small>
+        </div>
+        <div class="hq-outcome-meta">
+          <time>${escapeHtml(formatCompletionTime(completedAt))}</time>
+          <button data-outcome-receipt="${escapeHtml(task.id)}">查看回执</button>
+        </div>
+      </article>
+    `;
+  }).join('');
 }
 
 function renderReviewLoop(reviewInput, reviewDate) {
@@ -241,12 +320,14 @@ function renderSystem(system) {
 
 function renderSnapshot(app, snapshot, { remote = false } = {}) {
   const brief = normalizeHqBrief(snapshot.brief, snapshot.reviewDate);
-  const primary = snapshot.commitments?.primary || null;
+  const actionState = snapshot.actionState || buildHqActionState(getTasks(), brief, snapshot.reviewDate);
   const maintenance = snapshot.commitments?.maintenance || [];
   const projects = snapshot.projects || [];
   const decisions = snapshot.decisions || [];
   const closure = brief.yesterdayClosure || {};
   const riskCount = projects.filter((project) => ['blocked', 'stale', 'needs_action'].includes(project.health)).length;
+  const syncState = getApiSyncState();
+  const syncPresentation = describeHqSyncState(syncState, { remote });
 
   app.innerHTML = `
     <main class="page hq-page">
@@ -260,7 +341,7 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
             <small class="hq-role-badge">MAIN PANEL · 主面板</small>
           </div>
           <div class="hq-command-tools">
-            <span class="${remote ? 'online' : ''}">${remote ? '云端已连接' : '本地快照'}</span>
+            <span class="${syncPresentation.className}">${syncPresentation.label}</span>
             <button id="hqRefresh" aria-label="刷新">↻</button>
             <button id="hqEditBrief">编辑今日</button>
           </div>
@@ -279,7 +360,7 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
       <section class="hq-grid hq-action-zone">
         <div class="hq-zone-label"><span>01</span><p>今日行动驾驶舱</p><small>只承诺 1 个主动作 + 2 个维护动作</small></div>
         <div class="hq-action-stack">
-          ${renderPrimaryAction(primary)}
+          ${renderActionSeat(actionState)}
           <div class="hq-maintenance-grid">${renderMaintenance(maintenance)}</div>
         </div>
         <aside class="hq-closure-card">
@@ -303,6 +384,14 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
           <div><span>RESULTS</span><h2>今日外部结果</h2></div>
           <section>${renderOutcomes(brief.outcomes)}</section>
         </article>
+      </section>
+
+      <section class="hq-section hq-outcome-ledger" id="hqTodayOutcomes" tabindex="-1" aria-labelledby="hqTodayOutcomesTitle">
+        <div class="hq-section-head">
+          <div><span>01B / TODAY OUTCOMES</span><h2 id="hqTodayOutcomesTitle">今日战果</h2></div>
+          <p>${actionState.outcomes.length ? `${actionState.outcomes.length} 项完成事实` : '完成后自动进入，不占行动席位'}</p>
+        </div>
+        <div class="hq-outcome-list">${renderTodayOutcomes(actionState.outcomes)}</div>
       </section>
 
       <section class="hq-section" id="hqProjects">
@@ -348,6 +437,22 @@ function renderTaskOptions(tasks, selectedId, excludedIds = []) {
   ].join('');
 }
 
+function openOutcomeReceipt(task) {
+  if (!task?.isCompleted) return;
+  const box = getBoxes().find((item) => item.id === task.boxId) || {
+    id: task.boxId || 'archived-box',
+    name: task.completionReceipt?.boxName || '原任务盒',
+    color: task.completionReceipt?.boxColor || 'idea',
+  };
+  const mainline = task.mainlineId ? getMainlines().find((item) => item.id === task.mainlineId) : null;
+  openCompletionReceiptSheet({
+    task,
+    box,
+    mainline,
+    onPersist: (completionReceipt) => updateTask(task.id, { completionReceipt }),
+  });
+}
+
 async function openReviewEvidence(snapshot) {
   let daily = null;
   try {
@@ -380,23 +485,40 @@ async function openReviewEvidence(snapshot) {
 }
 
 function openBriefEditor(app, snapshot) {
-  const tasks = getTasks().filter((task) => !task.isCompleted);
+  const allTasks = getTasks();
+  const allMainlines = getMainlines();
+  const tasks = allTasks.filter((task) => {
+    if (task.deleted || task.isCompleted || task.isRecurringTemplate || !isTaskReleased(task)) return false;
+    if (!task.mainlineId) return true;
+    const mainline = allMainlines.find((item) => item.id === task.mainlineId);
+    return Boolean(mainline && ['active', 'maintenance'].includes(mainline.status));
+  });
   const brief = normalizeHqBrief(snapshot.brief, snapshot.reviewDate);
+  const strategicCommitment = allTasks.find((task) => task.id === brief.strategicCommitmentTaskId) || null;
+  const strategicCommitmentContent = brief.strategicCommitmentSnapshot?.content || strategicCommitment?.content || '';
+  const strategicField = brief.strategicCommitmentTaskId
+    ? `<div class="hq-locked-commitment"><span>今日原始战略承诺 · 已固定</span><strong>${escapeHtml(strategicCommitmentContent || '原始承诺任务记录暂不可用')}</strong><small>接棒动作只改变当前行动席位，不改写今天最初承诺。</small></div>`
+    : `<label>今日原始战略承诺
+        <select class="input" id="hqStrategicCommitment">${renderTaskOptions(tasks, brief.strategicCommitmentTaskId)}</select>
+        <small>首次保存后固定，用于日省核对承诺命中率。</small>
+      </label>`;
   const { root, close } = openSheet(`
     <div class="sheet-header">
       <div><p class="eyebrow">TODAY COMMAND</p><h2>编辑今日驾驶舱</h2></div>
       <button class="icon-btn" id="closeHqBrief">×</button>
     </div>
     <div class="hq-brief-form">
-      <label>唯一主动作
-        <select class="input" id="hqPrimaryTask">${renderTaskOptions(tasks, brief.primaryTaskId)}</select>
+      ${strategicField}
+      <label>当前行动席位
+        <select class="input" id="hqCurrentAction">${renderTaskOptions(tasks, brief.currentActionTaskId)}</select>
+        <small>原始承诺完成后可从已有任务手动接棒；P1 不自动评分或创建候选。</small>
       </label>
       <div class="hq-form-pair">
         <label>维护动作 1
-          <select class="input" id="hqMaintenanceOne">${renderTaskOptions(tasks, brief.maintenanceTaskIds[0], [brief.primaryTaskId])}</select>
+          <select class="input" id="hqMaintenanceOne">${renderTaskOptions(tasks, brief.maintenanceTaskIds[0], [brief.currentActionTaskId])}</select>
         </label>
         <label>维护动作 2
-          <select class="input" id="hqMaintenanceTwo">${renderTaskOptions(tasks, brief.maintenanceTaskIds[1], [brief.primaryTaskId])}</select>
+          <select class="input" id="hqMaintenanceTwo">${renderTaskOptions(tasks, brief.maintenanceTaskIds[1], [brief.currentActionTaskId])}</select>
         </label>
       </div>
       <div class="hq-form-pair">
@@ -417,12 +539,28 @@ function openBriefEditor(app, snapshot) {
 
   root.querySelector('#closeHqBrief').addEventListener('click', close);
   root.querySelector('#cancelHqBrief').addEventListener('click', close);
+  root.querySelector('#hqStrategicCommitment')?.addEventListener('change', (event) => {
+    const current = root.querySelector('#hqCurrentAction');
+    if (current && !current.value) current.value = event.target.value;
+  });
   root.querySelector('#saveHqBrief').addEventListener('click', async () => {
-    const primaryTaskId = root.querySelector('#hqPrimaryTask').value || null;
+    const strategicCommitmentTaskId = brief.strategicCommitmentTaskId
+      || root.querySelector('#hqStrategicCommitment')?.value
+      || null;
+    const selectedStrategicTask = allTasks.find((task) => task.id === strategicCommitmentTaskId) || null;
+    const strategicCommitmentSnapshot = brief.strategicCommitmentSnapshot
+      || (selectedStrategicTask ? {
+        taskId: selectedStrategicTask.id,
+        content: selectedStrategicTask.content,
+        committedAt: new Date().toISOString(),
+      } : null);
+    const selectedCurrentActionTaskId = root.querySelector('#hqCurrentAction').value || null;
+    const currentActionTaskId = selectedCurrentActionTaskId
+      || (!brief.strategicCommitmentTaskId ? strategicCommitmentTaskId : null);
     const maintenanceTaskIds = [
       root.querySelector('#hqMaintenanceOne').value,
       root.querySelector('#hqMaintenanceTwo').value,
-    ].filter((id, index, all) => id && id !== primaryTaskId && all.indexOf(id) === index);
+    ].filter((id, index, all) => id && id !== currentActionTaskId && all.indexOf(id) === index);
     const outcomes = Object.fromEntries(OUTCOME_FIELDS.map(([key]) => {
       const value = root.querySelector(`#hqOutcome_${key}`).value;
       return [key, value === '' ? null : Math.max(0, Number(value) || 0)];
@@ -430,7 +568,10 @@ function openBriefEditor(app, snapshot) {
     const nextBrief = {
       ...brief,
       reviewDate: snapshot.reviewDate,
-      primaryTaskId,
+      primaryTaskId: strategicCommitmentTaskId,
+      strategicCommitmentTaskId,
+      strategicCommitmentSnapshot,
+      currentActionTaskId,
       maintenanceTaskIds,
       stopDoing: splitLines(root.querySelector('#hqStopDoing').value),
       continueDoing: splitLines(root.querySelector('#hqContinueDoing').value),
@@ -450,7 +591,7 @@ function openBriefEditor(app, snapshot) {
         pinLevel: null,
         pinned: false,
       }));
-    if (primaryTaskId) updateTask(primaryTaskId, {
+    if (currentActionTaskId) updateTask(currentActionTaskId, {
       commitmentRole: 'primary',
       commitmentDate: snapshot.reviewDate,
       commitmentSource: 'hq',
@@ -466,10 +607,12 @@ function openBriefEditor(app, snapshot) {
     }));
 
     try {
-      await requestTaskboxApi(`/hq/daily-briefs/${snapshot.reviewDate}`, {
+      const queuedMutation = queueTaskboxApiMutation(`/hq/daily-briefs/${snapshot.reviewDate}`, {
         method: 'POST',
         body: JSON.stringify(nextBrief),
       });
+      if (!queuedMutation) throw new Error('api_disabled');
+      await queuedMutation;
       showToast('今日驾驶舱已保存并派发');
     } catch {
       showToast('已保存到本机，云端将在连接恢复后再同步');
@@ -536,6 +679,18 @@ function bindPageEvents(app, snapshot) {
   app.querySelector('#hqEditBrief').addEventListener('click', () => openBriefEditor(app, snapshot));
   app.querySelector('#hqReviewEvidence')?.addEventListener('click', () => openReviewEvidence(snapshot));
   app.querySelector('#editBriefEmpty')?.addEventListener('click', () => openBriefEditor(app, snapshot));
+  app.querySelector('#viewTodayOutcomes')?.addEventListener('click', () => {
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+    const outcomes = app.querySelector('#hqTodayOutcomes');
+    outcomes?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
+    outcomes?.focus({ preventScroll: true });
+  });
+  app.querySelectorAll('[data-outcome-receipt]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const task = resolveHqOutcomeTask(snapshot, getTasks(), button.dataset.outcomeReceipt);
+      openOutcomeReceipt(task);
+    });
+  });
   app.querySelector('#hqAddDecision').addEventListener('click', () => openDecisionEditor(app, snapshot));
   app.querySelectorAll('[data-open-task]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -576,28 +731,44 @@ function bindPageEvents(app, snapshot) {
 }
 
 export async function renderHqPage(app, { refreshRemote = true, dimension = 'day' } = {}) {
+  const renderVersion = ++hqRenderVersion;
   if (dimension !== 'day') {
     await renderHqPeriodPage(app, { dimension, refreshRemote });
     return;
   }
-  const reviewDate = localDateKey(new Date());
-  const cache = readCache();
+  const reviewDate = hqReviewDateKey();
+  const cache = readCache(reviewDate);
+  const localTasks = getTasks();
+  const localBrief = freezeHqStrategicCommitmentSnapshot(cache.brief, localTasks, reviewDate);
+  if (localBrief.strategicCommitmentSnapshot && !cache.brief?.strategicCommitmentSnapshot) {
+    writeCache({ brief: localBrief });
+  }
   const localSnapshot = buildLocalHqSnapshot({
     reviewDate,
-    brief: cache.brief,
+    brief: localBrief,
     decisions: cache.decisions || [],
-    tasks: getTasks(),
+    tasks: localTasks,
     mainlines: getMainlines(),
   });
   renderSnapshot(app, localSnapshot, { remote: false });
 
   if (!refreshRemote) return;
   try {
+    await waitForPendingApiMutations();
+    if (renderVersion !== hqRenderVersion) return;
+    await replayPendingApiMutations();
+    if (renderVersion !== hqRenderVersion) return;
+    if (getPendingApiMutationCount()) return;
     const remote = await requestTaskboxApi(`/hq/today?date=${encodeURIComponent(reviewDate)}`);
-    if (!remote) return;
-    writeCache({ brief: remote.brief, decisions: remote.decisions || [] });
-    renderSnapshot(app, remote, { remote: true });
+    const currentHash = window.location.hash || '#hq';
+    const isHqRoute = currentHash === '#hq' || currentHash.startsWith('#hq/');
+    if (!remote || renderVersion !== hqRenderVersion || !isHqRoute) return;
+    const reconciled = reconcileHqSnapshotCommitments(remote, getTasks());
+    writeCache({ brief: reconciled.brief, decisions: reconciled.decisions || [] });
+    renderSnapshot(app, reconciled, { remote: true });
   } catch {
-    // Local snapshot remains fully usable.
+    const currentHash = window.location.hash || '#hq';
+    const isHqRoute = currentHash === '#hq' || currentHash.startsWith('#hq/');
+    if (renderVersion === hqRenderVersion && isHqRoute) renderSnapshot(app, localSnapshot, { remote: false });
   }
 }

@@ -83,6 +83,202 @@ child.stderr.on('data', (chunk) => { serverError += chunk.toString('utf8'); });
     if (brief.reviewDate !== '2026-07-30' || brief.outcomes.published !== 1) {
       throw new Error('daily brief upsert mismatch');
     }
+    await request('/v1/boxes', 'POST', {
+      id: 'integration-brief-box',
+      name: '集成测试盒',
+      color: 'important',
+      sortOrder: 0,
+    });
+    await request('/v1/tasks', 'POST', {
+      id: 'integration-primary-task',
+      boxId: 'integration-brief-box',
+      content: '集成测试主动作',
+      isCompleted: false,
+      sortOrder: 0,
+    });
+    const assignedBrief = await request('/v1/hq/daily-briefs/2026-07-30', 'POST', {
+      primaryTaskId: 'integration-primary-task',
+    });
+    if (assignedBrief.primaryTaskId !== 'integration-primary-task'
+      || assignedBrief.strategicCommitmentTaskId !== 'integration-primary-task'
+      || assignedBrief.currentActionTaskId !== 'integration-primary-task'
+      || assignedBrief.strategicCommitmentSnapshot?.content !== '集成测试主动作') {
+      throw new Error('legacy daily brief assignment did not initialize P1 action semantics');
+    }
+    await request('/v1/tasks/integration-primary-task', 'PATCH', { content: '后续改名不应改写原始承诺' });
+    const frozenSnapshot = await request('/v1/hq/today?date=2026-07-30');
+    if (frozenSnapshot.actionState.strategicCommitment?.content !== '集成测试主动作') {
+      throw new Error('strategic commitment snapshot was not frozen');
+    }
+    const activeSnapshot = await request('/v1/hq/today?date=2026-07-30');
+    if (activeSnapshot.actionState.status !== 'active'
+      || activeSnapshot.actionState.strategicCommitment?.id !== 'integration-primary-task'
+      || activeSnapshot.actionState.currentAction?.id !== 'integration-primary-task') {
+      throw new Error('active action seat mismatch');
+    }
+    await request('/v1/tasks/integration-primary-task', 'PATCH', {
+      isCompleted: true,
+      completedAt: '2026-07-30T14:32:00.000Z',
+      completionReceipt: {
+        version: 1,
+        sourceTaskId: 'integration-primary-task',
+        content: '集成测试主动作',
+        note: '线上完成证据',
+        completedAt: '2026-07-30T14:32:00.000Z',
+      },
+    });
+    const completedSnapshot = await request('/v1/hq/today?date=2026-07-30');
+    if (completedSnapshot.actionState.status !== 'awaiting_candidate'
+      || completedSnapshot.actionState.currentAction !== null
+      || completedSnapshot.actionState.outcomes[0]?.completionReceipt?.note !== '线上完成证据') {
+      throw new Error('completed task did not leave the action seat and enter outcomes');
+    }
+    await request('/v1/tasks', 'POST', {
+      id: 'integration-handoff-task',
+      boxId: 'integration-brief-box',
+      content: '集成测试接棒动作',
+      isCompleted: false,
+      sortOrder: 1,
+    });
+    await request('/v1/hq/daily-briefs/2026-07-30', 'POST', {
+      primaryTaskId: 'integration-primary-task',
+      strategicCommitmentTaskId: 'integration-primary-task',
+      strategicCommitmentSnapshot: {
+        taskId: 'integration-primary-task',
+        content: '最初的战略承诺',
+        committedAt: '2026-07-30T08:00:00.000Z',
+      },
+      currentActionTaskId: 'integration-handoff-task',
+    });
+    const handoffSnapshot = await request('/v1/hq/today?date=2026-07-30');
+    if (handoffSnapshot.actionState.status !== 'active'
+      || handoffSnapshot.actionState.strategicCommitment?.content !== '集成测试主动作'
+      || handoffSnapshot.actionState.currentAction?.id !== 'integration-handoff-task') {
+      throw new Error('handoff action overwrote the original commitment or failed to occupy the seat');
+    }
+    const apiCompleted = await request('/v1/tasks/integration-handoff-task', 'PATCH', { isCompleted: true });
+    if (!apiCompleted.completedAt
+      || apiCompleted.completionReceipt?.sourceTaskId !== 'integration-handoff-task'
+      || apiCompleted.completionReceipt?.source !== 'taskbox-api') {
+      throw new Error('api-only completion did not receive a completion time and receipt');
+    }
+    const midnightOutcome = await request('/v1/tasks', 'POST', {
+      id: 'integration-midnight-outcome',
+      boxId: 'integration-brief-box',
+      content: '本地凌晨完成事项',
+      isCompleted: true,
+      completedAt: '2026-07-29T16:30:00.000Z',
+      sortOrder: 2,
+    });
+    if (midnightOutcome.completionReceipt?.sourceTaskId !== 'integration-midnight-outcome') {
+      throw new Error('completed task creation did not receive a receipt');
+    }
+    const midnightSnapshot = await request('/v1/hq/today?date=2026-07-30');
+    if (!midnightSnapshot.actionState.outcomes.some((task) => task.id === 'integration-midnight-outcome')) {
+      throw new Error('UTC+8 early-morning completion was omitted from today outcomes');
+    }
+    const midnightDailySnapshot = await request('/v1/daily-snapshot?date=2026-07-30');
+    if (!midnightDailySnapshot.completedTasks.some((task) => task.id === 'integration-midnight-outcome')) {
+      throw new Error('UTC+8 early-morning completion was omitted from daily evidence');
+    }
+    const seatClearedBrief = await request('/v1/hq/daily-briefs/2026-07-30', 'POST', {
+      currentActionTaskId: null,
+    });
+    if (seatClearedBrief.primaryTaskId !== 'integration-primary-task'
+      || seatClearedBrief.strategicCommitmentTaskId !== 'integration-primary-task'
+      || seatClearedBrief.currentActionTaskId !== null
+      || seatClearedBrief.strategicCommitmentSnapshot?.content !== assignedBrief.strategicCommitmentSnapshot?.content) {
+      throw new Error('clearing only the action seat also cleared the original commitment');
+    }
+    const fullP1ClearedBrief = await request('/v1/hq/daily-briefs/2026-07-30', 'POST', {
+      primaryTaskId: null,
+      strategicCommitmentTaskId: null,
+      strategicCommitmentSnapshot: null,
+      currentActionTaskId: null,
+    });
+    if (fullP1ClearedBrief.primaryTaskId !== null
+      || fullP1ClearedBrief.strategicCommitmentTaskId !== null
+      || fullP1ClearedBrief.currentActionTaskId !== null
+      || fullP1ClearedBrief.strategicCommitmentSnapshot !== null) {
+      throw new Error('full P1 daily brief clear mismatch');
+    }
+    await request('/v1/hq/daily-briefs/2026-07-30', 'POST', {
+      primaryTaskId: 'integration-primary-task',
+    });
+    const pairedNullClearedBrief = await request('/v1/hq/daily-briefs/2026-07-30', 'POST', {
+      primaryTaskId: null,
+      currentActionTaskId: null,
+    });
+    if (pairedNullClearedBrief.primaryTaskId !== null
+      || pairedNullClearedBrief.strategicCommitmentTaskId !== null
+      || pairedNullClearedBrief.currentActionTaskId !== null
+      || pairedNullClearedBrief.strategicCommitmentSnapshot !== null) {
+      throw new Error('paired primary/action null did not honor the P0 full-clear contract');
+    }
+    await request('/v1/hq/daily-briefs/2026-07-30', 'POST', {
+      primaryTaskId: 'integration-primary-task',
+    });
+    const authoritativeNullBrief = await request('/v1/hq/daily-briefs/2026-07-30', 'POST', {
+      primaryTaskId: null,
+      currentActionTaskId: 'integration-handoff-task',
+    });
+    if (authoritativeNullBrief.primaryTaskId !== null
+      || authoritativeNullBrief.strategicCommitmentTaskId !== null
+      || authoritativeNullBrief.currentActionTaskId !== null
+      || authoritativeNullBrief.strategicCommitmentSnapshot !== null) {
+      throw new Error('explicit primary null was not authoritative over companion P1 fields');
+    }
+    await request('/v1/hq/daily-briefs/2026-07-30', 'POST', {
+      primaryTaskId: 'integration-primary-task',
+    });
+    const legacyClearedBrief = await request('/v1/hq/daily-briefs/2026-07-30', 'POST', {
+      primaryTaskId: null,
+    });
+    if (legacyClearedBrief.primaryTaskId !== null
+      || legacyClearedBrief.strategicCommitmentTaskId !== null
+      || legacyClearedBrief.currentActionTaskId !== null
+      || legacyClearedBrief.strategicCommitmentSnapshot !== null) {
+      throw new Error('legacy daily brief primary clear mismatch');
+    }
+    const fencedNew = await request('/v1/hq/daily-briefs/2026-07-31', 'POST', {
+      primaryTaskId: 'integration-primary-task',
+      currentActionTaskId: 'integration-handoff-task',
+      _syncMutation: {
+        clientId: 'tab-new', mutationId: 'new',
+        generation: '0000000002000|00000001|new', issuedAt: '2026-07-31T00:00:02.000Z',
+      },
+    });
+    if (fencedNew.primaryTaskId !== 'integration-primary-task'
+      || fencedNew.currentActionTaskId !== 'integration-handoff-task') {
+      throw new Error('new fenced daily brief write mismatch');
+    }
+    const delayedOld = await request('/v1/hq/daily-briefs/2026-07-31', 'POST', {
+      primaryTaskId: null,
+      currentActionTaskId: null,
+      _syncMutation: {
+        clientId: 'tab-old', mutationId: 'old',
+        generation: '0000000001000|00000001|old', issuedAt: '2026-07-31T00:00:01.000Z',
+      },
+    });
+    if (delayedOld.primaryTaskId !== 'integration-primary-task'
+      || delayedOld.currentActionTaskId !== 'integration-handoff-task'
+      || delayedOld._syncMutation?.mutationId !== 'new') {
+      throw new Error('delayed OLD daily brief mutation crossed the monotonic fence');
+    }
+    const fencedNull = await request('/v1/hq/daily-briefs/2026-07-31', 'POST', {
+      primaryTaskId: null,
+      currentActionTaskId: 'integration-handoff-task',
+      _syncMutation: {
+        clientId: 'tab-new', mutationId: 'newer-null',
+        generation: '0000000003000|00000001|newer-null', issuedAt: '2026-07-31T00:00:03.000Z',
+      },
+    });
+    if (fencedNull.primaryTaskId !== null
+      || fencedNull.strategicCommitmentTaskId !== null
+      || fencedNull.currentActionTaskId !== null
+      || fencedNull.strategicCommitmentSnapshot !== null) {
+      throw new Error('fenced primary null did not preserve the P0 authoritative-clear contract');
+    }
     await request('/v1/hq/decisions', 'POST', {
       id: 'integration-decision',
       title: '集成测试决策',

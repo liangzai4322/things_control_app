@@ -1,6 +1,6 @@
 # TaskBox / things_control_app
 
-最后核对：2026-07-31。
+最后核对：2026-08-09。
 
 TaskBox 是一个本地优先的个人行动与决策系统：人生参谋部是默认主面板，负责日、周、月三个时间尺度的判断、项目健康和行动派发；盒子是执行副面板，负责任务、场景、进度和证据。积分、抽奖转盘和“小世界”承担游戏化反馈。这个目录也放了一些内容导出脚本，用于把 SCYS、ZSXQ、飞书等来源整理成 Markdown 或 JSON 产物。
 
@@ -20,6 +20,9 @@ npm run preview
 - 页面顶部的“参谋部 / 盒子”切换器在所有路由保持可见。
 - 参谋部任务通过 `#box/:boxId/:taskId/hq-primary|hq-maintenance` 精确下钻，盒子显示周实验、所属项目和任务角色。
 - 执行结构是“主线 → 支线 → 任务”；`#mainline/:id` 管理项目全局，`#branch/:id` 用于独立推进、完成和复盘支线。
+- 任务完成时生成可分享的“完成回执”；回执固定完成时的标题、备注和归属，长备注自动拆成多张 PNG。
+- 参谋部读取远端驾驶舱前会等待当前任务写入，并按任务版本合并本地完成状态，避免旧云端快照让已完成主动作重新出现；整库拉取时，云端同身份记录（含删除 tombstone）覆盖旧浏览器副本，本地只保留服务器从未见过的离线记录。
+- 记录级写入先进入浏览器持久化 outbox：离线失败后显示“待同步”，重载不丢失，恢复连接后按原顺序重放；outbox 未清空时暂停云端整库覆盖。
 
 - `index.html`: PWA 壳和 `js/app.js` 入口。
 - `css/style.css`: 全局界面样式。
@@ -35,9 +38,12 @@ npm run preview
 
 - `docs/taskbox-core-features.md`: 产品功能和业务规则。
 - `docs/architecture.md`: 前端、同步、数据库与 API 架构。
-- `docs/runbook.md`: 本地验证、部署、备份和回滚。
+- `docs/runbook.md`: 本地验证、部署、任务中枢桥接、备份和回滚。
 - `docs/production-build.md`: 线上压缩构建规则。
 - `docs/life-hq-roadmap.md`: 人生参谋部已实现边界与后续路线。
+- `docs/hq-primary-action-system-loop-v2.md`: 主动作席位、投产比候选和子系统闭环的唯一待实施方案；当前代码尚未实现其中的候选引擎与接棒语义。
+
+P0 已于 2026-08-07 完成端到端收尾：客户端同步、弱网、离线与缓存收敛路径通过，服务端显式 `primaryTaskId: null` 清空已发布生产。P1 已于 2026-08-09 完成生产发布：`primaryTaskId` 保留原始战略承诺，`currentActionTaskId` 表达当前行动席位，完成任务退出席位并进入今日战果，回执复用 `completionReceipt`；服务端 daily brief fence 兼容旧式 `generation` 和新式 per-client sequence，旧回放不会覆盖新事实。全量测试、Build ID `b96ffcdfc533`、API schema/HQ 集成测试、认证健康 200、未认证 401、生产 Origin 预检 204 与线上 HQ 字段探针均通过。P2–P4 的投产比候选、自动接棒和子系统 registry 仍是后续方案。
 
 ## 内容导出脚本
 

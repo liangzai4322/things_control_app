@@ -1,5 +1,12 @@
-import { getBoxes, getSettings, invalidateDataCache, pullDataFromCloud } from './db.js';
+import {
+  bindTaskboxOnlineRecovery,
+  getBoxes,
+  getSettings,
+  invalidateDataCache,
+  pullDataFromCloud,
+} from './db.js';
 import { renderHome } from './home.js';
+import { createStorageRefreshScheduler } from './app-storage.js';
 
 const app = document.getElementById('app');
 const ROUTE_MODULE_CACHE = {};
@@ -278,16 +285,21 @@ function scheduleBackgroundWork() {
 }
 
 window.addEventListener('hashchange', route);
+const scheduleStorageRefresh = createStorageRefreshScheduler({
+  invalidate: invalidateDataCache,
+  refresh: () => route({ preserveScroll: true }),
+});
 window.addEventListener('storage', (event) => {
-  if (event.key === 'taskbox_data' || event.key === 'taskbox_points_cache') {
-    if (event.key === 'taskbox_data') invalidateDataCache();
-    route({ preserveScroll: true });
-  }
+  scheduleStorageRefresh(event.key || '');
 });
 window.addEventListener('DOMContentLoaded', async () => {
   getBoxes();
   setupAudioUnlock();
   setupKeyboardInsets();
+  bindTaskboxOnlineRecovery(({ pullResult, error } = {}) => {
+    route({ preserveScroll: true });
+    if (!error && pullResult === 'merged') showToast('连接已恢复，云端数据已更新');
+  });
   route();
   scheduleBackgroundWork();
 });

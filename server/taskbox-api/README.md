@@ -43,7 +43,7 @@ npm run import-json -- /opt/taskbox-api/seed
 - `GET /v1/hq/today`: aggregated Life HQ cockpit for one date.
 - `GET /v1/hq/review-status`: review sync state, evidence counts, and 3-31 day commitment trend.
 - `/v1/hq/periods`: weekly/monthly review list, current snapshot, period upsert and delete.
-- `GET/POST /v1/hq/daily-briefs/:date`: daily command brief and review result upsert.
+- `GET/POST /v1/hq/daily-briefs/:date`: daily command brief and review result upsert. Omitting `primaryTaskId` preserves the original strategic commitment; sending `primaryTaskId: null` clears commitment and action seat. P1 production builds use `currentActionTaskId` for the current action seat and `_syncMutation`/`_syncFence` to reject stale generation or client-sequence replays.
 - `/v1/hq/decisions`: decision queue record-level CRUD.
 - `GET /v1/daily-snapshot`: evidence snapshot consumed by 日省.
 
@@ -58,3 +58,7 @@ curl -H "Authorization: Bearer $TASKBOX_API_TOKEN" http://127.0.0.1:3107/health
 ```
 
 Expected behavior is authenticated `200`, unauthenticated `401`, and allowed-origin CORS preflight `204`. See `../../docs/architecture.md` and `../../docs/runbook.md` for the full integration and deployment contract.
+
+Production verification on 2026-08-07 passed all three status checks plus an explicit `primaryTaskId: null` clear/readback/restore probe. The rollback snapshot for that release is `/opt/taskbox-api/backups/p0-null-clear-20260807T060141Z`.
+
+P1 production verification on 2026-08-09 passed schema/HQ integration tests, authenticated health `200`, unauthenticated health `401`, production-origin preflight `204`, and an HQ shape probe containing both `primaryTaskId` and `currentActionTaskId`. The P1 rollback snapshot is `/opt/taskbox-api/backups/p1-action-seat-20260809T022214Z`.

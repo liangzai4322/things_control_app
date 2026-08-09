@@ -1,4 +1,4 @@
-import {
+﻿import {
   getFirstOccurrenceAt,
   getNextOccurrenceAt,
   getOccurrenceDueAt,
@@ -22,6 +22,38 @@ import {
 } from './box-types.js';
 
 const STORAGE_KEY = 'taskbox_data';
+const API_MUTATION_OUTBOX_KEY = 'taskbox_api_mutation_outbox_v1';
+const API_MUTATION_DEAD_LETTER_KEY = 'taskbox_api_mutation_dead_letters_v1';
+const API_SYNC_STATE_KEY = 'taskbox_api_sync_state_v1';
+const API_MUTATION_ENTRY_PREFIX = `${API_MUTATION_OUTBOX_KEY}:entry:`;
+const API_MUTATION_DEAD_LETTER_ENTRY_PREFIX = `${API_MUTATION_DEAD_LETTER_KEY}:entry:`;
+const API_MUTATION_DRAIN_LEASE_KEY = `${API_MUTATION_OUTBOX_KEY}:drain_lease`;
+const API_MUTATION_DRAIN_LOCK_NAME = 'taskbox-api-mutation-outbox-drain-v1';
+const API_MUTATION_GENERATION_KEY = `${API_MUTATION_OUTBOX_KEY}:generation`;
+const API_MUTATION_CLIENT_ID_KEY = `${API_MUTATION_OUTBOX_KEY}:client_id`;
+const API_MUTATION_LEGACY_ACK_PREFIX = `${API_MUTATION_OUTBOX_KEY}:legacy_ack:`;
+const API_MUTATION_DRAIN_LEASE_MS = 30000;
+const API_MUTATION_DRAIN_LEASE_RETRY_MS = 40;
+const API_MUTATION_DRAIN_LEASE_SAFETY_MS = 2000;
+const API_REQUEST_TIMEOUT_MS = 15000;
+const API_RECOVERY_RETRY_BASE_MS = 1000;
+const API_RECOVERY_RETRY_MAX_MS = 60000;
+const API_RECOVERY_RETRY_MAX_EXPONENT = 6;
+export const TASKBOX_CALENDAR_TIME_ZONE = 'Asia/Singapore';
+
+export function taskboxCalendarDateKey(value = new Date()) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: TASKBOX_CALENDAR_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
 
 const DEFAULT_BOXES = [
   { name: '重要盒', color: 'important', icon: '⭐', sortOrder: 0, isDefault: true, description: '放这里的，都是不做会后悔的事。别拖了，一件一件来。' },
@@ -59,6 +91,10 @@ let dataCache = null;
 let dataCacheDay = '';
 const apiMutationQueues = new Map();
 let apiMutationVersion = 0;
+let replayingApiMutations = null;
+const apiMutationClientId = readOrCreateApiMutationClientId();
+let apiMutationSequence = 0;
+const apiMutationDrainOwner = uid();
 let ensuringRecurringTasks = false;
 const SOUND_CACHE = new Map();
 const BOX_COLOR_POOL = ['important', 'relax', 'reward', 'misc', 'punish', 'study', 'health'];
@@ -68,9 +104,10 @@ const DEFAULT_FLOMO_WEBHOOK = '';
 export const DEFAULT_DAILY_QUOTE = '把任务放进盒子，把注意力还给当下。';
 
 export function uid() {
-  return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return globalThis.crypto?.randomUUID
+    ? globalThis.crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
-
 function normalize(data = {}) {
   return {
     boxes: (Array.isArray(data.boxes) ? data.boxes : []).map((b) => {
@@ -422,7 +459,7 @@ function dedupeLocalTasks(data) {
 }
 
 function applyDailyTaskRefresh(data) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = taskboxCalendarDateKey();
   if (data.meta.lastDailyReset === today) return data;
 
   const targetBoxNames = new Set(['放松盒', '奖励盒', '惩罚盒']);
@@ -449,7 +486,7 @@ function enforceUniqueBoxColors(data) {
 }
 
 export function getData() {
-  const today = new Date().toDateString();
+  const today = taskboxCalendarDateKey();
   if (dataCache && dataCacheDay === today) return dataCache;
   const raw = localStorage.getItem(STORAGE_KEY);
   if (!raw) return seed();
@@ -475,7 +512,7 @@ export function saveData(data, { skipCloud = false } = {}) {
   const normalized = normalize(data);
   normalized.meta.updatedAt = new Date().toISOString();
   dataCache = normalized;
-  dataCacheDay = new Date().toDateString();
+  dataCacheDay = taskboxCalendarDateKey();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
   if (!skipCloud) scheduleCloudPush();
 }
@@ -1004,7 +1041,7 @@ export async function addBox({ name, description = '', boxType = 'task', typeCon
       name: cleanName,
       description: description.trim(),
       color: nextUniqueBoxColor(data.boxes),
-      icon: '📦',
+      icon: '馃摝',
       sortOrder: data.boxes.length,
       isDefault: false,
       boxType: normalizedType,
@@ -1266,7 +1303,7 @@ export function restoreTask(task) {
 
 export function updateTask(taskId, patch) {
   const taskPatch = { ...(patch || {}) };
-  const cloudCriticalKeys = new Set(['content', 'boxId', 'priority', 'weight', 'pointsValue', 'progress', 'pinLevel', 'pinned', 'scheduledAt', 'dueDate', 'isCompleted', 'deleted', 'deletedAt', 'sortOrder', 'completedAt', 'note', 'completionReceipt', 'recurrence', 'nextRunAt', 'occurrenceStatus', 'itemType', 'durationMinutes', 'cooldownMinutes', 'usageCount', 'lastUsedAt', 'pointsCost', 'url', 'tags', 'favorite', 'archived', 'mainlineId', 'branchId', 'milestoneId', 'deviceContext', 'executionMode', 'visibleAfter', 'deferredAt', 'deferNote', 'progressLogs']);
+  const cloudCriticalKeys = new Set(['content', 'boxId', 'priority', 'weight', 'pointsValue', 'progress', 'pinLevel', 'pinned', 'scheduledAt', 'dueDate', 'isCompleted', 'deleted', 'deletedAt', 'sortOrder', 'completedAt', 'note', 'completionReceipt', 'recurrence', 'nextRunAt', 'occurrenceStatus', 'itemType', 'durationMinutes', 'cooldownMinutes', 'usageCount', 'lastUsedAt', 'pointsCost', 'url', 'tags', 'favorite', 'archived', 'mainlineId', 'branchId', 'milestoneId', 'deviceContext', 'executionMode', 'visibleAfter', 'deferredAt', 'deferNote', 'progressLogs', 'commitmentRole', 'commitmentDate', 'commitmentSource']);
   const shouldCloudPush = Object.keys(taskPatch).some((key) => cloudCriticalKeys.has(key));
   let updated = null;
   let previous = null;
@@ -1565,7 +1602,7 @@ export function exportDailySummary() {
   const data = getData();
   const targetNames = new Set(['重要盒', '待办盒']);
   const boxMap = new Map(data.boxes.map((b) => [b.id, b.name]));
-  const today = new Date().toISOString().slice(0, 10);
+  const today = taskboxCalendarDateKey();
   const now = new Date().toISOString();
   const since = data.meta.lastSummaryExportAt ? new Date(data.meta.lastSummaryExportAt) : null;
 
@@ -1649,22 +1686,474 @@ function getApiConfig(settings = getSettings()) {
 }
 
 async function apiRequest(path, options = {}) {
+  const {
+    timeoutMs = Number(globalThis.__TASKBOX_API_REQUEST_TIMEOUT_MS__) || API_REQUEST_TIMEOUT_MS,
+    signal: upstreamSignal,
+    ...requestOptions
+  } = options;
   const config = getApiConfig();
   if (!config.enabled) return null;
-  const response = await fetch(`${config.endpoint}${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${config.token}`,
-      ...(options.headers || {}),
-    },
-  });
-  if (!response.ok) throw new Error(`api_${response.status}`);
-  if (response.status === 204) return null;
-  return response.json();
+  const controller = new AbortController();
+  const abortFromUpstream = () => controller.abort(upstreamSignal?.reason);
+  if (upstreamSignal?.aborted) abortFromUpstream();
+  else upstreamSignal?.addEventListener?.('abort', abortFromUpstream, { once: true });
+  const timeout = setTimeout(() => controller.abort('taskbox_api_timeout'), Math.max(1, timeoutMs));
+  try {
+    const response = await fetch(`${config.endpoint}${path}`, {
+      ...requestOptions,
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${config.token}`,
+        ...(requestOptions.headers || {}),
+      },
+    });
+    if (!response.ok) {
+      const error = new Error(`api_${response.status}`);
+      error.status = response.status;
+      try {
+        error.payload = await response.json();
+      } catch {
+        error.payload = null;
+      }
+      throw error;
+    }
+    markApiSyncSuccess();
+    if (response.status === 204) return null;
+    return response.json();
+  } catch (error) {
+    if (controller.signal.aborted && !upstreamSignal?.aborted) {
+      const timeoutError = new Error('api_timeout');
+      timeoutError.cause = error;
+      markApiSyncFailure();
+      throw timeoutError;
+    }
+    markApiSyncFailure();
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+    upstreamSignal?.removeEventListener?.('abort', abortFromUpstream);
+  }
 }
 
 export { apiRequest as requestTaskboxApi };
+
+function storageKeysWithPrefix(prefix) {
+  const keys = [];
+  for (let index = 0; index < (localStorage.length || 0); index += 1) {
+    const key = localStorage.key(index);
+    if (key?.startsWith(prefix)) keys.push(key);
+  }
+  return keys;
+}
+
+function readStoredMutationEntries(legacyKey, entryPrefix, migrateLegacy = false) {
+  const entries = new Map();
+  try {
+    const parsed = JSON.parse(localStorage.getItem(legacyKey) || '[]');
+    if (Array.isArray(parsed)) {
+      parsed.filter((item) => item?.id && item?.path).forEach((item) => {
+        if (localStorage.getItem(`${API_MUTATION_LEGACY_ACK_PREFIX}${item.id}`)) return;
+        entries.set(item.id, item);
+        if (migrateLegacy && !localStorage.getItem(`${entryPrefix}${item.id}`)) {
+          localStorage.setItem(`${entryPrefix}${item.id}`, JSON.stringify(item));
+        }
+      });
+    }
+  } catch {
+    // A corrupt legacy aggregate must not hide independently stored entries.
+  }
+  storageKeysWithPrefix(entryPrefix).forEach((key) => {
+    try {
+      const item = JSON.parse(localStorage.getItem(key) || 'null');
+      if (item?.id && item?.path) entries.set(item.id, item);
+    } catch {
+      // Ignore only the corrupt entry; other mutations remain replayable.
+    }
+  });
+  return [...entries.values()].sort((left, right) => {
+    const timeOrder = String(left.createdAt || '').localeCompare(String(right.createdAt || ''));
+    return timeOrder || String(left.id).localeCompare(String(right.id));
+  });
+}
+
+function readPendingApiMutations() {
+  return readStoredMutationEntries(API_MUTATION_OUTBOX_KEY, API_MUTATION_ENTRY_PREFIX, true);
+}
+
+function readDeadLetterApiMutations() {
+  return readStoredMutationEntries(API_MUTATION_DEAD_LETTER_KEY, API_MUTATION_DEAD_LETTER_ENTRY_PREFIX);
+}
+
+function readApiMutationGeneration() {
+  return String(localStorage.getItem(API_MUTATION_GENERATION_KEY) || '');
+}
+
+function readOrCreateApiMutationClientId() {
+  if (typeof localStorage === 'undefined') return uid();
+  const existing = String(localStorage.getItem(API_MUTATION_CLIENT_ID_KEY) || '').trim();
+  if (existing) return existing;
+  const candidate = uid();
+  localStorage.setItem(API_MUTATION_CLIENT_ID_KEY, candidate);
+  return String(localStorage.getItem(API_MUTATION_CLIENT_ID_KEY) || candidate);
+}
+
+function nextApiMutationSequence() {
+  const key = `${API_MUTATION_OUTBOX_KEY}:sequence:${apiMutationClientId}`;
+  const previous = Number(localStorage.getItem(key));
+  const next = Number.isSafeInteger(previous) && previous >= 0 ? previous + 1 : 1;
+  localStorage.setItem(key, String(next));
+  return next;
+}
+
+function mutationFenceFor(entry) {
+  const createdAt = String(entry.createdAt || new Date().toISOString());
+  return `${createdAt}|${String(entry.id)}`;
+}
+
+function bumpApiMutationGeneration(entry, sequence) {
+  apiMutationVersion += 1;
+  apiMutationSequence += 1;
+  const generation = `${apiMutationClientId}|${String(sequence).padStart(12, '0')}|${entry.id}`;
+  localStorage.setItem(API_MUTATION_GENERATION_KEY, generation);
+  return generation;
+}
+
+function enrichApiMutationEntry(entry) {
+  if (!entry?.id || !entry?.path) return entry;
+  const metadata = entry.syncMutation || {
+    clientId: entry.clientId || '',
+    mutationId: entry.id,
+    generation: entry.generation || mutationFenceFor(entry),
+    issuedAt: entry.createdAt || new Date().toISOString(),
+  };
+  const next = { ...entry, generation: entry.generation || metadata.generation, syncMutation: metadata };
+  if (entry.method === 'POST' && /^\/hq\/daily-briefs\//.test(entry.path)) {
+    try {
+      const body = JSON.parse(entry.body || '{}');
+      next.body = JSON.stringify({ ...body, _syncMutation: metadata });
+    } catch {
+      // The server will validate malformed JSON as before.
+    }
+  }
+  if (JSON.stringify(next) !== JSON.stringify(entry)) {
+    localStorage.setItem(`${API_MUTATION_ENTRY_PREFIX}${entry.id}`, JSON.stringify(next));
+  }
+  return next;
+}
+
+function addPendingApiMutation(queueKey, path, options = {}) {
+  const entry = {
+    id: uid(),
+    queueKey,
+    path,
+    method: options.method || 'GET',
+    body: typeof options.body === 'string' ? options.body : (options.body ? JSON.stringify(options.body) : null),
+    createdAt: new Date().toISOString(),
+  };
+  const sequence = nextApiMutationSequence();
+  entry.generation = bumpApiMutationGeneration(entry, sequence);
+  entry.syncMutation = {
+    clientId: apiMutationClientId,
+    mutationId: entry.id,
+    sequence,
+    generation: entry.generation,
+    issuedAt: entry.createdAt,
+  };
+  const enriched = enrichApiMutationEntry(entry);
+  // One key per mutation prevents concurrent tabs from losing each other's
+  // append during a localStorage aggregate read-modify-write race.
+  localStorage.setItem(`${API_MUTATION_ENTRY_PREFIX}${entry.id}`, JSON.stringify(enriched));
+  // v1 aggregate is read-only import compatibility. Never rewrite it: old
+  // tabs can append concurrently, while per-entry storage is authoritative.
+  return entry.id;
+}
+
+function removePendingApiMutation(id) {
+  localStorage.removeItem(`${API_MUTATION_ENTRY_PREFIX}${id}`);
+  // Tombstone imported v1 entries instead of racing an old tab's aggregate RMW.
+  localStorage.setItem(`${API_MUTATION_LEGACY_ACK_PREFIX}${id}`, '1');
+}
+
+function readApiSyncState() {
+  try {
+    return JSON.parse(localStorage.getItem(API_SYNC_STATE_KEY) || '{}');
+  } catch {
+    return {};
+  }
+}
+
+function markApiSyncSuccess() {
+  const state = readApiSyncState();
+  const authMutationPending = state.lastAuthError?.mutationId
+    && readPendingApiMutations().some((item) => item.id === state.lastAuthError.mutationId);
+  localStorage.setItem(API_SYNC_STATE_KEY, JSON.stringify({
+    ...state,
+    lastSuccessAt: new Date().toISOString(),
+    lastErrorAt: null,
+    lastAuthError: authMutationPending ? state.lastAuthError : null,
+  }));
+}
+
+function clearApiAuthenticationBlock(mutationId) {
+  const state = readApiSyncState();
+  if (state.lastAuthError?.mutationId !== mutationId) return;
+  localStorage.setItem(API_SYNC_STATE_KEY, JSON.stringify({ ...state, lastAuthError: null }));
+}
+
+function markApiSyncFailure() {
+  localStorage.setItem(API_SYNC_STATE_KEY, JSON.stringify({
+    ...readApiSyncState(),
+    lastErrorAt: new Date().toISOString(),
+  }));
+}
+
+function apiErrorStatus(error) {
+  if (Number.isFinite(Number(error?.status))) return Number(error.status);
+  const match = String(error?.message || '').match(/^api_(\d{3})$/);
+  return match ? Number(match[1]) : null;
+}
+
+function isRetryableApiMutationError(error) {
+  const status = apiErrorStatus(error);
+  return status === null || status === 401 || status === 403
+    || status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+function isAuthenticationApiMutationError(error) {
+  return [401, 403].includes(apiErrorStatus(error));
+}
+
+function markApiAuthenticationBlocked(entry, error) {
+  const blockedAt = new Date().toISOString();
+  localStorage.setItem(API_SYNC_STATE_KEY, JSON.stringify({
+    ...readApiSyncState(),
+    lastErrorAt: blockedAt,
+    lastAuthError: {
+      mutationId: entry.id,
+      path: entry.path,
+      method: entry.method,
+      status: apiErrorStatus(error),
+      blockedAt,
+    },
+  }));
+}
+
+function isIdempotentApiMutationConvergence(entry, error) {
+  if (entry.method === 'DELETE' && apiErrorStatus(error) === 404) return true;
+  return entry.method === 'POST' && /^\/hq\/daily-briefs\//.test(entry.path)
+    && apiErrorStatus(error) === 409
+    && error?.payload?.error === 'daily_brief_stale_sequence';
+}
+
+function deadLetterApiMutation(entry, error) {
+  const failedAt = new Date().toISOString();
+  const status = apiErrorStatus(error);
+  const deadLetter = {
+    ...entry,
+    failedAt,
+    error: String(error?.message || 'api_permanent_failure'),
+    status,
+  };
+  localStorage.setItem(`${API_MUTATION_DEAD_LETTER_ENTRY_PREFIX}${entry.id}`, JSON.stringify(deadLetter));
+  const overflow = readDeadLetterApiMutations().slice(0, -100);
+  overflow.forEach((item) => localStorage.removeItem(`${API_MUTATION_DEAD_LETTER_ENTRY_PREFIX}${item.id}`));
+  removePendingApiMutation(entry.id);
+  localStorage.setItem(API_SYNC_STATE_KEY, JSON.stringify({
+    ...readApiSyncState(),
+    lastErrorAt: failedAt,
+    lastPermanentError: {
+      mutationId: entry.id,
+      path: entry.path,
+      method: entry.method,
+      status,
+      failedAt,
+    },
+  }));
+}
+
+export function getPendingApiMutationCount() {
+  return readPendingApiMutations().length;
+}
+
+export function getApiSyncState() {
+  const config = getApiConfig();
+  const state = readApiSyncState();
+  const pendingCount = getPendingApiMutationCount();
+  const deadLetterCount = readDeadLetterApiMutations().length;
+  const authBlocked = Boolean(state.lastAuthError?.mutationId
+    && readPendingApiMutations().some((item) => item.id === state.lastAuthError.mutationId));
+  const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+  return {
+    ...state,
+    enabled: config.enabled,
+    pendingCount,
+    deadLetterCount,
+    authBlocked,
+    offline,
+    status: !config.enabled
+      ? 'disabled'
+      : pendingCount
+        ? 'pending'
+        : deadLetterCount
+          ? 'unknown'
+          : offline
+            ? 'offline'
+            : state.lastErrorAt && (!state.lastSuccessAt || state.lastErrorAt > state.lastSuccessAt)
+              ? 'unknown'
+              : 'synced',
+  };
+}
+
+function readApiMutationDrainLease() {
+  try {
+    return JSON.parse(localStorage.getItem(API_MUTATION_DRAIN_LEASE_KEY) || 'null');
+  } catch {
+    return null;
+  }
+}
+
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function leaseHasSafeOwnership(lease, owner, token, at = Date.now()) {
+  return lease?.owner === owner && lease?.token === token
+    && Number(lease.expiresAt) - at > API_MUTATION_DRAIN_LEASE_SAFETY_MS;
+}
+
+async function acquireApiMutationDrainLease() {
+  const token = `${apiMutationDrainOwner}:${uid()}`;
+  while (true) {
+    const timestamp = Date.now();
+    const current = readApiMutationDrainLease();
+    if (current?.token && current.token !== token && Number(current.expiresAt) > timestamp) {
+      await delay(Math.min(API_MUTATION_DRAIN_LEASE_RETRY_MS, Math.max(1, Number(current.expiresAt) - timestamp)));
+      continue;
+    }
+    localStorage.setItem(API_MUTATION_DRAIN_LEASE_KEY, JSON.stringify({
+      owner: apiMutationDrainOwner,
+      token,
+      expiresAt: timestamp + API_MUTATION_DRAIN_LEASE_MS,
+    }));
+    // Let a competing tab finish its synchronous claim, then verify ownership.
+    await delay(0);
+    if (leaseHasSafeOwnership(readApiMutationDrainLease(), apiMutationDrainOwner, token)) break;
+  }
+
+  const ownsLease = () => {
+    const current = readApiMutationDrainLease();
+    return leaseHasSafeOwnership(current, apiMutationDrainOwner, token);
+  };
+  const renew = () => {
+    const current = readApiMutationDrainLease();
+    if (current?.owner !== apiMutationDrainOwner || current?.token !== token) return false;
+    localStorage.setItem(API_MUTATION_DRAIN_LEASE_KEY, JSON.stringify({
+      owner: apiMutationDrainOwner,
+      token,
+      expiresAt: Date.now() + API_MUTATION_DRAIN_LEASE_MS,
+    }));
+    return leaseHasSafeOwnership(readApiMutationDrainLease(), apiMutationDrainOwner, token);
+  };
+  const release = () => {
+    const current = readApiMutationDrainLease();
+    if (current?.owner === apiMutationDrainOwner && current?.token === token) {
+      localStorage.removeItem(API_MUTATION_DRAIN_LEASE_KEY);
+    }
+  };
+  return { ownsLease, renew, release };
+}
+
+async function withApiMutationDrainLock(callback) {
+  if (typeof navigator !== 'undefined' && navigator.locks?.request) {
+    return navigator.locks.request(API_MUTATION_DRAIN_LOCK_NAME, () => callback(() => true));
+  }
+  const lease = await acquireApiMutationDrainLease();
+  const renewalTimer = setInterval(lease.renew, Math.floor(API_MUTATION_DRAIN_LEASE_MS / 3));
+  try {
+    return await callback(lease.ownsLease);
+  } finally {
+    clearInterval(renewalTimer);
+    lease.release();
+  }
+}
+
+export async function replayPendingApiMutations() {
+  if (replayingApiMutations) return replayingApiMutations;
+  if (!getApiConfig().enabled) return { replayed: 0, pending: getPendingApiMutationCount() };
+  replayingApiMutations = withApiMutationDrainLock(async (ownsDrain) => {
+    let replayed = 0;
+    const deadLetters = [];
+    const results = {};
+    const blockedQueueKeys = new Set();
+    let blockedById = null;
+    let blockedError = null;
+    let authBlocked = false;
+    let lockLost = false;
+    while (true) {
+      // Keep FIFO within a record queue, while allowing unrelated records to
+      // progress when one queue is temporarily retryable-blocked.
+      const entry = enrichApiMutationEntry(readPendingApiMutations().find((item) => !blockedQueueKeys.has(item.queueKey)));
+      if (!entry) break;
+      if (!ownsDrain()) {
+        lockLost = true;
+        break;
+      }
+      try {
+        results[entry.id] = await apiRequest(entry.path, {
+          method: entry.method,
+          body: entry.body || undefined,
+        });
+        if (!ownsDrain()) {
+          lockLost = true;
+          break;
+        }
+        removePendingApiMutation(entry.id);
+        clearApiAuthenticationBlock(entry.id);
+        replayed += 1;
+      } catch (error) {
+        if (isIdempotentApiMutationConvergence(entry, error)) {
+          removePendingApiMutation(entry.id);
+          clearApiAuthenticationBlock(entry.id);
+          markApiSyncSuccess();
+          replayed += 1;
+          continue;
+        }
+        if (isRetryableApiMutationError(error)) {
+          blockedById ||= entry.id;
+          blockedError ||= String(error?.message || 'api_retryable_failure');
+          if (isAuthenticationApiMutationError(error)) {
+            markApiAuthenticationBlocked(entry, error);
+            authBlocked = true;
+            break;
+          }
+          blockedQueueKeys.add(entry.queueKey);
+          continue;
+        }
+        deadLetterApiMutation(entry, error);
+        deadLetters.push({
+          id: entry.id,
+          error: String(error?.message || 'api_permanent_failure'),
+          status: apiErrorStatus(error),
+        });
+      }
+    }
+    return {
+      replayed,
+      pending: getPendingApiMutationCount(),
+      deadLetters,
+      blockedById,
+      blockedError,
+      blockedQueueKeys: [...blockedQueueKeys],
+      authBlocked,
+      lockLost,
+      results,
+    };
+  }).finally(() => {
+    replayingApiMutations = null;
+  });
+  return replayingApiMutations;
+}
 
 function scheduleApiRequest(path, options = {}) {
   const config = getApiConfig();
@@ -1681,21 +2170,116 @@ function scheduleApiRequest(path, options = {}) {
   const queueKey = recordMatch
     ? `${recordMatch[1]}:${decodeURIComponent(recordMatch[2])}`
     : (collectionMatch && body?.id ? `${collectionMatch[1]}:${body.id}` : path);
-  const previous = apiMutationQueues.get(queueKey) || Promise.resolve();
-  const queued = previous
-    .catch(() => null)
-    .then(() => apiRequest(path, options));
-  apiMutationVersion += 1;
+  const pendingId = addPendingApiMutation(queueKey, path, options);
+  const queued = replayPendingApiMutations().then((report) => {
+    const deadLetter = report.deadLetters?.find((item) => item.id === pendingId);
+    if (deadLetter) {
+      const error = new Error(deadLetter.error || 'api_permanent_failure');
+      error.status = deadLetter.status;
+      throw error;
+    }
+    if (readPendingApiMutations().some((item) => item.id === pendingId)) {
+      scheduleBoundApiRecovery();
+      throw new Error(report.blockedById === pendingId
+        ? (report.blockedError || 'api_retryable_failure')
+        : 'api_pending_mutation');
+    }
+    return report.results?.[pendingId] ?? null;
+  });
   apiMutationQueues.set(queueKey, queued);
   queued
     .finally(() => {
       if (apiMutationQueues.get(queueKey) === queued) apiMutationQueues.delete(queueKey);
     })
     .catch(() => {});
-  return true;
+  return queued;
 }
 
-async function waitForApiMutations() {
+export function queueTaskboxApiMutation(path, options = {}) {
+  return scheduleApiRequest(path, options);
+}
+
+function updateApiRecoveryState(patch) {
+  localStorage.setItem(API_SYNC_STATE_KEY, JSON.stringify({ ...readApiSyncState(), ...patch }));
+}
+
+function scheduleBoundApiRecovery() {
+  if (typeof window === 'undefined') return;
+  const state = window.__taskboxOnlineRecoveryV1;
+  if (state?.schedule && !state.inFlight && !state.timer) state.schedule();
+}
+
+function apiRecoveryDelay(attempt) {
+  const override = Number(globalThis.__TASKBOX_API_RECOVERY_RETRY_MS__);
+  if (Number.isFinite(override) && override >= 0) return override;
+  const exponent = Math.min(Math.max(0, attempt), API_RECOVERY_RETRY_MAX_EXPONENT);
+  return Math.min(API_RECOVERY_RETRY_MAX_MS, API_RECOVERY_RETRY_BASE_MS * (2 ** exponent));
+}
+
+export function bindTaskboxOnlineRecovery(onRecovered = null) {
+  if (typeof window === 'undefined') return () => {};
+  const stateKey = '__taskboxOnlineRecoveryV1';
+  if (!window[stateKey]) {
+    const state = {
+      callbacks: new Set(),
+      timer: null,
+      inFlight: null,
+      attempt: 0,
+    };
+    const schedule = (delayMs = apiRecoveryDelay(state.attempt)) => {
+      clearTimeout(state.timer);
+      const retryAt = new Date(Date.now() + delayMs).toISOString();
+      updateApiRecoveryState({ nextRetryAt: retryAt, retryAttempt: state.attempt });
+      state.timer = setTimeout(() => {
+        state.timer = null;
+        if (state.inFlight) return;
+        state.inFlight = (async () => {
+          const replay = await replayPendingApiMutations();
+          if (getPendingApiMutationCount()) return { replay, pullResult: false, pending: true };
+          const pullResult = await pullDataFromCloud({ force: true });
+          return { replay, pullResult };
+        })()
+          .then((report) => {
+            state.callbacks.forEach((callback) => callback(report));
+            if (report.pending) {
+              if (report.replay?.authBlocked) {
+                updateApiRecoveryState({ nextRetryAt: null, retryAttempt: state.attempt });
+              } else {
+                state.attempt += 1;
+                schedule();
+              }
+            } else {
+              state.attempt = 0;
+              updateApiRecoveryState({ nextRetryAt: null, retryAttempt: 0 });
+            }
+            return report;
+          })
+          .catch((error) => {
+            state.callbacks.forEach((callback) => callback({ error, pullResult: false }));
+            state.attempt += 1;
+            schedule();
+          })
+          .finally(() => {
+            state.inFlight = null;
+          });
+      }, delayMs);
+    };
+    const recover = () => {
+      state.attempt = 0;
+      schedule(80);
+    };
+    state.handler = recover;
+    state.schedule = schedule;
+    window.addEventListener('online', recover);
+    window[stateKey] = state;
+    if (getPendingApiMutationCount()) schedule(80);
+  }
+  const state = window[stateKey];
+  if (typeof onRecovered === 'function') state.callbacks.add(onRecovered);
+  return () => state.callbacks.delete(onRecovered);
+}
+
+export async function waitForPendingApiMutations() {
   while (apiMutationQueues.size) {
     await Promise.allSettled([...apiMutationQueues.values()]);
   }
@@ -1725,11 +2309,26 @@ function chooseBoxCopy(current, candidate) {
   return candidateTime >= currentTime ? { ...current, ...candidate } : current;
 }
 
-function mergeData(local, cloud) {
+function removeCloudBackedLocalTasks(localTasks = [], cloudTasks = []) {
+  const cloudIds = new Set(cloudTasks.map((task) => task.id).filter(Boolean));
+  const cloudSyncKeys = new Set(cloudTasks.map((task) => task.syncKey).filter(Boolean));
+  const cloudRecurrenceKeys = new Set(cloudTasks.map((task) => task.recurrenceKey).filter(Boolean));
+  return localTasks.filter((task) => (
+    (!task.id || !cloudIds.has(task.id))
+    && (!task.syncKey || !cloudSyncKeys.has(task.syncKey))
+    && (!task.recurrenceKey || !cloudRecurrenceKeys.has(task.recurrenceKey))
+  ));
+}
+
+export function mergeData(local, cloud) {
+  // A pull starts only after queued record writes have settled. From that point,
+  // a cloud record with the same identity is authoritative, including tombstones.
+  // Keep only genuinely local/offline records that the server has never seen.
+  const localOnlyTasks = removeCloudBackedLocalTasks(local.tasks, cloud.tasks);
   const merged = normalize({
     ...local,
     boxes: [...local.boxes, ...cloud.boxes],
-    tasks: [...local.tasks, ...cloud.tasks],
+    tasks: [...localOnlyTasks, ...cloud.tasks],
     mainlines: [...(local.mainlines || []), ...(cloud.mainlines || [])],
     branches: [...(local.branches || []), ...(cloud.branches || [])],
     milestones: [...(local.milestones || []), ...(cloud.milestones || [])],
@@ -1807,13 +2406,24 @@ export async function pullDataFromCloud(options = {}) {
 
   if (!apiConfig.enabled) return false;
 
-  await waitForApiMutations();
-  const versionBeforePull = apiMutationVersion;
-  let cloudData = normalize(await apiRequest('/taskbox'));
-  if (apiMutationVersion !== versionBeforePull) {
-    await waitForApiMutations();
-    cloudData = normalize(await apiRequest('/taskbox'));
-  }
+  const fetchStableCloudData = async () => {
+    let cloudData;
+    let versionBeforePull;
+    let generationBeforePull;
+    do {
+      await waitForPendingApiMutations();
+      await replayPendingApiMutations();
+      if (getPendingApiMutationCount()) throw new Error('api_pending_mutations');
+      versionBeforePull = apiMutationVersion;
+      generationBeforePull = readApiMutationGeneration();
+      cloudData = normalize(await apiRequest('/taskbox'));
+    } while (apiMutationVersion !== versionBeforePull
+      || readApiMutationGeneration() !== generationBeforePull
+      || getPendingApiMutationCount());
+    return { cloudData, generation: generationBeforePull };
+  };
+
+  let { cloudData, generation: stableGeneration } = await fetchStableCloudData();
   // Repair the legacy case where an idea box only exists in this browser.
   // Restricting this to semantic idea boxes avoids resurrecting intentionally deleted boxes.
   let local = getData();
@@ -1825,10 +2435,13 @@ export async function pullDataFromCloud(options = {}) {
     for (const task of recovery.tasks) {
       await apiRequest('/tasks', { method: 'POST', body: JSON.stringify(task) });
     }
-    cloudData = normalize(await apiRequest('/taskbox'));
+    ({ cloudData, generation: stableGeneration } = await fetchStableCloudData());
   }
   // Read after the request: the user may have edited records while the pull was in flight.
   local = getData();
+  if (readApiMutationGeneration() !== stableGeneration || getPendingApiMutationCount()) {
+    return pullDataFromCloud(options);
+  }
   const merged = mergeData(local, cloudData);
   merged.settings = preserveLocalOnlySettings(merged.settings, local.settings);
   const changed = syncContentFingerprint(local) !== syncContentFingerprint(merged);
