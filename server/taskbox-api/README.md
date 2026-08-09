@@ -64,3 +64,5 @@ Expected behavior is authenticated `200`, unauthenticated `401`, and allowed-ori
 Production verification on 2026-08-07 passed all three status checks plus an explicit `primaryTaskId: null` clear/readback/restore probe. The rollback snapshot for that release is `/opt/taskbox-api/backups/p0-null-clear-20260807T060141Z`.
 
 P1 production verification on 2026-08-09 passed schema/HQ integration tests, authenticated health `200`, unauthenticated health `401`, production-origin preflight `204`, and an HQ shape probe containing both `primaryTaskId` and `currentActionTaskId`. The P1 rollback snapshot is `/opt/taskbox-api/backups/p1-action-seat-20260809T022214Z`.
+
+P2 production verification on 2026-08-09 passed the candidate `syncKey` idempotency test, authenticated health `200`, unauthenticated health `401`, production-origin preflight `204`, and an active service check. P2 changed no API runtime files or database columns, so the P1 rollback snapshot remains the current server rollback point.

@@ -74,7 +74,7 @@ API 目录默认 `/opt/taskbox-api`，数据库默认 `/opt/taskbox-api/data/tas
 
 2026-08-09 已完成 P1 生产收尾：前端/桥接全量测试、API schema/HQ 集成测试通过，`npm run build` 生成 Build ID `b96ffcdfc533`，`git diff --check` 仅报告既存 LF/CRLF warning。API 发布后认证健康为 200、未认证为 401、生产 Origin 预检为 204，线上 HQ 字段探针确认`primaryTaskId`与`currentActionTaskId`同时存在，`taskbox-api.service`保持 active。P1 回滚点为`/opt/taskbox-api/backups/p1-action-seat-20260809T022214Z`；P0 回滚点继续保留。
 
-2026-08-09 P2 发布候选：候选专项、全量`npm test`、API schema/HQ/候选 syncKey 幂等与`npm run build`通过，Build ID 为`a485fa88a115`。浏览器完成原始承诺、战略战果、候选跳过、冷却空状态、排序、确认接棒，以及“无下一步主线→原生候选→双击确认→重要盒仅一条任务→项目恢复推进中”；390px/1440px 无横向溢出，控制台无错误。缓存回归覆盖“部分更新保留承诺、显式 null 仍清空”。发布后应核对 Pages Build ID、候选资源字符串和 API 健康状态。
+2026-08-09 P2 已完成生产发布：候选专项、全量`npm test`、API schema/HQ/候选 syncKey 幂等与`npm run build`通过。浏览器完成原始承诺、战略战果、候选跳过、冷却空状态、排序、确认接棒，以及“无下一步主线→原生候选→双击确认→重要盒仅一条任务→项目恢复推进中”；390px/1440px 无横向溢出，控制台无错误。缓存回归覆盖“部分更新保留承诺、显式 null 仍清空”。Pages 工作流`31292056719`成功，生产`service-worker.js`为 Build ID`a485fa88a115`，入口为`assets/app-EXZBL2NR.js`；生产分块命中`hq-candidate:`、`candidateDedupeKey`、`主线系统信号`和`currentActionTaskId`。API 认证健康`200`、未认证`401`、生产 Origin 预检`204`，`taskbox-api.service`保持 active；P2 没有 API 运行代码发布，服务端继续使用 P1 回滚点。
 
 ### 任务中枢桥接验证
 

@@ -147,4 +147,4 @@ TaskBox 是一套以人生参谋部为决策入口、以盒子为执行入口的
 - 子系统事实 → 信号 → 行动候选 → TaskBox → 完成证据的统一闭环。
 - `originalPrimaryTaskId`、`currentActionTaskId`、行动候选或`system_registry`等建议数据结构。
 
-唯一规划文档为`docs/hq-primary-action-system-loop-v2.md`。P1 已完成生产发布；P2 发布候选包含现有任务投产比候选、跳过冷却、确认复用，以及主线阻塞/缺下一步原生候选和幂等建任务。全量测试、真实接棒/双击确认链路和 390px/1440px 视口验收通过；P3 再接入更多子系统事实源。
+唯一规划文档为`docs/hq-primary-action-system-loop-v2.md`。P1 与 P2 已完成生产发布；P2 包含现有任务投产比候选、跳过冷却、确认复用，以及主线阻塞/缺下一步原生候选和幂等建任务。全量测试、真实接棒/双击确认链路、390px/1440px 视口及生产 Build ID`a485fa88a115`验收通过；P3 再接入更多子系统事实源。

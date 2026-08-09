@@ -113,7 +113,7 @@ GitHub Pages (dist)
 
 `POST /v1/hq/daily-briefs/:date`区分“未传`primaryTaskId`”与“显式传`primaryTaskId: null`”：前者沿用原始战略承诺，后者清空承诺与席位。P1 生产语义中，`currentActionTaskId`驱动当前行动席位，`primaryTaskId`/`strategicCommitmentTaskId`保留原始承诺，完成证据进入`completionReceipt`/今日战果。daily brief 写入带 `_syncMutation`，服务端 fence 兼容旧式`generation`与新式 client sequence，过期回放返回当前 brief，不覆盖新事实。
 
-P2 候选层位于`js/hq-candidates.js`：先过滤未释放、已完成、暂停项目、模板和冷却项，再计算九维 ROI，达到 55 分才进入最多三项候选。TaskBox 候选直接引用任务；主线系统的阻塞或缺下一步事实生成无`taskId`的原生候选。确认原生候选时，客户端按`candidateDedupeKey`及`hq-candidate:<dedupeKey>`查找已有记录，仅在不存在时创建任务；服务端`POST /v1/tasks`继续按`syncKey`幂等返回已有记录。跳过与接受历史写入 daily brief 的`candidateState`兼容 JSON，不新增数据库列。HQ 日期缓存中的部分 brief 写入采用字段合并，显式`primaryTaskId: null`仍解释为权威清空。
+P2 候选层位于`js/hq-candidates.js`：先过滤未释放、已完成、暂停项目、模板和冷却项，再计算九维 ROI，达到 55 分才进入最多三项候选。TaskBox 候选直接引用任务；主线系统的阻塞或缺下一步事实生成无`taskId`的原生候选。确认原生候选时，客户端按`candidateDedupeKey`及`hq-candidate:<dedupeKey>`查找已有记录，仅在不存在时创建任务；服务端`POST /v1/tasks`继续按`syncKey`幂等返回已有记录。跳过与接受历史写入 daily brief 的`candidateState`兼容 JSON，不新增数据库列。HQ 日期缓存中的部分 brief 写入采用字段合并，显式`primaryTaskId: null`仍解释为权威清空。该层已于 2026-08-09 以 Build ID`a485fa88a115`完成生产发布；P2 未变更 API 运行代码，也没有新增生产数据库列。
 
 周期数据遵循“月省定资源边界 → 周省定唯一实验 → 日省定当天动作”的下行约束；执行证据从盒子向日省、周省、月省逐层聚合。周省和月省不批量创建普通任务，避免周期记分牌污染行动盒子。
 
