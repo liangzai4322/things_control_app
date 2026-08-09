@@ -1,7 +1,7 @@
 ---
 title: 人生参谋部主动作与子系统闭环强化方案 V2
 date: 2026-08-03
-status: P0-P3 已完成生产发布与线上验收；P4 待实施
+status: P0-P4 已完成生产发布与线上验收
 sources:
   - D:/note_new/06-日常输入_输出/99_系统/主参谋面板子系统接入思路.md
 ---
@@ -555,11 +555,15 @@ remote.updatedAt > local.updatedAt  → 云端优先
 
 ### P4：复盘校准与受控写回
 
-- 日省记录候选与执行偏差。
-- 周省校准权重和异常阈值。
-- 对验证有效的单个系统开放 L2 写回。
+- 日省产生`daily_action_proposal`，周省产生`weekly_experiment_proposal`，月省产生`monthly_bet_proposal`。
+- 授权来源分为`explicit_user / standing_rule / ai_derived`；AI 推导默认停在`proposed`，不能绕过审批。
+- proposal 使用稳定幂等键和 revision，状态为`proposed / approved / rejected / deferred / promoted`，每次转换写审计事件。
+- 只有批准的日动作允许晋升 TaskBox；周实验和月押注保持战略对象，临时证据月押注禁止批准。
+- 晋升同时要求请求`shadowMode=false`与服务端`HQ_PROPOSAL_PROMOTION_ENABLED=1`，关闭任一侧即保持 shadow mode。
 
 验收：接入连续两周减少人工搬运，同时没有增加重复任务和无效通知。
+
+2026-08-10 生产发布：前端 REVIEW CALIBRATION 控制面、三类 proposal、五态状态机、授权来源、revision、幂等键与审计轨迹均已上线。Pages 工作流`31324155726`发布 Build ID`1962464071d3`，入口`assets/app-AEO5YO7V.js`、样式`assets/style-KKWZZMR4.css`、P4 分块`assets/chunk-XDQ4ZDYX.js`。API schema 新增`hq_proposals`与`hq_proposal_events`；schema、HQ、proposal 专项测试通过。生产探针通过认证`200`、未认证`401`、CORS`204`和 proposal 队列`200`，周实验完整记录`created → approve → defer → reject`，战略晋升返回`409`且没有创建任务。当前 API 回滚点为`/opt/taskbox-api/backups/p4-review-proposals-20260809T170701Z`。
 
 ## 16. 验收清单
 

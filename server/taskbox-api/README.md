@@ -18,6 +18,7 @@ TASKBOX_DB_PATH=/opt/taskbox-api/data/taskbox.sqlite
 TASKBOX_API_PORT=3107
 TASKBOX_API_TOKEN=<server-side-api-token>
 TASKBOX_ALLOWED_ORIGINS=https://liangzai4322.github.io,http://localhost:8000,http://127.0.0.1:8000
+HQ_PROPOSAL_PROMOTION_ENABLED=1
 ```
 
 Do not commit this file. Do not put the API token in the GitHub Pages repository.
@@ -45,6 +46,7 @@ npm run import-json -- /opt/taskbox-api/seed
 - `/v1/hq/periods`: weekly/monthly review list, current snapshot, period upsert and delete.
 - `GET/POST /v1/hq/daily-briefs/:date`: daily command brief and review result upsert. Omitting `primaryTaskId` preserves the original strategic commitment; sending `primaryTaskId: null` clears commitment and action seat. P1 production builds use `currentActionTaskId` for the current action seat and `_syncMutation`/`_syncFence` to reject stale generation or client-sequence replays.
 - `/v1/hq/decisions`: decision queue record-level CRUD.
+- `GET/POST /v1/hq/proposals`, `GET /v1/hq/proposals/:id`, and proposal `approve/reject/defer/promote` actions. Only approved daily proposals can promote to TaskBox; weekly/monthly proposals remain strategic records.
 - `GET /v1/daily-snapshot`: evidence snapshot consumed by 日省.
 
 SQLite schema lives in `schema.sql`. `raw_json` is a compatibility fallback; query-critical fields use dedicated columns and indexes.
@@ -66,3 +68,5 @@ Production verification on 2026-08-07 passed all three status checks plus an exp
 P1 production verification on 2026-08-09 passed schema/HQ integration tests, authenticated health `200`, unauthenticated health `401`, production-origin preflight `204`, and an HQ shape probe containing both `primaryTaskId` and `currentActionTaskId`. The P1 rollback snapshot is `/opt/taskbox-api/backups/p1-action-seat-20260809T022214Z`.
 
 P2 production verification on 2026-08-09 passed the candidate `syncKey` idempotency test, authenticated health `200`, unauthenticated health `401`, production-origin preflight `204`, and an active service check. P2 changed no API runtime files or database columns, so the P1 rollback snapshot remains the current server rollback point.
+
+P4 production verification on 2026-08-10 passed schema migration, HQ integration and proposal state-machine tests; authenticated health returned `200`, unauthenticated health `401`, production-origin preflight `204`, and the proposal queue `200`. A production weekly-proposal probe recorded `created → approve → defer → reject`; strategic promotion returned `409` and created no TaskBox task. `HQ_PROPOSAL_PROMOTION_ENABLED=1` is active. The P4 rollback snapshot is `/opt/taskbox-api/backups/p4-review-proposals-20260809T170701Z`.

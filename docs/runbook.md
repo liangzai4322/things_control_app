@@ -1,6 +1,6 @@
 # TaskBox 运维手册
 
-最后核对：2026-08-09。
+最后核对：2026-08-10。
 
 ## 本地验证
 
@@ -33,6 +33,7 @@ TASKBOX_DB_PATH=<SQLite absolute path>
 TASKBOX_API_PORT=<loopback port>
 TASKBOX_API_TOKEN=<secret>
 TASKBOX_ALLOWED_ORIGINS=<comma-separated origins>
+HQ_PROPOSAL_PROMOTION_ENABLED=1
 ```
 
 API 目录默认 `/opt/taskbox-api`，数据库默认 `/opt/taskbox-api/data/taskbox.sqlite`。生产进程应由 systemd 或等价守护程序管理，Nginx 把 HTTPS `/taskbox-api/` 反向代理到本地端口。
@@ -77,6 +78,8 @@ API 目录默认 `/opt/taskbox-api`，数据库默认 `/opt/taskbox-api/data/tas
 2026-08-09 P2 已完成生产发布：候选专项、全量`npm test`、API schema/HQ/候选 syncKey 幂等与`npm run build`通过。浏览器完成原始承诺、战略战果、候选跳过、冷却空状态、排序、确认接棒，以及“无下一步主线→原生候选→双击确认→重要盒仅一条任务→项目恢复推进中”；390px/1440px 无横向溢出，控制台无错误。缓存回归覆盖“部分更新保留承诺、显式 null 仍清空”。Pages 工作流`31292056719`成功，生产`service-worker.js`为 Build ID`a485fa88a115`，入口为`assets/app-EXZBL2NR.js`；生产分块命中`hq-candidate:`、`candidateDedupeKey`、`主线系统信号`和`currentActionTaskId`。API 认证健康`200`、未认证`401`、生产 Origin 预检`204`，`taskbox-api.service`保持 active；P2 没有 API 运行代码发布，服务端继续使用 P1 回滚点。
 
 2026-08-09 P3 已完成生产发布：`npm run test:hq-systems`验证接入等级、未知/过期状态、主线行动门槛、P2 候选数量一致性和完整闭环状态；全量`npm test`与`npm run build`通过。浏览器在 1440px/390px 验证六张接入卡、L0/L1/L2 图例、主线八字段契约、只读权限、五段闭环、进入项目中心跳转和无横向溢出，控制台无错误。Pages 工作流`31302177865`首轮构建成功但因旧部署并发锁拒绝 deploy，attempt 2 成功；生产 Build ID 为`dca5c12098ba`，入口为`assets/app-VLRUGPBP.js`，样式为`assets/style-VA4J23EG.css`，生产分块命中`SYSTEM CONTRACT`、`L1 只读`、`/v1/hq/today.projects`、`blocked`、`needs_action`、`READ-ONLY LOOP`与`状态未知`。现有 API 未认证健康`401`、生产 Origin 预检`204`；P3 没有 API 运行代码或 schema 变更，服务端未重新部署。
+
+2026-08-10 P4 已完成生产发布：前端 Pages 工作流`31324155726`发布 Build ID`1962464071d3`，入口`assets/app-AEO5YO7V.js`、样式`assets/style-KKWZZMR4.css`、P4 分块`assets/chunk-XDQ4ZDYX.js`。API 通过本机`127.0.0.1:10808` HTTP CONNECT 代理直连服务器发布；停服后备份代码、SQLite/WAL/SHM 与环境文件，回滚点为`/opt/taskbox-api/backups/p4-review-proposals-20260809T170701Z`。schema、HQ、proposal 测试和迁移通过，`taskbox-api.service`保持 active；正式域名认证健康`200`、未认证`401`、生产 Origin 预检`204`、proposal 队列`200`。周实验生产探针最终为`rejected`，审计轨迹包含`created / approve / defer / reject`；战略晋升返回`409`且未创建任务。`HQ_PROPOSAL_PROMOTION_ENABLED=1`已启用，紧急关闭受控晋升时将其设为`0`并重启服务。
 
 ### 任务中枢桥接验证
 

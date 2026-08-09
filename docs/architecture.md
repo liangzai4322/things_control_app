@@ -1,6 +1,6 @@
 # TaskBox 架构
 
-最后核对：2026-08-07。
+最后核对：2026-08-10。
 
 ## 系统边界
 
@@ -72,6 +72,8 @@ GitHub Pages (dist)
 | `sw_items` | 小世界单条内容 |
 | `hq_daily_briefs` | 按日期唯一保存的驾驶舱、行动承诺和日省闭环 |
 | `hq_decisions` | 一条待裁决或已裁决事项 |
+| `hq_proposals` | 日动作、周实验或月押注的当前 revision、授权来源、决策状态与可选 TaskBox 关联 |
+| `hq_proposal_events` | proposal 的创建、修订、批准、拒绝、延期和晋升审计事件 |
 | `hq_period_reviews` | 按 `week/month + period_key` 幂等保存的周省或月省 |
 
 业务字段有独立列便于查询和索引，同时保留 `raw_json` 兼容尚未拆列的前端字段。数据库定义位于 `server/taskbox-api/schema.sql`，启动和导入脚本会为旧库补列。
@@ -105,6 +107,9 @@ GitHub Pages (dist)
 - `GET /v1/hq/periods?type=week|month&limit=N`
 - `GET/POST /v1/hq/daily-briefs/:date`
 - `GET/POST/PATCH/DELETE /v1/hq/decisions`
+- `GET/POST /v1/hq/proposals`
+- `GET /v1/hq/proposals/:id`
+- `POST /v1/hq/proposals/:id/approve|reject|defer|promote`
 - `GET /v1/daily-snapshot?date=YYYY-MM-DD`
 
 任务的 `pinLevel` 只决定显示顺序；`commitmentRole`、`commitmentDate`和`commitmentSource`记录日省/参谋部承诺语义，二者不混为同一字段。扩展字段继续保存在任务 `raw_json` 中，保持旧客户端兼容。
@@ -116,6 +121,8 @@ GitHub Pages (dist)
 P2 候选层位于`js/hq-candidates.js`：先过滤未释放、已完成、暂停项目、模板和冷却项，再计算九维 ROI，达到 55 分才进入最多三项候选。TaskBox 候选直接引用任务；主线系统的阻塞或缺下一步事实生成无`taskId`的原生候选。确认原生候选时，客户端按`candidateDedupeKey`及`hq-candidate:<dedupeKey>`查找已有记录，仅在不存在时创建任务；服务端`POST /v1/tasks`继续按`syncKey`幂等返回已有记录。跳过与接受历史写入 daily brief 的`candidateState`兼容 JSON，不新增数据库列。HQ 日期缓存中的部分 brief 写入采用字段合并，显式`primaryTaskId: null`仍解释为权威清空。该层已于 2026-08-09 以 Build ID`a485fa88a115`完成生产发布；P2 未变更 API 运行代码，也没有新增生产数据库列。
 
 P3 子系统契约层位于`js/hq-systems.js`，以代码内轻量`system_registry`配置登记六个系统，不新增数据库表。静态接入卡声明职责、唯一事实源、读取/写回方式、健康检查、同步时效、行动门槛、证据回流、负责人和接入等级；动态视图只把`/v1/hq/today.projects`成功读取且未过期的主线快照视为 L1 已确认事实。读取失败显示`unknown`，超过 SLA 显示`stale`，不会回退为健康。主线的`blocked / needs_action`与 P2 候选门槛共用同一语义；L1 模块本身不写原系统，用户确认后才由既有 TaskBox L2 路径幂等创建任务。日省与 TaskBox 标记为 L2 受控链路，交易、镜像和 GAP 保持 L0 入口。P3 只复用现有 HQ/任务 API，没有服务端运行代码和数据库 schema 变更；已于 2026-08-09 以 Build ID`dca5c12098ba`完成生产发布。
+
+P4 proposal 控制面位于`js/hq-proposals.js`和服务端 proposal 路由。`daily_action_proposal / weekly_experiment_proposal / monthly_bet_proposal`按稳定`idempotencyKey`保存，内容变化在同一`decisionId`上增加 revision；`sourceAuthority`区分`explicit_user / standing_rule / ai_derived`。只有`approved`日动作可晋升 TaskBox，且请求必须带`shadowMode=false`、服务端必须设置`HQ_PROPOSAL_PROMOTION_ENABLED=1`；周实验和月押注晋升返回`409`，月押注`evidenceStatus=provisional`时批准也返回`409`。所有状态转换写入`hq_proposal_events`，前端显示审计轨迹而不把战略对象伪装成任务。P4 已于 2026-08-10 完成前端与 API 生产发布。
 
 周期数据遵循“月省定资源边界 → 周省定唯一实验 → 日省定当天动作”的下行约束；执行证据从盒子向日省、周省、月省逐层聚合。周省和月省不批量创建普通任务，避免周期记分牌污染行动盒子。
 

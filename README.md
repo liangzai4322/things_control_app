@@ -1,6 +1,6 @@
 # TaskBox / things_control_app
 
-最后核对：2026-08-09。
+最后核对：2026-08-10。
 
 TaskBox 是一个本地优先的个人行动与决策系统：人生参谋部是默认主面板，负责日、周、月三个时间尺度的判断、项目健康和行动派发；盒子是执行副面板，负责任务、场景、进度和证据。积分、抽奖转盘和“小世界”承担游戏化反馈。这个目录也放了一些内容导出脚本，用于把 SCYS、ZSXQ、飞书等来源整理成 Markdown 或 JSON 产物。
 
@@ -41,11 +41,13 @@ npm run preview
 - `docs/runbook.md`: 本地验证、部署、任务中枢桥接、备份和回滚。
 - `docs/production-build.md`: 线上压缩构建规则。
 - `docs/life-hq-roadmap.md`: 人生参谋部已实现边界与后续路线。
-- `docs/hq-primary-action-system-loop-v2.md`: 主动作席位、投产比候选、统一子系统接入和复盘校准的唯一实施方案；P0–P3 已进入运行代码。
+- `docs/hq-primary-action-system-loop-v2.md`: 主动作席位、投产比候选、统一子系统接入和复盘校准的唯一实施方案；P0–P4 已完成生产发布。
 
 P0 已于 2026-08-07 完成端到端收尾，P1 与 P2 已于 2026-08-09 完成生产发布。P2 生产 Build ID 为`a485fa88a115`，Pages 工作流为`31292056719`：现有任务经过资格门槛、九维 ROI 评分、55 分阈值、最多三项排序与四小时冷却，确认后幂等复用原任务；主线系统的“阻塞/缺下一步”事实可直接形成原生候选，确认后按稳定`syncKey`在重要盒幂等创建任务并关联原项目。部分 daily brief 更新与已有 brief 合并，只有显式`primaryTaskId: null`才清空原始承诺。全量测试、API 幂等测试、390px/1440px、真实“完成→候选→跳过/确认→建任务→项目恢复”浏览器验收，以及生产静态资源与 API 健康验收均已通过。
 
-P3 已于 2026-08-09 完成生产发布，Build ID 为`dca5c12098ba`，Pages 工作流`31302177865`在解除旧部署并发锁后由 attempt 2 成功：`js/hq-systems.js`以轻量配置登记六个现役/预留系统，统一职责、事实源、读写方式、健康检查、同步时效、行动门槛、证据回流、负责人和 L0/L1/L2 接入等级。主线系统是首个 L1 只读事实源，数据读取失败或过期显示未知/过期，只有`blocked / needs_action`进入既有 ROI 候选；TaskBox 与日省显示为 L2 受控链路，交易、镜像和 GAP 保持 L0 入口。专项/全量测试、生产构建、390px/1440px、接入卡详情、跳转、控制台和生产分块验收均已通过；P4 待实施。
+P3 已于 2026-08-09 完成生产发布，Build ID 为`dca5c12098ba`，Pages 工作流`31302177865`在解除旧部署并发锁后由 attempt 2 成功：`js/hq-systems.js`以轻量配置登记六个现役/预留系统，统一职责、事实源、读写方式、健康检查、同步时效、行动门槛、证据回流、负责人和 L0/L1/L2 接入等级。主线系统是首个 L1 只读事实源，数据读取失败或过期显示未知/过期，只有`blocked / needs_action`进入既有 ROI 候选；TaskBox 与日省显示为 L2 受控链路，交易、镜像和 GAP 保持 L0 入口。
+
+P4 已于 2026-08-10 完成生产发布：日动作、周实验、月押注统一进入 proposal 控制面，状态为`proposed / approved / rejected / deferred / promoted`，授权来源、稳定幂等键、revision 与审计事件全程保留。只有已批准的日动作可在显式关闭 shadow mode 后晋升 TaskBox；周实验和月押注保持战略对象，临时证据月押注禁止批准。Pages 工作流`31324155726`发布 Build ID`1962464071d3`，入口`assets/app-AEO5YO7V.js`、样式`assets/style-KKWZZMR4.css`、P4 分块`assets/chunk-XDQ4ZDYX.js`；API 回滚点为`/opt/taskbox-api/backups/p4-review-proposals-20260809T170701Z`。生产验证通过认证`200`、未认证`401`、CORS`204`、proposal 队列`200`和完整审计状态机，战略 proposal 的任务晋升返回`409`且没有创建任务。
 
 ## 内容导出脚本
 

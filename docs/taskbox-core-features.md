@@ -139,7 +139,7 @@ TaskBox 是一套以人生参谋部为决策入口、以盒子为执行入口的
 
 ## 12. 当前实现与下一阶段边界
 
-截至 2026-08-09，今日驾驶舱 P1 已完成生产发布：`hq_daily_briefs.primaryTaskId`继续保存原始战略承诺，`currentActionTaskId`保存当前行动席位，完成任务退出席位并以`completionReceipt`进入今日战果。P0 的同步保护继续有效，P1 的全量测试、构建、API 集成测试与线上字段探针均已通过。
+截至 2026-08-10，今日驾驶舱、ROI 候选、子系统契约与复盘 proposal 控制面均已完成生产发布：`hq_daily_briefs.primaryTaskId`继续保存原始战略承诺，`currentActionTaskId`保存当前行动席位，完成任务退出席位并以`completionReceipt`进入今日战果。P0 的同步保护继续有效；跨周期写回先进入 proposal 审批，不直接创建普通任务。
 
 - 原始战略承诺与动态“当前行动席位”分离。
 - 主动作完成后进入今日战果，并由用户确认接棒动作。
@@ -147,4 +147,4 @@ TaskBox 是一套以人生参谋部为决策入口、以盒子为执行入口的
 - 子系统事实 → 信号 → 行动候选 → TaskBox → 完成证据的统一闭环。
 - `js/hq-systems.js`维护轻量`system_registry`；L0 只提供入口，L1 只读事实，L2 仅在用户确认后受控写回。
 
-唯一规划文档为`docs/hq-primary-action-system-loop-v2.md`。P1–P3 已完成生产发布；P3 已统一六张子系统接入卡，以主线系统作为首个 L1 只读事实源，并沿用 P2 的确认与幂等执行链路。读取失败显示未知，只有阻塞/缺下一步越过行动门槛；全量测试、390px/1440px、接入详情、跳转与生产资源验收通过，生产 Build ID 为`dca5c12098ba`。P4 再处理跨周期校准与验证后受控写回。
+唯一规划文档为`docs/hq-primary-action-system-loop-v2.md`。P1–P4 已完成生产发布；P4 将日动作、周实验、月押注统一为 proposal，区分授权来源并保留 revision 与审计轨迹。AI 推导默认待审批；只有批准的日动作可在双重 promotion 开关下晋升 TaskBox，周实验/月押注保持战略对象，临时证据月押注不能批准。生产 Build ID 为`1962464071d3`，API 状态、CORS、队列、状态机和战略晋升护栏均已验收。
