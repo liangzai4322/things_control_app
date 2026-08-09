@@ -165,6 +165,7 @@ function rowToBox(row) {
 }
 
 function rowToTask(row) {
+  if (!row) return null;
   return {
     ...parseJson(row.raw_json, {}),
     id: row.id,
@@ -353,6 +354,44 @@ function rowToPeriodReview(row) {
   };
 }
 
+function rowToProposal(row) {
+  if (!row) return null;
+  return {
+    ...parseJson(row.raw_json, {}),
+    decisionId: row.decision_id,
+    proposalType: row.proposal_type,
+    idempotencyKey: row.idempotency_key,
+    sourceAuthority: row.source_authority,
+    standingRuleId: row.standing_rule_id,
+    title: row.title,
+    status: row.status,
+    revision: Number(row.revision) || 1,
+    revisionHash: row.revision_hash,
+    evidenceStatus: row.evidence_status || 'unknown',
+    existingTaskId: row.existing_task_id,
+    taskId: row.task_id,
+    deferUntil: row.defer_until,
+    decisionNote: row.decision_note || '',
+    createdAt: row.created_at,
+    decidedAt: row.decided_at,
+    promotedAt: row.promoted_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function rowToProposalEvent(row) {
+  return {
+    id: row.id,
+    proposalId: row.proposal_id,
+    revision: Number(row.revision) || 1,
+    eventType: row.event_type,
+    actor: row.actor,
+    note: row.note || '',
+    detail: parseJson(row.detail_json, {}),
+    createdAt: row.created_at,
+  };
+}
+
 function mergeRaw(existingRaw, patch) {
   return { ...parseJson(existingRaw, {}), ...patch };
 }
@@ -360,6 +399,237 @@ function mergeRaw(existingRaw, patch) {
 function validDateKey(value) {
   const date = String(value || '').trim();
   return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : null;
+}
+
+const HQ_PROPOSAL_TYPES = new Set([
+  'daily_action_proposal',
+  'weekly_experiment_proposal',
+  'monthly_bet_proposal',
+]);
+const HQ_SOURCE_AUTHORITIES = new Set(['explicit_user', 'standing_rule', 'ai_derived']);
+const HQ_PROPOSAL_STATUSES = new Set(['proposed', 'approved', 'rejected', 'deferred', 'promoted']);
+const HQ_PROPOSAL_TERMINAL_SYNC_STATUSES = new Set(['rejected', 'deferred', 'promoted']);
+
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value ?? null);
+}
+
+function proposalRevisionHash(input = {}) {
+  if (String(input.revisionHash || '').trim()) return String(input.revisionHash).trim();
+  const revisionInput = {
+    proposalType: input.proposalType,
+    sourceAuthority: input.sourceAuthority,
+    standingRuleId: input.standingRuleId || null,
+    title: String(input.title || '').trim(),
+    content: input.content || {},
+    evidence: input.evidence || {},
+    sourceRef: input.sourceRef || {},
+    taskSpec: input.taskSpec || {},
+    existingTaskId: input.existingTaskId || null,
+  };
+  return crypto.createHash('sha256').update(stableJson(revisionInput)).digest('hex');
+}
+
+function proposalEvidenceStatus(input = {}) {
+  const value = String(input.evidenceStatus || input.evidence?.evidenceStatus || '').trim();
+  return value || 'unknown';
+}
+
+function proposalInitialStatus(sourceAuthority) {
+  return sourceAuthority === 'ai_derived' ? 'proposed' : 'approved';
+}
+
+function proposalError(code, status = 400, detail = {}) {
+  const error = new Error(code);
+  error.code = code;
+  error.status = status;
+  error.detail = detail;
+  return error;
+}
+
+function validateProposalInput(input = {}) {
+  const proposalType = String(input.proposalType || '').trim();
+  const sourceAuthority = String(input.sourceAuthority || '').trim();
+  const title = String(input.title || '').trim();
+  const idempotencyKey = String(input.idempotencyKey || '').trim();
+  if (!HQ_PROPOSAL_TYPES.has(proposalType)) throw proposalError('invalid_proposal_type');
+  if (!HQ_SOURCE_AUTHORITIES.has(sourceAuthority)) throw proposalError('invalid_source_authority');
+  if (!title) throw proposalError('title_required');
+  if (!idempotencyKey) throw proposalError('idempotency_key_required');
+  if (sourceAuthority === 'standing_rule' && !String(input.standingRuleId || '').trim()) {
+    throw proposalError('standing_rule_id_required');
+  }
+  return { proposalType, sourceAuthority, title, idempotencyKey };
+}
+
+function recordProposalEvent(proposal, eventType, actor = 'hq', note = '', detail = {}) {
+  db.prepare(`
+    INSERT INTO hq_proposal_events (
+      id, proposal_id, revision, event_type, actor, note, detail_json, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    uid(), proposal.decisionId, proposal.revision, eventType,
+    String(actor || 'hq'), String(note || ''), json(detail || {}), now(),
+  );
+}
+
+function proposalParams(proposal) {
+  return {
+    decision_id: proposal.decisionId,
+    proposal_type: proposal.proposalType,
+    idempotency_key: proposal.idempotencyKey,
+    source_authority: proposal.sourceAuthority,
+    standing_rule_id: proposal.standingRuleId || null,
+    title: proposal.title,
+    status: proposal.status,
+    revision: proposal.revision,
+    revision_hash: proposal.revisionHash,
+    evidence_status: proposal.evidenceStatus || 'unknown',
+    existing_task_id: proposal.existingTaskId || null,
+    task_id: proposal.taskId || null,
+    defer_until: proposal.deferUntil || null,
+    decision_note: proposal.decisionNote || null,
+    created_at: proposal.createdAt,
+    decided_at: proposal.decidedAt || null,
+    promoted_at: proposal.promotedAt || null,
+    updated_at: proposal.updatedAt,
+    raw_json: json(proposal),
+  };
+}
+
+function saveProposal(proposal) {
+  db.prepare(`
+    INSERT INTO hq_proposals (
+      decision_id, proposal_type, idempotency_key, source_authority, standing_rule_id,
+      title, status, revision, revision_hash, evidence_status, existing_task_id, task_id,
+      defer_until, decision_note, created_at, decided_at, promoted_at, updated_at, raw_json
+    ) VALUES (
+      @decision_id, @proposal_type, @idempotency_key, @source_authority, @standing_rule_id,
+      @title, @status, @revision, @revision_hash, @evidence_status, @existing_task_id, @task_id,
+      @defer_until, @decision_note, @created_at, @decided_at, @promoted_at, @updated_at, @raw_json
+    )
+    ON CONFLICT(decision_id) DO UPDATE SET
+      proposal_type=excluded.proposal_type,
+      source_authority=excluded.source_authority,
+      standing_rule_id=excluded.standing_rule_id,
+      title=excluded.title,
+      status=excluded.status,
+      revision=excluded.revision,
+      revision_hash=excluded.revision_hash,
+      evidence_status=excluded.evidence_status,
+      existing_task_id=excluded.existing_task_id,
+      task_id=excluded.task_id,
+      defer_until=excluded.defer_until,
+      decision_note=excluded.decision_note,
+      decided_at=excluded.decided_at,
+      promoted_at=excluded.promoted_at,
+      updated_at=excluded.updated_at,
+      raw_json=excluded.raw_json
+  `).run(proposalParams(proposal));
+  return rowToProposal(db.prepare('SELECT * FROM hq_proposals WHERE decision_id=?').get(proposal.decisionId));
+}
+
+function upsertProposal(input = {}) {
+  const normalized = validateProposalInput(input);
+  if (input.existingTaskId && !db.prepare('SELECT 1 FROM tasks WHERE id=?').get(input.existingTaskId)) {
+    throw proposalError('existing_task_not_found', 409);
+  }
+  const revisionHash = proposalRevisionHash(input);
+  const existingRow = db.prepare('SELECT * FROM hq_proposals WHERE idempotency_key=?').get(normalized.idempotencyKey);
+  const existing = rowToProposal(existingRow);
+  if (existing && existing.revisionHash === revisionHash) return { proposal: existing, created: false, revised: false };
+  const timestamp = now();
+  if (!existing) {
+    const proposal = saveProposal({
+      ...input,
+      ...normalized,
+      decisionId: input.decisionId || `proposal-${crypto.createHash('sha256').update(normalized.idempotencyKey).digest('hex').slice(0, 24)}`,
+      status: proposalInitialStatus(normalized.sourceAuthority),
+      revision: 1,
+      revisionHash,
+      evidenceStatus: proposalEvidenceStatus(input),
+      existingTaskId: input.existingTaskId || null,
+      taskId: null,
+      deferUntil: null,
+      decisionNote: '',
+      createdAt: timestamp,
+      decidedAt: normalized.sourceAuthority === 'ai_derived' ? null : timestamp,
+      promotedAt: null,
+      updatedAt: timestamp,
+    });
+    recordProposalEvent(proposal, 'created', input.actor, '', {
+      sourceAuthority: proposal.sourceAuthority,
+      initialStatus: proposal.status,
+    });
+    return { proposal, created: true, revised: false };
+  }
+  const status = HQ_PROPOSAL_TERMINAL_SYNC_STATUSES.has(existing.status)
+    ? existing.status
+    : (existing.status === 'approved' ? 'approved' : proposalInitialStatus(normalized.sourceAuthority));
+  const proposal = saveProposal({
+    ...existing,
+    ...input,
+    ...normalized,
+    decisionId: existing.decisionId,
+    status,
+    revision: existing.revision + 1,
+    revisionHash,
+    evidenceStatus: proposalEvidenceStatus(input),
+    taskId: existing.taskId || null,
+    deferUntil: existing.deferUntil || null,
+    decisionNote: existing.decisionNote || '',
+    createdAt: existing.createdAt,
+    decidedAt: existing.decidedAt || null,
+    promotedAt: existing.promotedAt || null,
+    updatedAt: timestamp,
+  });
+  recordProposalEvent(proposal, 'revised', input.actor, '', { previousRevision: existing.revision });
+  return { proposal, created: false, revised: true };
+}
+
+function getProposalOrThrow(decisionId) {
+  const proposal = rowToProposal(db.prepare('SELECT * FROM hq_proposals WHERE decision_id=?').get(decisionId));
+  if (!proposal) throw proposalError('proposal_not_found', 404);
+  return proposal;
+}
+
+function transitionProposal(decisionId, eventType, input = {}) {
+  const current = getProposalOrThrow(decisionId);
+  const actor = String(input.actor || 'hq').trim() || 'hq';
+  const note = String(input.note || '').trim();
+  if (current.status === 'promoted') throw proposalError('proposal_already_promoted', 409);
+  let nextStatus = eventType;
+  let deferUntil = current.deferUntil || null;
+  if (eventType === 'approve') {
+    nextStatus = 'approved';
+    if (current.proposalType === 'monthly_bet_proposal' && current.evidenceStatus === 'provisional') {
+      throw proposalError('provisional_evidence_cannot_approve', 409);
+    }
+    deferUntil = null;
+  } else if (eventType === 'reject') {
+    nextStatus = 'rejected';
+    deferUntil = null;
+  } else if (eventType === 'defer') {
+    deferUntil = validDateKey(input.deferUntil);
+    if (!deferUntil) throw proposalError('valid_defer_until_required');
+    nextStatus = 'deferred';
+  } else {
+    throw proposalError('invalid_proposal_transition');
+  }
+  const proposal = saveProposal({
+    ...current,
+    status: nextStatus,
+    deferUntil,
+    decisionNote: note,
+    decidedAt: now(),
+    updatedAt: now(),
+  });
+  recordProposalEvent(proposal, eventType, actor, note, { previousStatus: current.status, deferUntil });
+  return proposal;
 }
 
 function todayKey() {
@@ -411,6 +681,14 @@ function staleDailyBriefFenceError(brief) {
 function upsertDailyBrief(reviewDate, patch = {}) {
   const existing = db.prepare('SELECT * FROM hq_daily_briefs WHERE review_date=?').get(reviewDate);
   const current = rowToDailyBrief(existing) || {};
+  const referencedTaskIds = [
+    patch.primaryTaskId,
+    patch.strategicCommitmentTaskId,
+    patch.currentActionTaskId,
+    ...(Array.isArray(patch.maintenanceTaskIds) ? patch.maintenanceTaskIds : []),
+  ].filter(Boolean);
+  const missingTaskId = referencedTaskIds.find((taskId) => !db.prepare('SELECT 1 FROM tasks WHERE id=?').get(taskId));
+  if (missingTaskId) throw proposalError('daily_brief_task_not_found', 409, { taskId: missingTaskId });
   const incomingMutation = normalizeDailyBriefMutationMetadata(patch._syncMutation);
   const storedFence = normalizeDailyBriefFence(current._syncFence);
   const hasMutationPayload = Object.keys(patch).some((key) => key !== '_syncMutation');
@@ -528,6 +806,107 @@ const existingStrategicCommitmentTaskId = current.strategicCommitmentTaskId || c
     updated_at: next.updatedAt,
   });
   return rowToDailyBrief(db.prepare('SELECT * FROM hq_daily_briefs WHERE review_date=?').get(reviewDate));
+}
+
+function insertProposalTask(proposal) {
+  if (proposal.existingTaskId) {
+    const existing = rowToTask(db.prepare('SELECT * FROM tasks WHERE id=?').get(proposal.existingTaskId));
+    if (!existing) throw proposalError('existing_task_not_found', 409);
+    return existing;
+  }
+  const taskSpec = proposal.taskSpec && typeof proposal.taskSpec === 'object' ? proposal.taskSpec : {};
+  const content = String(taskSpec.content || proposal.title || '').trim();
+  if (!content) throw proposalError('task_content_required', 409);
+  const fallbackBox = db.prepare(`
+    SELECT * FROM boxes
+    ORDER BY CASE WHEN color='important' OR name='重要盒' THEN 0 ELSE 1 END, sort_order, created_at
+    LIMIT 1
+  `).get();
+  const requestedBoxId = taskSpec.boxId || fallbackBox?.id || null;
+  if (requestedBoxId && !db.prepare('SELECT 1 FROM boxes WHERE id=?').get(requestedBoxId)) {
+    throw proposalError('box_not_found', 409);
+  }
+  if (taskSpec.branchId && !db.prepare('SELECT 1 FROM branches WHERE id=?').get(taskSpec.branchId)) {
+    throw proposalError('branch_not_found', 409);
+  }
+  const timestamp = now();
+  const task = normalizeTaskCompletionTransition(null, {
+    ...taskSpec,
+    id: taskSpec.id || uid(),
+    boxId: requestedBoxId,
+    content,
+    role: undefined,
+    commitmentRole: taskSpec.role || taskSpec.commitmentRole || null,
+    commitmentSource: 'hq_proposal',
+    pinLevel: Number(taskSpec.pinLevel || (taskSpec.role === 'primary' ? 1 : taskSpec.role === 'maintenance' ? 2 : 0)),
+    pinned: ['primary', 'maintenance'].includes(taskSpec.role || taskSpec.commitmentRole),
+    syncKey: taskSpec.syncKey || `hq-proposal:${proposal.decisionId}`,
+    proposalDecisionId: proposal.decisionId,
+    proposalRevision: proposal.revision,
+    isCompleted: false,
+    createdAt: taskSpec.createdAt || timestamp,
+    updatedAt: timestamp,
+  }, timestamp);
+  const bySyncKey = db.prepare('SELECT * FROM tasks WHERE sync_key=?').get(task.syncKey);
+  if (bySyncKey) return rowToTask(bySyncKey);
+  db.prepare(`
+    INSERT INTO tasks (id, box_id, content, is_completed, sort_order, priority, weight, points_value, progress,
+      is_recurring_template, recurrence_template_id, recurrence_key, recurrence_json, next_run_at, occurrence_status,
+      mainline_id, branch_id, milestone_id, device_context, execution_mode, visible_after, deferred_at, defer_note, progress_logs_json,
+      scheduled_at, due_date, deleted, deleted_at, note, sync_key, completed_at, created_at, updated_at, raw_json)
+    VALUES (@id, @box_id, @content, @is_completed, @sort_order, @priority, @weight, @points_value, @progress,
+      @is_recurring_template, @recurrence_template_id, @recurrence_key, @recurrence_json, @next_run_at, @occurrence_status,
+      @mainline_id, @branch_id, @milestone_id, @device_context, @execution_mode, @visible_after, @deferred_at, @defer_note, @progress_logs_json,
+      @scheduled_at, @due_date, @deleted, @deleted_at, @note, @sync_key, @completed_at, @created_at, @updated_at, @raw_json)
+  `).run(taskParams(task));
+  return rowToTask(db.prepare('SELECT * FROM tasks WHERE id=?').get(task.id));
+}
+
+function promoteProposal(decisionId, input = {}) {
+  const current = getProposalOrThrow(decisionId);
+  if (current.status === 'promoted' && current.taskId) return current;
+  if (process.env.HQ_PROPOSAL_PROMOTION_ENABLED !== '1') {
+    throw proposalError('proposal_promotion_disabled', 409);
+  }
+  if (current.proposalType !== 'daily_action_proposal') {
+    throw proposalError('strategic_proposal_cannot_promote_to_task', 409);
+  }
+  if (current.status !== 'approved') throw proposalError('proposal_not_approved', 409);
+  if (input.shadowMode !== false && current.shadowMode !== false) {
+    throw proposalError('shadow_mode_requires_explicit_disable', 409);
+  }
+  const actor = String(input.actor || 'hq').trim() || 'hq';
+  return db.transaction(() => {
+    const task = insertProposalTask(current);
+    const timestamp = now();
+    const proposal = saveProposal({
+      ...current,
+      status: 'promoted',
+      taskId: task.id,
+      decisionNote: String(input.note || current.decisionNote || ''),
+      decidedAt: current.decidedAt || timestamp,
+      promotedAt: timestamp,
+      updatedAt: timestamp,
+    });
+    const taskSpec = proposal.taskSpec || {};
+    const commitmentDate = validDateKey(taskSpec.commitmentDate);
+    if (commitmentDate && taskSpec.role === 'primary') {
+      upsertDailyBrief(commitmentDate, {
+        primaryTaskId: task.id,
+        source: 'hq_proposal',
+        actionProposalIds: [proposal.decisionId],
+      });
+    } else if (commitmentDate && taskSpec.role === 'maintenance') {
+      const brief = rowToDailyBrief(db.prepare('SELECT * FROM hq_daily_briefs WHERE review_date=?').get(commitmentDate));
+      upsertDailyBrief(commitmentDate, {
+        maintenanceTaskIds: [...(brief?.maintenanceTaskIds || []), task.id],
+        source: 'hq_proposal',
+        actionProposalIds: [...new Set([...(brief?.actionProposalIds || []), proposal.decisionId])],
+      });
+    }
+    recordProposalEvent(proposal, 'promote', actor, input.note, { taskId: task.id, linkedExisting: Boolean(current.existingTaskId) });
+    return proposal;
+  })();
 }
 
 function isOpenActionTask(task, mainlines = null) {
@@ -901,6 +1280,12 @@ function buildHqSnapshot(reviewDate) {
   const decisions = db.prepare("SELECT * FROM hq_decisions WHERE status='open' ORDER BY CASE urgency WHEN 'high' THEN 0 ELSE 1 END, updated_at DESC")
     .all()
     .map(rowToDecision);
+  const proposals = db.prepare(`
+    SELECT * FROM hq_proposals
+    WHERE status IN ('proposed', 'approved', 'deferred')
+    ORDER BY CASE status WHEN 'proposed' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END, updated_at DESC
+    LIMIT 50
+  `).all().map(rowToProposal);
   const commitments = selectCommitmentTasks(tasks, brief, reviewDate, mainlines);
   const aiTasks = tasks.filter((task) => !task.deleted && !task.isCompleted && task.executionMode === 'ai');
   return {
@@ -920,6 +1305,16 @@ function buildHqSnapshot(reviewDate) {
     actionState: buildHqActionState(tasks, brief, reviewDate, commitments, mainlines),
     projects: buildProjectHealth(mainlines, tasks),
     decisions,
+    proposals,
+    proposalSummary: {
+      total: proposals.length,
+      proposed: proposals.filter((item) => item.status === 'proposed').length,
+      approved: proposals.filter((item) => item.status === 'approved').length,
+      deferred: proposals.filter((item) => item.status === 'deferred').length,
+      daily: proposals.filter((item) => item.proposalType === 'daily_action_proposal').length,
+      weekly: proposals.filter((item) => item.proposalType === 'weekly_experiment_proposal').length,
+      monthly: proposals.filter((item) => item.proposalType === 'monthly_bet_proposal').length,
+    },
     review: buildReviewStatus(reviewDate, tasks, 7),
     ai: {
       open: aiTasks.length,
@@ -1065,7 +1460,92 @@ app.post('/v1/hq/daily-briefs/:date', (req, res) => {
     if (error?.code === 'daily_brief_stale_sequence') {
       return res.status(409).json({ error: error.code, brief: error.brief });
     }
+    if (error?.code && error?.status) return sendProposalError(res, error);
     throw error;
+  }
+});
+
+function sendProposalError(res, error) {
+  if (error?.code && error?.status) {
+    return res.status(error.status).json({ error: error.code, ...(error.detail || {}) });
+  }
+  throw error;
+}
+
+app.get('/v1/hq/proposals', (req, res) => {
+  const statuses = String(req.query.status || '')
+    .split(',').map((item) => item.trim()).filter((item) => HQ_PROPOSAL_STATUSES.has(item));
+  const proposalType = String(req.query.type || '').trim();
+  const sourceAuthority = String(req.query.sourceAuthority || '').trim();
+  const clauses = [];
+  const params = [];
+  if (statuses.length) {
+    clauses.push(`status IN (${statuses.map(() => '?').join(',')})`);
+    params.push(...statuses);
+  }
+  if (proposalType) {
+    if (!HQ_PROPOSAL_TYPES.has(proposalType)) return res.status(400).json({ error: 'invalid_proposal_type' });
+    clauses.push('proposal_type=?');
+    params.push(proposalType);
+  }
+  if (sourceAuthority) {
+    if (!HQ_SOURCE_AUTHORITIES.has(sourceAuthority)) return res.status(400).json({ error: 'invalid_source_authority' });
+    clauses.push('source_authority=?');
+    params.push(sourceAuthority);
+  }
+  const limit = Math.max(1, Math.min(200, Number(req.query.limit) || 50));
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+  const items = db.prepare(`
+    SELECT * FROM hq_proposals ${where}
+    ORDER BY CASE status WHEN 'proposed' THEN 0 WHEN 'approved' THEN 1 WHEN 'deferred' THEN 2 ELSE 3 END,
+      updated_at DESC
+    LIMIT ?
+  `).all(...params, limit).map(rowToProposal);
+  return res.json({
+    items,
+    count: items.length,
+    statusCounts: Object.fromEntries([...HQ_PROPOSAL_STATUSES].map((status) => [
+      status, Number(db.prepare('SELECT COUNT(*) AS count FROM hq_proposals WHERE status=?').get(status)?.count || 0),
+    ])),
+  });
+});
+
+app.get('/v1/hq/proposals/:id', (req, res) => {
+  try {
+    const proposal = getProposalOrThrow(req.params.id);
+    const auditTrail = db.prepare(`
+      SELECT * FROM hq_proposal_events WHERE proposal_id=? ORDER BY created_at, id
+    `).all(proposal.decisionId).map(rowToProposalEvent);
+    return res.json({ ...proposal, auditTrail });
+  } catch (error) {
+    return sendProposalError(res, error);
+  }
+});
+
+app.post('/v1/hq/proposals', (req, res) => {
+  try {
+    const result = db.transaction(() => upsertProposal(req.body || {}))();
+    return res.status(result.created ? 201 : 200).json(result.proposal);
+  } catch (error) {
+    return sendProposalError(res, error);
+  }
+});
+
+['approve', 'reject', 'defer'].forEach((action) => {
+  app.post(`/v1/hq/proposals/:id/${action}`, (req, res) => {
+    try {
+      return res.json(db.transaction(() => transitionProposal(req.params.id, action, req.body || {}))());
+    } catch (error) {
+      return sendProposalError(res, error);
+    }
+  });
+});
+
+app.post('/v1/hq/proposals/:id/promote', (req, res) => {
+  try {
+    return res.json(promoteProposal(req.params.id, req.body || {}));
+  } catch (error) {
+    return sendProposalError(res, error);
   }
 });
 
@@ -1457,6 +1937,12 @@ app.post('/v1/tasks', (req, res) => {
   const timestamp = now();
   const initial = { ...req.body, id: req.body.id || uid(), createdAt: req.body.createdAt || timestamp, updatedAt: timestamp };
   const task = normalizeTaskCompletionTransition(null, initial, timestamp);
+  if (task.boxId && !db.prepare('SELECT 1 FROM boxes WHERE id=?').get(task.boxId)) {
+    return res.status(409).json({ error: 'box_not_found', boxId: task.boxId });
+  }
+  if (task.branchId && !db.prepare('SELECT 1 FROM branches WHERE id=?').get(task.branchId)) {
+    return res.status(409).json({ error: 'branch_not_found', branchId: task.branchId });
+  }
   const existing = task.recurrenceKey
     ? db.prepare('SELECT * FROM tasks WHERE id=? OR recurrence_key=?').get(task.id, task.recurrenceKey)
     : (task.syncKey
@@ -1483,6 +1969,12 @@ app.patch('/v1/tasks/:id', (req, res) => {
   const currentTask = rowToTask(current);
   const taskPatch = normalizeTaskCompletionTransition(currentTask, { ...req.body, id: req.params.id }, timestamp);
   const next = mergeRaw(current.raw_json, { ...taskPatch, updatedAt: timestamp });
+  if (next.boxId && !db.prepare('SELECT 1 FROM boxes WHERE id=?').get(next.boxId)) {
+    return res.status(409).json({ error: 'box_not_found', boxId: next.boxId });
+  }
+  if (next.branchId && !db.prepare('SELECT 1 FROM branches WHERE id=?').get(next.branchId)) {
+    return res.status(409).json({ error: 'branch_not_found', branchId: next.branchId });
+  }
   db.prepare(`
     UPDATE tasks SET box_id=@box_id, content=@content, is_completed=@is_completed, sort_order=@sort_order,
       priority=@priority, weight=@weight, points_value=@points_value, progress=@progress,

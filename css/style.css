@@ -2889,6 +2889,174 @@ body.hq-mode .app-container {
   background: #5a7fcc;
 }
 
+.hq-calibration-strip {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.hq-calibration-strip article {
+  padding: 12px;
+  border: 1px solid var(--hq-line);
+  border-radius: 15px;
+  background: rgba(23, 32, 51, .025);
+}
+
+.hq-calibration-strip article.blocked {
+  border-color: rgba(217, 155, 49, .45);
+  background: rgba(217, 155, 49, .08);
+}
+
+.hq-calibration-strip strong,
+.hq-calibration-strip span {
+  display: block;
+}
+
+.hq-calibration-strip strong {
+  font: 900 20px/1 ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+
+.hq-calibration-strip span {
+  margin-top: 6px;
+  color: var(--text-tertiary);
+  font-size: 9px;
+}
+
+.hq-proposal-rule {
+  margin: 0 0 13px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--hq-cyan);
+  color: var(--text-secondary);
+  background: rgba(102, 211, 208, .06);
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.hq-proposal-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.hq-proposal-card {
+  padding: 15px;
+  border: 1px solid var(--hq-line);
+  border-radius: 18px;
+  background: var(--hq-paper);
+  box-shadow: inset 3px 0 #8993a6;
+}
+
+.hq-proposal-card.status-pending { box-shadow: inset 3px 0 #d99b31; }
+.hq-proposal-card.status-approved { box-shadow: inset 3px 0 #2c9d86; }
+.hq-proposal-card.status-deferred { box-shadow: inset 3px 0 #8993a6; }
+
+.hq-proposal-card header {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.hq-proposal-card header span,
+.hq-proposal-card header strong {
+  display: block;
+}
+
+.hq-proposal-card header span {
+  color: var(--text-tertiary);
+  font: 800 8px/1 ui-monospace, "SFMono-Regular", Consolas, monospace;
+  letter-spacing: .08em;
+}
+
+.hq-proposal-card header strong {
+  margin-top: 7px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.hq-proposal-card header em {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  border-radius: 999px;
+  color: var(--text-secondary);
+  background: rgba(23, 32, 51, .06);
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.hq-proposal-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 13px;
+}
+
+.hq-proposal-meta span {
+  padding: 4px 7px;
+  border: 1px solid var(--hq-line);
+  border-radius: 999px;
+  color: var(--text-tertiary);
+  font-size: 8px;
+}
+
+.hq-proposal-card > p {
+  margin-top: 10px;
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+
+.hq-proposal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 13px;
+}
+
+.hq-proposal-actions button {
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--hq-line);
+  border-radius: 10px;
+  color: var(--text-secondary);
+  background: transparent;
+  box-shadow: none;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.hq-proposal-actions button.primary {
+  color: #fff;
+  border-color: var(--hq-navy);
+  background: var(--hq-navy);
+}
+
+.hq-proposal-sheet {
+  display: grid;
+  gap: 10px;
+}
+
+.hq-proposal-sheet > section {
+  padding: 13px;
+  border: 1px solid var(--hq-line);
+  border-radius: 14px;
+}
+
+.hq-proposal-sheet section span,
+.hq-proposal-sheet section strong,
+.hq-proposal-sheet section small { display: block; }
+.hq-proposal-sheet section span { color: var(--text-tertiary); font-size: 9px; }
+.hq-proposal-sheet section strong { margin-top: 6px; font-size: 14px; }
+.hq-proposal-sheet section small { margin-top: 5px; color: var(--text-secondary); }
+.hq-proposal-sheet ol { display: grid; gap: 7px; padding: 0; list-style: none; }
+.hq-proposal-sheet li { display: grid; grid-template-columns: 70px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--hq-line); }
+.hq-proposal-sheet li i { font: 800 9px/1 ui-monospace, "SFMono-Regular", Consolas, monospace; }
+.hq-proposal-sheet li strong,
+.hq-proposal-sheet li span { display: block; }
+.hq-proposal-sheet li span,
+.hq-proposal-sheet li time { margin-top: 3px; color: var(--text-tertiary); font-size: 9px; }
+
 .hq-split-zone {
   display: grid;
   grid-template-columns: 1.05fr .95fr;
@@ -3471,9 +3639,22 @@ body.hq-mode .app-container {
   .hq-maintenance-grid,
   .hq-behavior-zone,
   .hq-project-grid,
+  .hq-proposal-grid,
   .hq-system-grid,
   .hq-form-pair {
     grid-template-columns: 1fr;
+  }
+
+  .hq-calibration-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .hq-calibration-strip article:first-child {
+    grid-column: 1 / -1;
+  }
+
+  .hq-proposal-actions button {
+    min-height: 42px;
   }
 
   .hq-outcome-card > section {

@@ -8,7 +8,7 @@
     "import-json": "node scripts/import-json.js",
     "start": "node src/server.js",
     "test:schema": "node scripts/test-schema-migration.js",
-    "test:hq": "node scripts/test-hq-api.js"
+    "test:hq": "node scripts/test-hq-api.js && node scripts/test-hq-proposals.js"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",

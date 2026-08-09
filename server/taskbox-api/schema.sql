@@ -264,6 +264,53 @@ CREATE TABLE IF NOT EXISTS hq_decisions (
 
 CREATE INDEX IF NOT EXISTS idx_hq_decisions_status_updated ON hq_decisions(status, updated_at DESC);
 
+CREATE TABLE IF NOT EXISTS hq_proposals (
+  decision_id TEXT PRIMARY KEY,
+  proposal_type TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  source_authority TEXT NOT NULL,
+  standing_rule_id TEXT,
+  title TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'proposed',
+  revision INTEGER NOT NULL DEFAULT 1,
+  revision_hash TEXT NOT NULL,
+  evidence_status TEXT NOT NULL DEFAULT 'unknown',
+  existing_task_id TEXT,
+  task_id TEXT,
+  defer_until TEXT,
+  decision_note TEXT,
+  created_at TEXT NOT NULL,
+  decided_at TEXT,
+  promoted_at TEXT,
+  updated_at TEXT NOT NULL,
+  raw_json TEXT NOT NULL,
+  CHECK (proposal_type IN ('daily_action_proposal', 'weekly_experiment_proposal', 'monthly_bet_proposal')),
+  CHECK (source_authority IN ('explicit_user', 'standing_rule', 'ai_derived')),
+  CHECK (status IN ('proposed', 'approved', 'rejected', 'deferred', 'promoted')),
+  FOREIGN KEY (existing_task_id) REFERENCES tasks(id) ON DELETE SET NULL,
+  FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_hq_proposals_status_updated
+  ON hq_proposals(status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_hq_proposals_type_updated
+  ON hq_proposals(proposal_type, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS hq_proposal_events (
+  id TEXT PRIMARY KEY,
+  proposal_id TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  event_type TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  note TEXT,
+  detail_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (proposal_id) REFERENCES hq_proposals(decision_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_hq_proposal_events_proposal_created
+  ON hq_proposal_events(proposal_id, created_at ASC);
+
 CREATE TABLE IF NOT EXISTS hq_period_reviews (
   period_type TEXT NOT NULL,
   period_key TEXT NOT NULL,

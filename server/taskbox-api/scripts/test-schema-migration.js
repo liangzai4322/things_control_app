@@ -36,8 +36,12 @@ try {
     if (!indexes.includes(name)) throw new Error(`missing index ${name}`);
   });
   const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((item) => item.name);
-  ['branches', 'hq_daily_briefs', 'hq_decisions', 'hq_period_reviews'].forEach((name) => {
+  ['branches', 'hq_daily_briefs', 'hq_decisions', 'hq_proposals', 'hq_proposal_events', 'hq_period_reviews'].forEach((name) => {
     if (!tables.includes(name)) throw new Error(`missing table ${name}`);
+  });
+  const proposalIndexes = db.prepare('PRAGMA index_list(hq_proposals)').all().map((item) => item.name);
+  ['idx_hq_proposals_status_updated', 'idx_hq_proposals_type_updated'].forEach((name) => {
+    if (!proposalIndexes.includes(name)) throw new Error(`missing proposal index ${name}`);
   });
   db.close();
   console.log('server schema migration tests passed');

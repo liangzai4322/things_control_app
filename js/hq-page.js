@@ -31,6 +31,13 @@ import { bindHqDimensionNav, renderHqDimensionNav, renderHqPeriodPage } from './
 import { isTaskReleased } from './task-visibility.js';
 import { buildHqActionCandidates, dismissHqCandidate } from './hq-candidates.js';
 import { buildHqSystemViews, summarizeHqSystemViews } from './hq-systems.js';
+import {
+  proposalActionModel,
+  proposalPeriodLabel,
+  proposalStatusMeta,
+  proposalTypeMeta,
+  summarizeProposalCalibration,
+} from './hq-proposals.js';
 
 const HQ_CACHE_KEY = 'taskbox_hq_cache_v1';
 let hqRenderVersion = 0;
@@ -344,6 +351,58 @@ function renderSystem(system) {
   `;
 }
 
+function renderProposal(proposal) {
+  const type = proposalTypeMeta(proposal.proposalType);
+  const status = proposalStatusMeta(proposal.status);
+  const actions = proposalActionModel(proposal);
+  const evidenceLabel = actions.provisionalMonthly
+    ? '证据暂定，批准已锁定'
+    : proposal.evidenceStatus === 'sufficient' ? '证据充分' : '证据待复核';
+  return `
+    <article class="hq-proposal-card status-${escapeHtml(status.tone)}">
+      <header>
+        <div><span>${escapeHtml(type.cadence)} · ${escapeHtml(type.label)}</span><strong>${escapeHtml(proposal.title)}</strong></div>
+        <em>${escapeHtml(status.label)}</em>
+      </header>
+      <div class="hq-proposal-meta">
+        <span>${escapeHtml(proposalPeriodLabel(proposal))}</span>
+        <span>REV ${Number(proposal.revision) || 1}</span>
+        <span>${escapeHtml(evidenceLabel)}</span>
+      </div>
+      <p>${escapeHtml(actions.writebackLabel)} · 来源 ${escapeHtml(proposal.sourceAuthority || 'unknown')}</p>
+      <div class="hq-proposal-actions">
+        ${actions.canApprove ? `<button class="primary" data-proposal-action="approve" data-proposal-id="${escapeHtml(proposal.decisionId)}">批准</button>` : ''}
+        ${actions.canPromote ? `<button class="primary" data-proposal-action="promote" data-proposal-id="${escapeHtml(proposal.decisionId)}">写入盒子</button>` : ''}
+        ${actions.canDefer ? `<button data-proposal-action="defer" data-proposal-id="${escapeHtml(proposal.decisionId)}">延期 7 天</button>` : ''}
+        ${actions.canReject ? `<button data-proposal-action="reject" data-proposal-id="${escapeHtml(proposal.decisionId)}">拒绝</button>` : ''}
+        <button data-proposal-detail="${escapeHtml(proposal.decisionId)}">审计</button>
+      </div>
+    </article>
+  `;
+}
+
+async function openProposalInspector(proposal) {
+  let detail = proposal;
+  try {
+    detail = await requestTaskboxApi(`/hq/proposals/${encodeURIComponent(proposal.decisionId)}`) || proposal;
+  } catch {}
+  const events = Array.isArray(detail.auditTrail) ? detail.auditTrail : [];
+  const { root, close } = openSheet(`
+    <div class="sheet-header">
+      <div><p class="eyebrow">PROPOSAL AUDIT · REV ${Number(detail.revision) || 1}</p><h2>${escapeHtml(detail.title)}</h2></div>
+      <button class="icon-btn" id="closeHqProposal">×</button>
+    </div>
+    <div class="hq-proposal-sheet">
+      <section><span>授权来源</span><strong>${escapeHtml(detail.sourceAuthority || 'unknown')}</strong><small>${escapeHtml(detail.standingRuleId || '无持续授权规则')}</small></section>
+      <section><span>写回边界</span><strong>${escapeHtml(proposalActionModel(detail).writebackLabel)}</strong><small>${escapeHtml(detail.evidenceStatus || 'unknown')} evidence</small></section>
+      <ol>${events.length ? events.map((event) => `
+        <li><i>${escapeHtml(event.eventType)}</i><div><strong>${escapeHtml(event.actor)}</strong><span>${escapeHtml(event.note || `revision ${event.revision}`)}</span></div><time>${escapeHtml(formatSystemSyncTime(event.createdAt))}</time></li>
+      `).join('') : '<li class="empty"><div><strong>审计记录加载中</strong><span>重新联网后可查看完整轨迹</span></div></li>'}</ol>
+    </div>
+  `, { height: '78vh' });
+  root.querySelector('#closeHqProposal').addEventListener('click', close);
+}
+
 function formatSystemSyncTime(value) {
   if (!value) return '尚未成功同步';
   const date = new Date(value);
@@ -432,6 +491,8 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
   });
   const maintenance = snapshot.commitments?.maintenance || [];
   const decisions = snapshot.decisions || [];
+  const proposals = snapshot.proposals || [];
+  const proposalCalibration = summarizeProposalCalibration(snapshot);
   const closure = brief.yesterdayClosure || {};
   const riskCount = projects.filter((project) => ['blocked', 'stale', 'needs_action'].includes(project.health)).length;
   const syncState = getApiSyncState();
@@ -458,7 +519,7 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
         </div>
         <div class="hq-situation-line" aria-label="今日态势">
           <article><span>ACTIVE PROJECTS</span><strong>${projects.length}</strong><small>活跃项目</small></article>
-          <article><span>DECISIONS</span><strong>${decisions.length}</strong><small>待决策</small></article>
+          <article><span>APPROVALS</span><strong>${proposalCalibration.pending}</strong><small>待审批提案</small></article>
           <article><span>RISK SIGNALS</span><strong>${riskCount}</strong><small>项目预警</small></article>
           <article><span>AI QUEUE</span><strong>${snapshot.ai?.open || 0}</strong><small>AI执行中</small></article>
         </div>
@@ -515,10 +576,28 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
         </div>
       </section>
 
+      <section class="hq-section hq-proposal-zone" id="hqProposals">
+        <div class="hq-section-head">
+          <div><span>03 / REVIEW CALIBRATION</span><h2>复盘审批与受控写回</h2></div>
+          <p>${proposalCalibration.pending ? `${proposalCalibration.pending} 项等待判断` : '当前提案均已处理'}</p>
+        </div>
+        <div class="hq-calibration-strip">
+          <article><strong>${proposalCalibration.completionRate === null ? '—' : `${proposalCalibration.completionRate}%`}</strong><span>7 天承诺命中率</span></article>
+          <article><strong>${proposalCalibration.cadenceCounts.daily}</strong><span>日省动作</span></article>
+          <article><strong>${proposalCalibration.cadenceCounts.weekly}</strong><span>周省实验</span></article>
+          <article><strong>${proposalCalibration.cadenceCounts.monthly}</strong><span>月省押注</span></article>
+          <article class="${proposalCalibration.evidenceBlocked ? 'blocked' : ''}"><strong>${proposalCalibration.evidenceBlocked}</strong><span>证据护栏</span></article>
+        </div>
+        <p class="hq-proposal-rule">日省动作：批准后才进入盒子；周省实验与月省押注：批准后仍是战略对象。相同周期只增加 revision，不制造重复提案。</p>
+        <div class="hq-proposal-grid">
+          ${proposals.length ? proposals.map(renderProposal).join('') : '<div class="hq-empty-panel"><strong>没有待处理提案</strong><span>完成日省、周省或月省后，提案会按授权来源进入这里。</span></div>'}
+        </div>
+      </section>
+
       <section class="hq-split-zone">
         <div class="hq-section hq-decision-zone">
           <div class="hq-section-head">
-            <div><span>03 / DECISION QUEUE</span><h2>待决策队列</h2></div>
+            <div><span>04 / DECISION QUEUE</span><h2>待决策队列</h2></div>
             <button id="hqAddDecision">＋ 记录决策</button>
           </div>
           <div class="hq-decision-list">
@@ -528,7 +607,7 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
 
         <div class="hq-section hq-systems-zone">
           <div class="hq-section-head">
-            <div><span>04 / SYSTEM CONTRACTS</span><h2>子系统接入卡</h2></div>
+            <div><span>05 / SYSTEM CONTRACTS</span><h2>子系统接入卡</h2></div>
             <p>${systemSummary.l1} 个 L1 只读 · ${systemSummary.l2} 个 L2 受控${systemSummary.unknown ? ` · ${systemSummary.unknown} 个状态未知` : ''}</p>
           </div>
           <div class="hq-system-legend" aria-label="接入等级说明"><span>L0 入口</span><span>L1 只读</span><span>L2 受控写回</span></div>
@@ -905,6 +984,40 @@ function bindPageEvents(app, snapshot, candidates = [], systems = []) {
   });
   app.querySelectorAll('[data-mainline]').forEach((button) => {
     button.addEventListener('click', () => navigate(`#mainline/${button.dataset.mainline}`));
+  });
+  app.querySelectorAll('[data-proposal-detail]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const proposal = (snapshot.proposals || []).find((item) => item.decisionId === button.dataset.proposalDetail);
+      if (proposal) openProposalInspector(proposal);
+    });
+  });
+  app.querySelectorAll('[data-proposal-action]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const action = button.dataset.proposalAction;
+      const proposalId = button.dataset.proposalId;
+      if (!action || !proposalId) return;
+      if (action === 'reject' && !window.confirm('拒绝后，后续复盘同步不会自动复活这项提案。确认拒绝？')) return;
+      const payload = { actor: 'hq_user' };
+      if (action === 'defer') {
+        const date = new Date();
+        date.setDate(date.getDate() + 7);
+        payload.deferUntil = date.toISOString().slice(0, 10);
+        payload.note = '人生参谋部延期 7 天';
+      }
+      if (action === 'promote') payload.shadowMode = false;
+      button.disabled = true;
+      try {
+        await requestTaskboxApi(`/hq/proposals/${encodeURIComponent(proposalId)}/${action}`, {
+          method: 'POST', body: JSON.stringify(payload),
+        });
+        showToast(action === 'approve' ? '提案已批准' : action === 'promote' ? '已受控写入盒子' : action === 'defer' ? '已延期 7 天' : '提案已拒绝');
+        await renderHqPage(app, { refreshRemote: true });
+      } catch (error) {
+        button.disabled = false;
+        const message = String(error?.message || error || '');
+        showToast(message.includes('provisional') ? '证据仍为暂定，月度押注暂不批准' : '操作未完成，请刷新后重试');
+      }
+    });
   });
   app.querySelectorAll('[data-resolve-decision]').forEach((button) => {
     button.addEventListener('click', async () => {
