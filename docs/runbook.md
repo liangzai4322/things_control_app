@@ -76,6 +76,8 @@ API 目录默认 `/opt/taskbox-api`，数据库默认 `/opt/taskbox-api/data/tas
 
 2026-08-09 P2 已完成生产发布：候选专项、全量`npm test`、API schema/HQ/候选 syncKey 幂等与`npm run build`通过。浏览器完成原始承诺、战略战果、候选跳过、冷却空状态、排序、确认接棒，以及“无下一步主线→原生候选→双击确认→重要盒仅一条任务→项目恢复推进中”；390px/1440px 无横向溢出，控制台无错误。缓存回归覆盖“部分更新保留承诺、显式 null 仍清空”。Pages 工作流`31292056719`成功，生产`service-worker.js`为 Build ID`a485fa88a115`，入口为`assets/app-EXZBL2NR.js`；生产分块命中`hq-candidate:`、`candidateDedupeKey`、`主线系统信号`和`currentActionTaskId`。API 认证健康`200`、未认证`401`、生产 Origin 预检`204`，`taskbox-api.service`保持 active；P2 没有 API 运行代码发布，服务端继续使用 P1 回滚点。
 
+2026-08-09 P3 发布候选：`npm run test:hq-systems`验证接入等级、未知/过期状态、主线行动门槛、P2 候选数量一致性和完整闭环状态；全量`npm test`与`npm run build`通过，Build ID 为`dca5c12098ba`。浏览器在 1440px/390px 验证六张接入卡、L0/L1/L2 图例、主线八字段契约、只读权限、五段闭环、进入项目中心跳转和无横向溢出，控制台无错误。发布后核对 Pages Build ID 与生产分块中的`SYSTEM CONTRACT`、`L1 只读`、`/v1/hq/today.projects`和`blocked / needs_action`；P3 没有 API 运行代码或 schema 变更，服务端不重新部署。
+
 ### 任务中枢桥接验证
 
 桥接脚本位于`D:\note_new\06-日常输入_输出\.agents\skills\任务中枢\scripts\task_hub_bridge.py`。先使用`--dry-run`验证认证、盒子匹配和任务字段，不产生远端测试记录：

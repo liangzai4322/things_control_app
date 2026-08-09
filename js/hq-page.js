@@ -30,6 +30,7 @@ import { openCompletionReceiptSheet } from './completion-card.js';
 import { bindHqDimensionNav, renderHqDimensionNav, renderHqPeriodPage } from './hq-period-page.js';
 import { isTaskReleased } from './task-visibility.js';
 import { buildHqActionCandidates, dismissHqCandidate } from './hq-candidates.js';
+import { buildHqSystemViews, summarizeHqSystemViews } from './hq-systems.js';
 
 const HQ_CACHE_KEY = 'taskbox_hq_cache_v1';
 let hqRenderVersion = 0;
@@ -46,15 +47,6 @@ const HEALTH_LABELS = {
   blocked: '阻塞',
   needs_action: '缺下一步',
 };
-const SYSTEMS = [
-  { id: 'daily', code: '003', name: '日省', note: '复盘、证据与明日承诺', state: 'connected', action: 'brief' },
-  { id: 'mainline', code: '002', name: '主线系统', note: '项目、里程碑与下一步', state: 'connected', action: 'projects' },
-  { id: 'taskbox', code: 'BOX', name: '行动盒子', note: '任务执行与场景分发', state: 'connected', action: 'home' },
-  { id: 'trade', code: '001', name: '交易系统', note: '工具入口与风险信号', state: 'reserved' },
-  { id: 'mirror', code: '010', name: '镜像系统', note: '状态校准与同日补充', state: 'reserved' },
-  { id: 'gap', code: '009', name: 'GAP 教练', note: '重复问题与待决策项', state: 'reserved' },
-];
-
 function escapeHtml(value) {
   return String(value ?? '')
     .replaceAll('&', '&amp;')
@@ -178,13 +170,13 @@ function renderActionSeat(actionState) {
 function renderActionCandidates(candidates = [], actionState = {}) {
   if (actionState.currentAction) return '';
   if (!candidates.length) return `
-    <section class="hq-candidate-dock empty">
+    <section class="hq-candidate-dock empty" id="hqActionCandidates">
       <div><span>NEXT BEST</span><strong>当前没有达到 55 分门槛的候选</strong><small>不为了填满席位推荐低价值任务；仍可手动选择。</small></div>
       <button id="hqManualCandidate">手动选择</button>
     </section>
   `;
   return `
-    <section class="hq-candidate-dock">
+    <section class="hq-candidate-dock" id="hqActionCandidates">
       <header><div><span>NEXT BEST · ROI ENGINE</span><h3>下一件高投产比行动</h3></div><small>最多 3 项 · 确认后进入行动席位</small></header>
       <div class="hq-candidate-list">${candidates.map((candidate, index) => `
         <article class="hq-candidate-card ${index === 0 ? 'recommended' : ''}">
@@ -340,15 +332,91 @@ function renderDecision(decision) {
 
 function renderSystem(system) {
   return `
-    <button class="hq-system-card ${system.state}" data-system-action="${escapeHtml(system.action || '')}">
-      <span>${escapeHtml(system.code)}</span>
-      <div>
-        <strong>${escapeHtml(system.name)}</strong>
-        <small>${escapeHtml(system.note)}</small>
+    <button class="hq-system-card access-${escapeHtml(system.accessLevel.toLowerCase())} health-${escapeHtml(system.health)}" data-system-id="${escapeHtml(system.systemId)}" aria-label="查看${escapeHtml(system.name)}接入详情">
+      <span class="hq-system-code">${escapeHtml(system.code)}</span>
+      <div class="hq-system-copy">
+        <header><strong>${escapeHtml(system.name)}</strong><em>${escapeHtml(system.access.label)}</em></header>
+        <small>${escapeHtml(system.responsibility)}</small>
+        <p>${escapeHtml(system.factSummary)}</p>
       </div>
-      <i>${system.state === 'connected' ? '已接入' : '下一阶段'}</i>
+      <i><b></b>${escapeHtml(system.healthLabel)}${system.candidateSignalCount ? ` · ${system.candidateSignalCount} 个行动信号` : ''}</i>
     </button>
   `;
+}
+
+function formatSystemSyncTime(value) {
+  if (!value) return '尚未成功同步';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '同步时间未知';
+  return date.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+function renderSystemLoop(system) {
+  const stages = [
+    ['发现', system.loopEvidence?.discovered],
+    ['判断', system.loopEvidence?.judged],
+    ['执行', system.loopEvidence?.executed],
+    ['证据', system.loopEvidence?.evidenced],
+    ['复盘', system.loopEvidence?.reviewed],
+  ];
+  return stages.map(([label, complete], index) => `
+    <li class="${complete ? 'complete' : ''}"><span>${complete ? '✓' : index + 1}</span><strong>${label}</strong></li>
+  `).join('');
+}
+
+function openSystemInspector(app, snapshot, system) {
+  const triggerText = system.actionTriggers.length ? system.actionTriggers.join(' / ') : '当前无自动行动触发';
+  const { root, close } = openSheet(`
+    <div class="sheet-header">
+      <div><p class="eyebrow">SYSTEM CONTRACT · ${escapeHtml(system.code)}</p><h2>${escapeHtml(system.name)}接入卡</h2></div>
+      <button class="icon-btn" id="closeHqSystem">×</button>
+    </div>
+    <div class="hq-system-sheet">
+      <section class="hq-system-verdict health-${escapeHtml(system.health)}">
+        <div><span>${escapeHtml(system.access.label)}</span><strong>${escapeHtml(system.healthLabel)}</strong></div>
+        <p>${escapeHtml(system.factSummary)}</p>
+        <small>最后同步：${escapeHtml(formatSystemSyncTime(system.lastSyncAt))}</small>
+      </section>
+      <dl class="hq-system-contract">
+        <div><dt>负责解释</dt><dd>${escapeHtml(system.responsibility)}</dd></div>
+        <div><dt>唯一事实源</dt><dd>${escapeHtml(system.factSource)}</dd></div>
+        <div><dt>读取方式</dt><dd>${escapeHtml(system.readMethod)}</dd></div>
+        <div><dt>写回权限</dt><dd>${escapeHtml(system.writeMethod || '无；只读系统不修改原数据')}</dd></div>
+        <div><dt>健康检查</dt><dd>${escapeHtml(system.healthCheck)}</dd></div>
+        <div><dt>行动门槛</dt><dd>${escapeHtml(triggerText)}</dd></div>
+        <div><dt>证据回流</dt><dd>${escapeHtml(system.evidenceReturn)}</dd></div>
+        <div><dt>维护责任</dt><dd>${escapeHtml(system.owner)}</dd></div>
+      </dl>
+      <section class="hq-system-signal">
+        <span>HIGHEST SIGNAL · 当前最高信号</span>
+        <strong>${escapeHtml(system.highestSignal)}</strong>
+        <small>${system.canWrite ? '只有用户确认后才执行写回。' : '该接入等级没有自动写回权限。'}</small>
+      </section>
+      ${system.systemId === 'mainline' ? `
+        <section class="hq-system-loop">
+          <div><span>READ-ONLY LOOP</span><h3>事实到复盘链路</h3></div>
+          <ol>${renderSystemLoop(system)}</ol>
+          <p>主线只提供事实；信号越过门槛后进入 ROI 判断，用户确认才在盒子创建行动，完成回执再交给日省。</p>
+        </section>
+      ` : ''}
+      <div class="sheet-actions">
+        ${system.action ? '<button class="btn primary" id="openHqSystemSource">进入对应界面</button>' : '<button class="btn" id="ackHqSystemLevel">知道了</button>'}
+        ${system.candidateSignalCount ? '<button class="btn" id="viewHqSystemCandidates">查看行动候选</button>' : ''}
+      </div>
+    </div>
+  `, { height: '88vh' });
+  root.querySelector('#closeHqSystem').addEventListener('click', close);
+  root.querySelector('#ackHqSystemLevel')?.addEventListener('click', close);
+  root.querySelector('#openHqSystemSource')?.addEventListener('click', () => {
+    close();
+    if (system.action === 'home') navigate('#home');
+    else if (system.action === 'projects') app.querySelector('#hqProjects')?.scrollIntoView({ behavior: 'smooth' });
+    else if (system.action === 'brief') openBriefEditor(app, snapshot);
+  });
+  root.querySelector('#viewHqSystemCandidates')?.addEventListener('click', () => {
+    close();
+    app.querySelector('#hqActionCandidates')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
 }
 
 function renderSnapshot(app, snapshot, { remote = false } = {}) {
@@ -368,6 +436,8 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
   const riskCount = projects.filter((project) => ['blocked', 'stale', 'needs_action'].includes(project.health)).length;
   const syncState = getApiSyncState();
   const syncPresentation = describeHqSyncState(syncState, { remote });
+  const systems = buildHqSystemViews({ snapshot, syncState, tasks: getTasks(), remote });
+  const systemSummary = summarizeHqSystemViews(systems);
 
   app.innerHTML = `
     <main class="page hq-page">
@@ -458,15 +528,17 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
 
         <div class="hq-section hq-systems-zone">
           <div class="hq-section-head">
-            <div><span>04 / SYSTEM PORTS</span><h2>系统接入口</h2></div>
+            <div><span>04 / SYSTEM CONTRACTS</span><h2>子系统接入卡</h2></div>
+            <p>${systemSummary.l1} 个 L1 只读 · ${systemSummary.l2} 个 L2 受控${systemSummary.unknown ? ` · ${systemSummary.unknown} 个状态未知` : ''}</p>
           </div>
-          <div class="hq-system-grid">${SYSTEMS.map(renderSystem).join('')}</div>
+          <div class="hq-system-legend" aria-label="接入等级说明"><span>L0 入口</span><span>L1 只读</span><span>L2 受控写回</span></div>
+          <div class="hq-system-grid">${systems.map(renderSystem).join('')}</div>
         </div>
       </section>
     </main>
   `;
 
-  bindPageEvents(app, snapshot, candidates);
+  bindPageEvents(app, snapshot, candidates, systems);
 }
 
 function renderTaskOptions(tasks, selectedId, excludedIds = []) {
@@ -709,7 +781,7 @@ function openDecisionEditor(app, snapshot) {
   });
 }
 
-function bindPageEvents(app, snapshot, candidates = []) {
+function bindPageEvents(app, snapshot, candidates = [], systems = []) {
   bindHqDimensionNav(app);
   app.querySelector('#hqBack').addEventListener('click', () => navigate('#home'));
   app.querySelector('#hqRefresh').addEventListener('click', async () => {
@@ -851,13 +923,10 @@ function bindPageEvents(app, snapshot, candidates = []) {
       renderHqPage(app, { refreshRemote: true });
     });
   });
-  app.querySelectorAll('[data-system-action]').forEach((button) => {
+  app.querySelectorAll('[data-system-id]').forEach((button) => {
     button.addEventListener('click', () => {
-      const action = button.dataset.systemAction;
-      if (action === 'home') navigate('#home');
-      else if (action === 'projects') app.querySelector('#hqProjects')?.scrollIntoView({ behavior: 'smooth' });
-      else if (action === 'brief') openBriefEditor(app, snapshot);
-      else showToast('入口已预留，将在下一阶段接入');
+      const system = systems.find((item) => item.systemId === button.dataset.systemId);
+      if (system) openSystemInspector(app, snapshot, system);
     });
   });
 }
