@@ -3,7 +3,20 @@ import { openSheet, showToast } from './app.js';
 const CARD_WIDTH = 1080;
 const CARD_HEIGHT = 1440;
 const NOTE_LINES_PER_PAGE = 13;
-const CARD_VERSION = 1;
+const CARD_VERSION = 2;
+
+export const COMPLETION_RECEIPT_TEMPLATES = Object.freeze([
+  { id: 'focus', name: '留白焦点', source: 'Apple' },
+  { id: 'finish-line', name: '冲线时刻', source: 'Nike' },
+  { id: 'level-clear', name: '像素通关', source: 'Nintendo 2001' },
+  { id: 'paper-file', name: '纸页档案', source: 'Notion' },
+  { id: 'soundwave', name: '声波庆典', source: 'Spotify' },
+  { id: 'track-number', name: '赛道编号', source: 'BMW M' },
+  { id: 'pinboard', name: '灵感拼贴', source: 'Pinterest' },
+  { id: 'field-notes', name: '思考手记', source: 'Claude' },
+]);
+
+const TEMPLATE_IDS = new Set(COMPLETION_RECEIPT_TEMPLATES.map((item) => item.id));
 
 const CARD_THEMES = {
   important: { start: '#5c2035', end: '#d66b42', accent: '#ffcb7d', glow: '#ff875f' },
@@ -49,11 +62,35 @@ function resolveTheme(color) {
   return CARD_THEMES[color] || CARD_THEMES.idea;
 }
 
+function stableTemplateId(seed = '') {
+  const hash = Array.from(String(seed)).reduce((value, character) => (
+    Math.imul(value ^ character.codePointAt(0), 16777619) >>> 0
+  ), 2166136261);
+  return COMPLETION_RECEIPT_TEMPLATES[hash % COMPLETION_RECEIPT_TEMPLATES.length].id;
+}
+
+export function pickCompletionReceiptTemplate(excludedId = '') {
+  const choices = COMPLETION_RECEIPT_TEMPLATES.filter((item) => item.id !== excludedId);
+  const random = globalThis.crypto?.getRandomValues
+    ? globalThis.crypto.getRandomValues(new Uint32Array(1))[0] / 4294967296
+    : Math.random();
+  return choices[Math.floor(random * choices.length)]?.id || COMPLETION_RECEIPT_TEMPLATES[0].id;
+}
+
+function resolveTemplateId(value, seed = '') {
+  return TEMPLATE_IDS.has(value) ? value : stableTemplateId(seed);
+}
+
+function templateName(templateId) {
+  return COMPLETION_RECEIPT_TEMPLATES.find((item) => item.id === templateId)?.name || '完成回执';
+}
+
 export function createCompletionReceiptSnapshot(task, {
   box = null,
   mainline = null,
   branch = null,
   pointsAwarded = null,
+  templateId = '',
 } = {}) {
   const completedAt = task?.completedAt || new Date().toISOString();
   return {
@@ -69,6 +106,7 @@ export function createCompletionReceiptSnapshot(task, {
     branchName: cleanText(branch?.name),
     pointsAwarded: Math.max(0, Number(pointsAwarded ?? task?.pointsValue) || 0),
     executionMode: task?.executionMode || 'self',
+    templateId: TEMPLATE_IDS.has(templateId) ? templateId : pickCompletionReceiptTemplate(),
   };
 }
 
@@ -80,6 +118,7 @@ export function getCompletionReceiptSnapshot(task, context = {}) {
       content: cleanText(saved.content) || cleanText(task?.content),
       note: cleanText(saved.note),
       boxColor: cleanText(saved.boxColor) || cleanText(context.box?.color) || 'idea',
+      templateId: resolveTemplateId(saved.templateId, `${task?.id}:${saved.completedAt}`),
     };
   }
   return createCompletionReceiptSnapshot(task, context);
@@ -132,46 +171,12 @@ function clampCanvasLines(ctx, value, maxWidth, maxLines) {
   return result;
 }
 
-function drawBackground(ctx, theme, pageIndex) {
-  const gradient = ctx.createLinearGradient(0, 0, CARD_WIDTH, CARD_HEIGHT);
-  gradient.addColorStop(0, theme.start);
-  gradient.addColorStop(0.58, theme.end);
-  gradient.addColorStop(1, '#172138');
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT);
-
-  const glow = ctx.createRadialGradient(880, 120, 10, 880, 120, 440);
-  glow.addColorStop(0, `${theme.glow}c2`);
-  glow.addColorStop(1, `${theme.glow}00`);
-  ctx.fillStyle = glow;
-  ctx.fillRect(420, 0, 660, 620);
-
+function drawStamp(ctx, color, label = '结 案', x = 892, y = 155) {
   ctx.save();
-  ctx.globalAlpha = 0.09;
-  ctx.strokeStyle = '#ffffff';
-  ctx.lineWidth = 1;
-  const offset = pageIndex * 13;
-  for (let x = -CARD_HEIGHT + offset; x < CARD_WIDTH + CARD_HEIGHT; x += 72) {
-    ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x + CARD_HEIGHT, CARD_HEIGHT);
-    ctx.stroke();
-  }
-  ctx.restore();
-
-  const vignette = ctx.createLinearGradient(0, 0, 0, CARD_HEIGHT);
-  vignette.addColorStop(0, 'rgba(4, 12, 25, 0.02)');
-  vignette.addColorStop(1, 'rgba(4, 12, 25, 0.46)');
-  ctx.fillStyle = vignette;
-  ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT);
-}
-
-function drawStamp(ctx, theme) {
-  ctx.save();
-  ctx.translate(892, 155);
+  ctx.translate(x, y);
   ctx.rotate(-0.1);
-  ctx.strokeStyle = theme.accent;
-  ctx.fillStyle = theme.accent;
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
   ctx.globalAlpha = 0.9;
   ctx.lineWidth = 5;
   ctx.beginPath();
@@ -182,10 +187,81 @@ function drawStamp(ctx, theme) {
   ctx.stroke();
   ctx.textAlign = 'center';
   ctx.font = '700 34px "Microsoft YaHei", sans-serif';
-  ctx.fillText('结 案', 0, 3);
+  ctx.fillText(label, 0, 3);
   ctx.font = '700 19px ui-monospace, monospace';
   ctx.fillText('DONE', 0, 32);
   ctx.restore();
+}
+
+function fillCanvas(ctx, color) {
+  ctx.fillStyle = color;
+  ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT);
+}
+
+function drawReceiptArt(ctx, templateId, theme, pageIndex) {
+  const style = { ink: '#fff', muted: 'rgba(255,255,255,.68)', accent: theme.accent, panel: 'rgba(255,255,255,.105)', border: 'rgba(255,255,255,.22)', serif: false };
+
+  if (templateId === 'focus') {
+    Object.assign(style, { ink: '#1d1d1f', muted: '#6e6e73', accent: '#0066cc', panel: '#f5f5f7', border: '#e0e0e0' });
+    fillCanvas(ctx, '#ffffff');
+    ctx.fillStyle = '#f5f5f7';
+    ctx.fillRect(0, 0, CARD_WIDTH, 28);
+    ctx.fillStyle = style.accent;
+    ctx.beginPath(); ctx.arc(934, 118, 42, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.font = '700 42px system-ui'; ctx.textAlign = 'center'; ctx.fillText('✓', 934, 133); ctx.textAlign = 'left';
+  } else if (templateId === 'finish-line') {
+    Object.assign(style, { accent: '#dfff00', panel: '#151515', border: '#3b3b3b' });
+    fillCanvas(ctx, '#050505');
+    ctx.fillStyle = style.accent;
+    ctx.beginPath(); ctx.moveTo(680, 0); ctx.lineTo(1080, 0); ctx.lineTo(1080, 460); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#050505'; ctx.font = '900 164px Impact, sans-serif'; ctx.fillText('DONE', 688, 172);
+  } else if (templateId === 'level-clear') {
+    Object.assign(style, { ink: '#fff8df', muted: '#d9e5ff', accent: '#ffd43b', panel: '#163f9a', border: '#fff8df' });
+    fillCanvas(ctx, '#2256c7');
+    const pixels = ['#e53935', '#ffd43b', '#fff8df'];
+    for (let index = 0; index < 12; index += 1) {
+      ctx.fillStyle = pixels[index % pixels.length];
+      ctx.fillRect(820 + (index % 4) * 54, 52 + Math.floor(index / 4) * 54, 40, 40);
+    }
+    ctx.strokeStyle = '#fff8df'; ctx.lineWidth = 10; ctx.strokeRect(34, 34, 1012, 1372);
+  } else if (templateId === 'paper-file') {
+    Object.assign(style, { ink: '#191919', muted: '#787774', accent: '#eb5757', panel: '#fff', border: '#d8d8d6', serif: true });
+    fillCanvas(ctx, '#f7f6f3');
+    ctx.strokeStyle = '#deddd9'; ctx.lineWidth = 2;
+    for (let y = 88; y < CARD_HEIGHT; y += 54) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(CARD_WIDTH, y); ctx.stroke(); }
+    ctx.fillStyle = '#191919'; ctx.font = '900 104px Georgia, serif'; ctx.fillText('✓', 886, 162);
+  } else if (templateId === 'soundwave') {
+    Object.assign(style, { accent: '#1ed760', panel: '#29145f', border: '#8b5cf6' });
+    fillCanvas(ctx, '#170f2f');
+    ['#ff4ecd', '#8b5cf6', '#1ed760'].forEach((color, index) => {
+      ctx.strokeStyle = color; ctx.lineWidth = 38; ctx.beginPath();
+      for (let x = -80; x <= 1160; x += 40) {
+        const y = 150 + index * 44 + Math.sin((x + pageIndex * 30) / 90) * (54 + index * 16);
+        if (x === -80) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    });
+  } else if (templateId === 'track-number') {
+    Object.assign(style, { ink: '#111', muted: '#5d6570', accent: '#0066b1', panel: '#f2f4f7', border: '#ccd2d8' });
+    fillCanvas(ctx, '#fff');
+    ['#00a4e4', '#173f8a', '#e1262f'].forEach((color, index) => {
+      ctx.fillStyle = color; ctx.save(); ctx.translate(774 + index * 76, -70); ctx.rotate(-0.34); ctx.fillRect(0, 0, 54, 430); ctx.restore();
+    });
+    ctx.fillStyle = '#111'; ctx.font = '900 158px Arial Narrow, sans-serif'; ctx.fillText('01', 812, 250);
+  } else if (templateId === 'pinboard') {
+    Object.assign(style, { ink: '#2f1b20', muted: '#75565f', accent: '#bd081c', panel: '#fffaf7', border: '#e5c8c2', serif: true });
+    fillCanvas(ctx, '#f8d9d0');
+    ctx.fillStyle = '#bd081c'; ctx.beginPath(); ctx.arc(916, 126, 104, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.font = '700 72px Georgia, serif'; ctx.textAlign = 'center'; ctx.fillText('✓', 916, 151); ctx.textAlign = 'left';
+    ctx.save(); ctx.translate(52, 31); ctx.rotate(-0.018); ctx.fillStyle = '#fffaf7'; ctx.fillRect(0, 0, 620, 238); ctx.restore();
+  } else {
+    Object.assign(style, { ink: '#242321', muted: '#6f6a63', accent: '#cc785c', panel: '#eee8dc', border: '#d6cdbf', serif: true });
+    fillCanvas(ctx, '#f4efe6');
+    ctx.fillStyle = '#cc785c'; ctx.fillRect(0, 0, 22, CARD_HEIGHT);
+    ctx.strokeStyle = '#242321'; ctx.lineWidth = 4;
+    for (let index = 0; index < 4; index += 1) { ctx.save(); ctx.translate(920, 130); ctx.rotate(index * Math.PI / 2); ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, 72); ctx.stroke(); ctx.restore(); }
+  }
+  return style;
 }
 
 function renderReceiptCanvas(receipt, noteLines, pageIndex, pageCount) {
@@ -197,60 +273,61 @@ function renderReceiptCanvas(receipt, noteLines, pageIndex, pageCount) {
   canvas.setAttribute('aria-label', `任务完成回执${pageCount > 1 ? `第 ${pageIndex + 1} 页` : ''}`);
   const ctx = canvas.getContext('2d');
   const theme = resolveTheme(receipt.boxColor);
-  drawBackground(ctx, theme, pageIndex);
-  drawStamp(ctx, theme);
+  const templateId = resolveTemplateId(receipt.templateId, `${receipt.sourceTaskId}:${receipt.completedAt}`);
+  const style = drawReceiptArt(ctx, templateId, theme, pageIndex);
+  if (templateId === 'paper-file') drawStamp(ctx, style.accent, '归 档', 900, 150);
 
-  ctx.fillStyle = 'rgba(255,255,255,.72)';
+  ctx.fillStyle = style.muted;
   ctx.font = '700 22px ui-monospace, "Microsoft YaHei", sans-serif';
-  ctx.fillText('TASKBOX / COMPLETION RECEIPT', 76, 94);
-  ctx.fillStyle = theme.accent;
+  ctx.fillText(`TASKBOX / ${templateName(templateId).toUpperCase()}`, 76, 94);
+  ctx.fillStyle = style.accent;
   ctx.font = '700 23px "Microsoft YaHei", sans-serif';
   ctx.fillText(`✓ ${receipt.boxName}`, 76, 154);
 
   const path = [receipt.mainlineName, receipt.branchName].filter(Boolean).join('  /  ');
   if (path) {
-    ctx.fillStyle = 'rgba(255,255,255,.74)';
+    ctx.fillStyle = style.muted;
     ctx.font = '500 24px "Microsoft YaHei", sans-serif';
     ctx.fillText(path.length > 36 ? `${path.slice(0, 36)}…` : path, 76, 199);
   }
 
-  ctx.fillStyle = '#ffffff';
-  ctx.font = '700 60px "Microsoft YaHei", "PingFang SC", sans-serif';
+  ctx.fillStyle = style.ink;
+  ctx.font = `${style.serif ? '600' : '800'} 60px ${style.serif ? 'Georgia, "Songti SC", serif' : '"Microsoft YaHei", "PingFang SC", sans-serif'}`;
   const titleLines = clampCanvasLines(ctx, receipt.content, 810, 3);
   titleLines.forEach((line, index) => ctx.fillText(line, 76, 290 + index * 78));
 
   const panelY = 290 + titleLines.length * 78 + 34;
   const panelHeight = 700;
-  ctx.fillStyle = 'rgba(255,255,255,.105)';
+  ctx.fillStyle = style.panel;
   roundedRect(ctx, 64, panelY, 952, panelHeight, 36);
   ctx.fill();
-  ctx.strokeStyle = 'rgba(255,255,255,.22)';
+  ctx.strokeStyle = style.border;
   ctx.lineWidth = 2;
   ctx.stroke();
 
-  ctx.fillStyle = theme.accent;
+  ctx.fillStyle = style.accent;
   ctx.font = '700 22px ui-monospace, "Microsoft YaHei", sans-serif';
   ctx.fillText(pageIndex ? `COMPLETION NOTES / CONTINUED ${pageIndex + 1}` : 'COMPLETION NOTES / 完成记录', 104, panelY + 66);
-  ctx.fillStyle = receipt.note ? '#ffffff' : 'rgba(255,255,255,.56)';
-  ctx.font = '500 35px "Microsoft YaHei", "PingFang SC", sans-serif';
+  ctx.fillStyle = receipt.note ? style.ink : style.muted;
+  ctx.font = `500 35px ${style.serif ? 'Georgia, "Songti SC", serif' : '"Microsoft YaHei", "PingFang SC", sans-serif'}`;
   noteLines.forEach((line, index) => ctx.fillText(line, 104, panelY + 132 + index * 45));
 
   const footerY = 1288;
-  ctx.fillStyle = 'rgba(255,255,255,.68)';
+  ctx.fillStyle = style.muted;
   ctx.font = '500 24px ui-monospace, "Microsoft YaHei", sans-serif';
   ctx.fillText(formatCompletedAt(receipt.completedAt), 76, footerY);
   if (receipt.executionMode === 'ai') {
-    ctx.fillStyle = theme.accent;
+    ctx.fillStyle = style.accent;
     ctx.fillText('✦ AI 协作', 76, footerY + 42);
   }
   if (receipt.pointsAwarded > 0) {
     ctx.textAlign = 'right';
-    ctx.fillStyle = theme.accent;
+    ctx.fillStyle = style.accent;
     ctx.font = '700 38px "Microsoft YaHei", sans-serif';
     ctx.fillText(`+${receipt.pointsAwarded} 积分`, 1004, footerY + 8);
   }
   ctx.textAlign = 'right';
-  ctx.fillStyle = 'rgba(255,255,255,.48)';
+  ctx.fillStyle = style.muted;
   ctx.font = '500 20px ui-monospace, monospace';
   ctx.fillText(pageCount > 1 ? `${String(pageIndex + 1).padStart(2, '0')} / ${String(pageCount).padStart(2, '0')}` : '行动留痕 · 完成有据', 1004, 1372);
   ctx.textAlign = 'left';
@@ -314,7 +391,7 @@ export function openCompletionReceiptSheet({
   if (!task?.id || !box) return;
   const context = { box, mainline, branch, pointsAwarded };
   let receipt = getCompletionReceiptSnapshot(task, context);
-  if (!task.completionReceipt) onPersist?.(receipt);
+  if (!task.completionReceipt || task.completionReceipt.templateId !== receipt.templateId) onPersist?.(receipt);
   const { root, close } = openSheet(`
     <div class="sheet-handle"></div>
     <div class="sheet-content completion-receipt-sheet">
@@ -323,6 +400,10 @@ export function openCompletionReceiptSheet({
         <button type="button" class="completion-receipt-close" id="closeReceipt" aria-label="关闭完成回执">×</button>
       </div>
       <p class="sheet-lead">备注已按完成时状态存档；长内容会自动拆成多张图片。</p>
+      <div class="completion-receipt-template-bar">
+        <span><small>本次模板</small><strong id="receiptTemplateName"></strong></span>
+        <button type="button" id="shuffleReceiptTemplate">换一款</button>
+      </div>
       <div class="completion-receipt-preview" id="receiptPreview" aria-live="polite"></div>
       <div class="completion-receipt-actions">
         <button type="button" class="btn primary" id="shareReceipt">分享图片</button>
@@ -338,10 +419,17 @@ export function openCompletionReceiptSheet({
     const preview = root.querySelector('#receiptPreview');
     preview.innerHTML = '';
     canvases.forEach((canvas) => preview.appendChild(canvas));
+    root.querySelector('#receiptTemplateName').textContent = templateName(receipt.templateId);
   };
   renderPreview();
 
   root.querySelector('#closeReceipt').addEventListener('click', close);
+  root.querySelector('#shuffleReceiptTemplate').addEventListener('click', () => {
+    receipt = { ...receipt, version: CARD_VERSION, templateId: pickCompletionReceiptTemplate(receipt.templateId) };
+    onPersist?.(receipt);
+    renderPreview();
+    showToast(`已换成「${templateName(receipt.templateId)}」`);
+  });
   root.querySelector('#saveReceipt').addEventListener('click', async () => {
     try {
       const files = await receiptFiles(canvases, receipt);
@@ -365,7 +453,7 @@ export function openCompletionReceiptSheet({
     }
   });
   root.querySelector('#refreshReceipt').addEventListener('click', () => {
-    receipt = createCompletionReceiptSnapshot(task, context);
+    receipt = createCompletionReceiptSnapshot(task, { ...context, templateId: receipt.templateId });
     onPersist?.(receipt);
     renderPreview();
     showToast('已按最新备注更新回执');

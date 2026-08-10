@@ -20,7 +20,7 @@ npm run preview
 - 页面顶部的“参谋部 / 盒子”切换器在所有路由保持可见。
 - 参谋部任务通过 `#box/:boxId/:taskId/hq-primary|hq-maintenance` 精确下钻，盒子显示周实验、所属项目和任务角色。
 - 执行结构是“主线 → 支线 → 任务”；`#mainline/:id` 管理项目全局，`#branch/:id` 用于独立推进、完成和复盘支线。
-- 任务完成时生成可分享的“完成回执”；回执固定完成时的标题、备注和归属，长备注自动拆成多张 PNG。
+- 任务完成时从 8 款去品牌化视觉模板中随机生成可分享的“完成回执”；模板写入完成快照，长备注拆成多张 PNG 时保持同款，也可在预览中主动换款。
 - 参谋部读取远端驾驶舱前会等待当前任务写入，并按任务版本合并本地完成状态，避免旧云端快照让已完成主动作重新出现；整库拉取时，云端同身份记录（含删除 tombstone）覆盖旧浏览器副本，本地只保留服务器从未见过的离线记录。
 - 记录级写入先进入浏览器持久化 outbox：离线失败后显示“待同步”，重载不丢失，恢复连接后按原顺序重放；outbox 未清空时暂停云端整库覆盖。
 
@@ -41,13 +41,13 @@ npm run preview
 - `docs/runbook.md`: 本地验证、部署、任务中枢桥接、备份和回滚。
 - `docs/production-build.md`: 线上压缩构建规则。
 - `docs/life-hq-roadmap.md`: 人生参谋部已实现边界与后续路线。
-- `docs/hq-primary-action-system-loop-v2.md`: 主动作席位、投产比候选、统一子系统接入和复盘校准的唯一实施方案；P0–P4 已完成生产发布。
+- `docs/hq-primary-action-system-loop-v2.md`: 主动作席位、投产比候选、统一子系统接入和复盘校准的唯一实施方案；P0–P4 已进入代码，P4 API 仍待生产发布。
 
 P0 已于 2026-08-07 完成端到端收尾，P1 与 P2 已于 2026-08-09 完成生产发布。P2 生产 Build ID 为`a485fa88a115`，Pages 工作流为`31292056719`：现有任务经过资格门槛、九维 ROI 评分、55 分阈值、最多三项排序与四小时冷却，确认后幂等复用原任务；主线系统的“阻塞/缺下一步”事实可直接形成原生候选，确认后按稳定`syncKey`在重要盒幂等创建任务并关联原项目。部分 daily brief 更新与已有 brief 合并，只有显式`primaryTaskId: null`才清空原始承诺。全量测试、API 幂等测试、390px/1440px、真实“完成→候选→跳过/确认→建任务→项目恢复”浏览器验收，以及生产静态资源与 API 健康验收均已通过。
 
 P3 已于 2026-08-09 完成生产发布，Build ID 为`dca5c12098ba`，Pages 工作流`31302177865`在解除旧部署并发锁后由 attempt 2 成功：`js/hq-systems.js`以轻量配置登记六个现役/预留系统，统一职责、事实源、读写方式、健康检查、同步时效、行动门槛、证据回流、负责人和 L0/L1/L2 接入等级。主线系统是首个 L1 只读事实源，数据读取失败或过期显示未知/过期，只有`blocked / needs_action`进入既有 ROI 候选；TaskBox 与日省显示为 L2 受控链路，交易、镜像和 GAP 保持 L0 入口。
 
-P4 已于 2026-08-10 完成生产发布：日动作、周实验、月押注统一进入 proposal 控制面，状态为`proposed / approved / rejected / deferred / promoted`，授权来源、稳定幂等键、revision 与审计事件全程保留。只有已批准的日动作可在显式关闭 shadow mode 后晋升 TaskBox；周实验和月押注保持战略对象，临时证据月押注禁止批准。Pages 工作流`31324155726`发布 Build ID`1962464071d3`，入口`assets/app-AEO5YO7V.js`、样式`assets/style-KKWZZMR4.css`、P4 分块`assets/chunk-XDQ4ZDYX.js`；API 回滚点为`/opt/taskbox-api/backups/p4-review-proposals-20260809T170701Z`。生产验证通过认证`200`、未认证`401`、CORS`204`、proposal 队列`200`和完整审计状态机，战略 proposal 的任务晋升返回`409`且没有创建任务。
+P4 代码已于 2026-08-10 以提交`3660969`完成：新增日省行动、周省实验、月省押注三类 HQ proposal，统一`proposed / approved / rejected / deferred / promoted`状态、授权来源、幂等 revision、审计事件和证据护栏；只有获批日省动作可受控晋升 TaskBox，周/月批准后仍是战略对象，`provisional`月度证据禁止批准。前端审批与校准区已由 Pages 工作流`31324155726`发布，Build ID`1962464071d3`，入口`assets/app-AEO5YO7V.js`、样式`assets/style-KKWZZMR4.css`，P4 分块`assets/chunk-XDQ4ZDYX.js`；390px/1440px、审批→写回、周省不建任务、审计与控制台验收通过。服务端 schema/API 专项、迁移、HQ 集成和桥接测试均通过，但生产 API 尚未部署；`HQ_PROPOSAL_PROMOTION_ENABLED`尚未在生产启用，生产仍使用 P1 API 回滚点。
 
 ## 内容导出脚本
 

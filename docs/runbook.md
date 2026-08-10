@@ -33,7 +33,7 @@ TASKBOX_DB_PATH=<SQLite absolute path>
 TASKBOX_API_PORT=<loopback port>
 TASKBOX_API_TOKEN=<secret>
 TASKBOX_ALLOWED_ORIGINS=<comma-separated origins>
-HQ_PROPOSAL_PROMOTION_ENABLED=1
+HQ_PROPOSAL_PROMOTION_ENABLED=0|1
 ```
 
 API 目录默认 `/opt/taskbox-api`，数据库默认 `/opt/taskbox-api/data/taskbox.sqlite`。生产进程应由 systemd 或等价守护程序管理，Nginx 把 HTTPS `/taskbox-api/` 反向代理到本地端口。
@@ -68,8 +68,9 @@ API 目录默认 `/opt/taskbox-api`，数据库默认 `/opt/taskbox-api/data/tas
 9. `#hq/week`与`#hq/month`可切换；`offset=-1`周期 API 分别返回最近已完成周省/月省的`review / derived / projects / decisions`。
 10. 对测试周期执行一次 POST → GET → DELETE，确认周省/月省按周期键幂等写入。
 11. 在 1440px 与 390px 视口检查参谋部、盒子和任务指挥链：无横向溢出、控制台错误或失败资源请求。
-12. 完成一条带备注的测试任务，确认回执自动打开、备注完整、长内容可多页、已完成列表可再次打开；手机支持时用系统分享图片，其他浏览器回退为 PNG 保存。
+12. 完成一条带备注的测试任务，确认回执从 8 款模板随机抽取、模板名正确、“换一款”不重复当前款、长内容分页保持同款、已完成列表可再次打开；用 390px 窄屏确认卡片与分享/保存按钮可见，手机支持时调用系统分享，其他浏览器回退为 PNG 保存。
 13. 把一条临时任务设为当日主动作，在盒子完成后立即切回参谋部；本地卡片应立即退出，远端刷新后不得回闪或重新占位。随后主动取消完成并再次刷新，确认较新的未完成版本可以正常恢复。弱网测试时还应确认离开`#hq`后，较早发出的 HQ 请求不会覆盖盒子或其他页面。
+14. P4 发布后分别创建日/周/月提案：重复 POST 不增加 decision，内容变化只增加 revision；验证 approve/reject/defer 与审计事件。只有批准的日动作在`HQ_PROPOSAL_PROMOTION_ENABLED=1`且请求`shadowMode=false`时可晋升 TaskBox；周/月 promote 返回`409`，`provisional`月度 approve 返回`409`。
 
 2026-08-07 已完成 P0 全链路：此前通过的完成后不回显、取消完成恢复、跨来源删除/本地缓存收敛、3.5 秒弱网跨路由防覆盖和离线 outbox 重放均保持有效；服务端`primaryTaskId: null`修复已发布生产。服务器发布由临时 GitHub 托管 Runner 完成，因为当前执行环境仍被源站入站规则过滤，而 Runner 到 22/8090/80/443 可达。发布前停止`taskbox-api.service`并备份代码与 SQLite/WAL/SHM，恢复点为`/opt/taskbox-api/backups/p0-null-clear-20260807T060141Z`；服务端 schema 与 HQ 集成测试、systemd active 检查全部通过。线上验收为认证健康 200、未认证 401、生产 Origin 预检 204、清空读回`null`且原 brief 恢复成功。
 
@@ -79,7 +80,7 @@ API 目录默认 `/opt/taskbox-api`，数据库默认 `/opt/taskbox-api/data/tas
 
 2026-08-09 P3 已完成生产发布：`npm run test:hq-systems`验证接入等级、未知/过期状态、主线行动门槛、P2 候选数量一致性和完整闭环状态；全量`npm test`与`npm run build`通过。浏览器在 1440px/390px 验证六张接入卡、L0/L1/L2 图例、主线八字段契约、只读权限、五段闭环、进入项目中心跳转和无横向溢出，控制台无错误。Pages 工作流`31302177865`首轮构建成功但因旧部署并发锁拒绝 deploy，attempt 2 成功；生产 Build ID 为`dca5c12098ba`，入口为`assets/app-VLRUGPBP.js`，样式为`assets/style-VA4J23EG.css`，生产分块命中`SYSTEM CONTRACT`、`L1 只读`、`/v1/hq/today.projects`、`blocked`、`needs_action`、`READ-ONLY LOOP`与`状态未知`。现有 API 未认证健康`401`、生产 Origin 预检`204`；P3 没有 API 运行代码或 schema 变更，服务端未重新部署。
 
-2026-08-10 P4 已完成生产发布：前端 Pages 工作流`31324155726`发布 Build ID`1962464071d3`，入口`assets/app-AEO5YO7V.js`、样式`assets/style-KKWZZMR4.css`、P4 分块`assets/chunk-XDQ4ZDYX.js`。API 通过本机`127.0.0.1:10808` HTTP CONNECT 代理直连服务器发布；停服后备份代码、SQLite/WAL/SHM 与环境文件，回滚点为`/opt/taskbox-api/backups/p4-review-proposals-20260809T170701Z`。schema、HQ、proposal 测试和迁移通过，`taskbox-api.service`保持 active；正式域名认证健康`200`、未认证`401`、生产 Origin 预检`204`、proposal 队列`200`。周实验生产探针最终为`rejected`，审计轨迹包含`created / approve / defer / reject`；战略晋升返回`409`且未创建任务。`HQ_PROPOSAL_PROMOTION_ENABLED=1`已启用，紧急关闭受控晋升时将其设为`0`并重启服务。
+2026-08-10 P4 发布中：实现提交`3660969`已通过 proposal 专项、schema 迁移、HQ API、日省/周期桥接、全量前端测试与构建；本地浏览器验证日动作“批准→写入盒子”、周实验批准后不建任务、月度 provisional 护栏、revision/audit，以及 390px/1440px 无溢出和控制台无错误。Pages Source 曾被切回 legacy，已恢复 GitHub Actions；工作流`31324155726`成功发布 Build ID`1962464071d3`，入口`assets/app-AEO5YO7V.js`、样式`assets/style-KKWZZMR4.css`、P4 分块`assets/chunk-XDQ4ZDYX.js`。API 生产发布尚未执行：当前机器到服务器 22/8090/9090 均超时，GitHub Runner 路线需要用户明确批准把 root 密码保存为一次性加密仓库 Secret。生产环境尚无`hq_proposals / hq_proposal_events`验证记录，也尚未启用`HQ_PROPOSAL_PROMOTION_ENABLED`；当前服务器回滚点仍是 P1。
 
 ### 任务中枢桥接验证
 
@@ -106,6 +107,8 @@ python "D:\note_new\06-日常输入_输出\.agents\skills\任务中枢\scripts\t
 - 日省事实包没有生成：运行`fetch_daily_review_context.py --date YYYY-MM-DD`，检查私有 Token 文件或`TASKBOX_API_TOKEN`，并确认 API Origin 配置。
 - 日省没有派发到盒子：检查本机私有 Token 文件或`TASKBOX_API_TOKEN`，并单独运行 `sync_daily_review_to_hq.py` 查看不含凭据的 JSON 结果。
 - 周省/月省没有进入参谋部：先运行`fetch_period_review_context.py`核对周期键，再运行对应`sync_weekly_review_to_hq.py`或`sync_monthly_review_to_hq.py`。
+- proposal 同步返回 404：生产 API 尚未发布 P4，检查`/v1/hq/proposals`路由与`hq_proposals`表，不要绕过提案直接创建任务。
+- promote 返回`proposal_promotion_disabled`：确认提案已批准、类型为日省动作、请求显式`shadowMode=false`，再检查服务器`HQ_PROPOSAL_PROMOTION_ENABLED=1`；周/月提案永远不走 TaskBox promotion。
 - 任务中枢返回`TASKBOX_API_TOKEN_missing`：检查`TASKBOX_API_TOKEN`、`TASKBOX_API_TOKEN_FILE`或`~/.codex/secrets/taskbox-api-token`，不把 Token 粘贴进命令历史或文档。
 - 任务中枢返回`box_not_found / mainline_not_found / branch_not_found`：先用`GET /v1/taskbox`核对真实名称或 ID，再重跑；不要猜测归属。
 - 任务中枢返回`skipped_duplicate`：目标日期和盒子中已有同内容任务，属于幂等成功，不再创建副本。

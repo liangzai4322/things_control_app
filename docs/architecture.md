@@ -28,7 +28,8 @@ GitHub Pages (dist)
 - `js/small-world.js`: 珍宝阁、弑神塔和转盘入口。
 - `js/mainline-page.js`: 主线、支线入口、里程碑和关联任务页面。
 - `js/branch-page.js`: 支线编辑器、独立详情、完成流程和支线行动编辑器。
-- `js/completion-card.js`: 完成回执快照、Canvas 分页绘制、PNG 保存和 Web Share 图片分享。
+- `js/completion-card.js`: 完成回执快照、8 款 Canvas 模板、稳定分页、PNG 保存和 Web Share 图片分享。
+- `js/hq-proposals.js`: P4 提案类型、状态、按钮权限和日/周/月校准汇总的纯视图模型。
 - `scripts/build-app.mjs`: JavaScript/CSS 压缩、哈希、Service Worker 生成和 `dist/` 组装。
 
 ## 同步模型
@@ -51,7 +52,7 @@ GitHub Pages (dist)
 
 所有新增记录必须在客户端生成稳定 ID。服务端 `POST` 对同 ID 采用幂等更新，周期任务通过 `recurrenceKey` 额外防止重复实例。
 
-完成回执存在任务 `raw_json.completionReceipt` 中，不建立重复任务表。首次完成时固定标题、备注、完成时间、盒子、主线、支线和积分；之后编辑任务不会静默改写历史回执，只有用户选择“按最新任务内容重新生成”才更新快照。
+完成回执存在任务 `raw_json.completionReceipt` 中，不建立重复任务表。首次完成时固定标题、备注、完成时间、盒子、主线、支线、积分和随机 `templateId`；8 款模板均由本地 Canvas 绘制，不依赖外部字体或图片。长备注分页沿用同一个 `templateId`，用户可主动换款并保存到原快照；旧版回执缺少该字段时，按任务 ID 与完成时间确定性补款，避免每次打开跳变。之后编辑任务不会静默改写历史回执，只有用户选择“按最新任务内容重新生成”才更新内容快照，并保留当前模板。
 
 ## 数据表
 
@@ -72,8 +73,8 @@ GitHub Pages (dist)
 | `sw_items` | 小世界单条内容 |
 | `hq_daily_briefs` | 按日期唯一保存的驾驶舱、行动承诺和日省闭环 |
 | `hq_decisions` | 一条待裁决或已裁决事项 |
-| `hq_proposals` | 日动作、周实验或月押注的当前 revision、授权来源、决策状态与可选 TaskBox 关联 |
-| `hq_proposal_events` | proposal 的创建、修订、批准、拒绝、延期和晋升审计事件 |
+| `hq_proposals` | 按稳定幂等键保存一条日省行动、周省实验或月省押注提案及当前 revision |
+| `hq_proposal_events` | 提案创建、修订、批准、拒绝、延期和晋升的不可变审计事件 |
 | `hq_period_reviews` | 按 `week/month + period_key` 幂等保存的周省或月省 |
 
 业务字段有独立列便于查询和索引，同时保留 `raw_json` 兼容尚未拆列的前端字段。数据库定义位于 `server/taskbox-api/schema.sql`，启动和导入脚本会为旧库补列。
@@ -107,8 +108,7 @@ GitHub Pages (dist)
 - `GET /v1/hq/periods?type=week|month&limit=N`
 - `GET/POST /v1/hq/daily-briefs/:date`
 - `GET/POST/PATCH/DELETE /v1/hq/decisions`
-- `GET/POST /v1/hq/proposals`
-- `GET /v1/hq/proposals/:id`
+- `GET/POST /v1/hq/proposals`、`GET /v1/hq/proposals/:id`
 - `POST /v1/hq/proposals/:id/approve|reject|defer|promote`
 - `GET /v1/daily-snapshot?date=YYYY-MM-DD`
 
@@ -122,7 +122,7 @@ P2 候选层位于`js/hq-candidates.js`：先过滤未释放、已完成、暂�
 
 P3 子系统契约层位于`js/hq-systems.js`，以代码内轻量`system_registry`配置登记六个系统，不新增数据库表。静态接入卡声明职责、唯一事实源、读取/写回方式、健康检查、同步时效、行动门槛、证据回流、负责人和接入等级；动态视图只把`/v1/hq/today.projects`成功读取且未过期的主线快照视为 L1 已确认事实。读取失败显示`unknown`，超过 SLA 显示`stale`，不会回退为健康。主线的`blocked / needs_action`与 P2 候选门槛共用同一语义；L1 模块本身不写原系统，用户确认后才由既有 TaskBox L2 路径幂等创建任务。日省与 TaskBox 标记为 L2 受控链路，交易、镜像和 GAP 保持 L0 入口。P3 只复用现有 HQ/任务 API，没有服务端运行代码和数据库 schema 变更；已于 2026-08-09 以 Build ID`dca5c12098ba`完成生产发布。
 
-P4 proposal 控制面位于`js/hq-proposals.js`和服务端 proposal 路由。`daily_action_proposal / weekly_experiment_proposal / monthly_bet_proposal`按稳定`idempotencyKey`保存，内容变化在同一`decisionId`上增加 revision；`sourceAuthority`区分`explicit_user / standing_rule / ai_derived`。只有`approved`日动作可晋升 TaskBox，且请求必须带`shadowMode=false`、服务端必须设置`HQ_PROPOSAL_PROMOTION_ENABLED=1`；周实验和月押注晋升返回`409`，月押注`evidenceStatus=provisional`时批准也返回`409`。所有状态转换写入`hq_proposal_events`，前端显示审计轨迹而不把战略对象伪装成任务。P4 已于 2026-08-10 完成前端与 API 生产发布。
+P4 控制平面把复盘输出统一保存为 proposal。`sourceAuthority=explicit_user / standing_rule`初始为`approved`（持续授权必须有`standingRuleId`），`ai_derived`初始为`proposed`；同一`idempotencyKey`内容未变时返回原 decision，内容变化只增加 revision 和审计事件，拒绝、延期或已晋升对象不会被后续同步自动复活。批准 AI 来源提案代表用户本轮授权，但只有`daily_action_proposal`可在请求显式关闭 shadow mode 且服务器`HQ_PROPOSAL_PROMOTION_ENABLED=1`时晋升 TaskBox；周省实验和月省押注始终保留为战略对象。月省`evidenceStatus=provisional`禁止批准。前端和代码已于 2026-08-10 完成，前端已生产，API/schema 尚待生产发布。
 
 周期数据遵循“月省定资源边界 → 周省定唯一实验 → 日省定当天动作”的下行约束；执行证据从盒子向日省、周省、月省逐层聚合。周省和月省不批量创建普通任务，避免周期记分牌污染行动盒子。
 
@@ -133,9 +133,9 @@ P4 proposal 控制面位于`js/hq-proposals.js`和服务端 proposal 路由。`d
 任务中枢位于知识管理项目，是 TaskBox 的外部确认型写入端。它先把输入拆成明确任务、日期任务和 AI 可做任务，得到用户确认后才调用 API：
 
 ```text
-用户 / 日省输入 → 任务中枢确认清单 → POST /tasks → TaskBox 执行
-                                             └→ HQ 共享任务视图
-明确主动作 / 维护动作 ───────────────────────→ POST /hq/daily-briefs/:date
+用户 / 日省输入 → 任务中枢确认清单 → POST /hq/proposals
+                                            └→ approve → promote → TaskBox 执行
+明确主动作 / 维护动作 ─────────────────────────────────────→ daily brief 引用 taskId
 ```
 
 普通任务只有一条 TaskBox 记录。HQ 复用任务、主线、支线和里程碑数据；仅驾驶舱承诺额外保存任务 ID。AI 任务通过`executionMode=ai`被 HQ 筛选，避免以“同步”为名制造双份记录。桥接脚本使用`syncKey`与内容、日期、盒子联合去重，并从现有私有 Token 位置读取认证。

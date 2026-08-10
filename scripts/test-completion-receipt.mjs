@@ -35,5 +35,12 @@ const cardSource = await readFile(new URL('../js/completion-card.js', import.met
 assert.match(cardSource, /NOTE_LINES_PER_PAGE/);
 assert.match(cardSource, /navigator\.share/);
 assert.match(cardSource, /completion-receipt-canvas/);
+const templateBlock = cardSource.match(/COMPLETION_RECEIPT_TEMPLATES = Object\.freeze\(\[([\s\S]*?)\]\)/)?.[1] || '';
+const templateIds = [...templateBlock.matchAll(/\{ id: '([^']+)'/g)].map((match) => match[1]);
+assert.equal(templateIds.length, 8, '完成回执应提供 8 款模板');
+assert.equal(new Set(templateIds).size, 8, '完成回执模板 ID 不得重复');
+assert.match(cardSource, /templateId: TEMPLATE_IDS\.has\(templateId\) \? templateId : pickCompletionReceiptTemplate\(\)/);
+assert.match(cardSource, /pickCompletionReceiptTemplate\(receipt\.templateId\)/);
+assert.match(cardSource, /createCompletionReceiptSnapshot\(task, \{ \.\.\.context, templateId: receipt\.templateId \}\)/);
 
 console.log('completion receipt tests passed');

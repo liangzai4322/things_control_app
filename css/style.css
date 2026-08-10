@@ -5857,6 +5857,56 @@ body.hq-mode .app-container {
   cursor: pointer;
 }
 
+.completion-receipt-template-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 16px;
+  padding: 10px 10px 10px 14px;
+  border: 1px solid var(--stroke);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--surface-soft) 86%, transparent);
+}
+
+.completion-receipt-template-bar span {
+  display: grid;
+  gap: 1px;
+}
+
+.completion-receipt-template-bar small {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .08em;
+}
+
+.completion-receipt-template-bar strong {
+  color: var(--text-primary);
+  font-size: 15px;
+}
+
+.completion-receipt-template-bar button {
+  min-width: 78px;
+  min-height: 38px;
+  border: 1px solid var(--stroke);
+  border-radius: 12px;
+  background: var(--surface-strong);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.completion-receipt-template-bar button:hover,
+.completion-receipt-template-bar button:focus-visible {
+  border-color: var(--accent);
+  color: var(--text-primary);
+  outline: 3px solid color-mix(in srgb, var(--accent) 20%, transparent);
+  outline-offset: 2px;
+}
+
 .completion-receipt-preview {
   display: grid;
   grid-auto-flow: column;
