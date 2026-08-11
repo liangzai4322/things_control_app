@@ -246,9 +246,16 @@ function completedOn(task, reviewDate) {
   return Boolean(task?.isCompleted && hqReviewDateKey(completedAt) === reviewDate);
 }
 
+export function isHqExecutableTaskRecord(task = {}) {
+  return !task.itemType || task.itemType === 'task';
+}
+
 export function buildHqActionState(tasks = [], briefInput = {}, reviewDate = '', mainlines = null) {
   const brief = normalizeHqBrief(briefInput, reviewDate);
-  const visibleTasks = tasks.filter((task) => task?.id && !task.deleted && !task.isRecurringTemplate);
+  const visibleTasks = tasks.filter((task) => task?.id
+    && isHqExecutableTaskRecord(task)
+    && !task.deleted
+    && !task.isRecurringTemplate);
   const byId = new Map(visibleTasks.map((task) => [task.id, task]));
   const fallbackPrimary = !brief.strategicCommitmentTaskId
     ? selectHqCommitments(visibleTasks, briefInput, reviewDate, mainlines).primary
@@ -312,7 +319,7 @@ function reconcileCommitmentTask(remoteTask, localById) {
 }
 
 function isOpenCommitment(task, mainlines = null) {
-  if (!task || task.deleted || task.isCompleted || task.isRecurringTemplate || !isTaskReleased(task)) return false;
+  if (!task || !isHqExecutableTaskRecord(task) || task.deleted || task.isCompleted || task.isRecurringTemplate || !isTaskReleased(task)) return false;
   if (!task.mainlineId || !Array.isArray(mainlines)) return true;
   const mainline = mainlines.find((item) => item.id === task.mainlineId);
   return Boolean(mainline && ['active', 'maintenance'].includes(mainline.status));

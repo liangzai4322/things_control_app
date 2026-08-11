@@ -19,10 +19,16 @@ const views = buildHqSystemViews({
   tasks: [], remote: true, now,
 });
 
-assert.equal(HQ_SYSTEM_REGISTRY.length, 6);
+assert.equal(HQ_SYSTEM_REGISTRY.length, 10);
 assert.equal(HQ_SYSTEM_ACCESS_LEVELS.L1.canWrite, false);
 assert.equal(HQ_SYSTEM_ACCESS_LEVELS.L2.canWrite, true);
-assert.deepEqual(summarizeHqSystemViews(views), { l0: 3, l1: 1, l2: 2, unknown: 0, actionable: 1 });
+assert.deepEqual(summarizeHqSystemViews(views), { l0: 3, l1: 5, l2: 2, unknown: 4, actionable: 1 });
+assert.equal(HQ_SYSTEM_REGISTRY.find((system) => system.systemId === 'time').accessLevel, 'L1');
+assert.equal(HQ_SYSTEM_REGISTRY.find((system) => system.systemId === 'feedback').accessLevel, 'L1');
+assert.equal(HQ_SYSTEM_REGISTRY.find((system) => system.systemId === 'mission').accessLevel, 'L1');
+assert.equal(HQ_SYSTEM_REGISTRY.find((system) => system.systemId === 'health').accessLevel, 'L1');
+assert.equal(HQ_SYSTEM_REGISTRY.find((system) => system.systemId === 'mission').writeMethod, '');
+assert.equal(HQ_SYSTEM_REGISTRY.find((system) => system.systemId === 'health').writeMethod, '');
 
 const mainline = views.find((system) => system.systemId === 'mainline');
 assert.equal(mainline.accessLevel, 'L1');
@@ -40,6 +46,40 @@ const stale = buildHqSystemViews({
   snapshot: { projects: [], generatedAt: '2026-08-09T03:40:00.000Z' }, remote: true, now,
 });
 assert.equal(stale.find((system) => system.systemId === 'mainline').health, 'stale');
+
+const integratedReadOnly = buildHqSystemViews({
+  snapshot: {}, now,
+  missionSnapshot: {
+    generatedAt: '2026-08-09T03:58:00.000Z', status: 'healthy',
+    summary: { activeVersionId: 'mission-001:v1', campaignTitle: '当前战役', successConditionCount: 1, stopDoingCount: 1, reviewAt: '2026-08-31' },
+  },
+  healthSnapshot: {
+    generatedAt: '2026-08-09T03:58:00.000Z', status: 'attention',
+    summary: { healthSnapshotId: 'health-1', availableCapacity: 0.6, constraints: ['降低计划负载'], sourceTypeCount: 2 },
+  },
+  timeSnapshot: {
+    generatedAt: '2026-08-09T03:58:00.000Z', availableMinutes: 480,
+    protectedWindow: { start: '09:00', end: '10:30' }, overloadState: 'normal', calendarStatus: 'connected',
+  },
+  feedback: {
+    lastSyncAt: '2026-08-09T03:58:00.000Z', deviationCount: 2, pendingRuleCount: 1,
+    rule: { statement: '先验证再写回', status: 'proposed' },
+  },
+});
+const time = integratedReadOnly.find((system) => system.systemId === 'time');
+const feedback = integratedReadOnly.find((system) => system.systemId === 'feedback');
+const mission = integratedReadOnly.find((system) => system.systemId === 'mission');
+const health = integratedReadOnly.find((system) => system.systemId === 'health');
+assert.equal(mission.health, 'healthy');
+assert.equal(mission.canWrite, false);
+assert.equal(health.health, 'attention');
+assert.equal(health.canWrite, false);
+assert.equal(time.health, 'healthy');
+assert.equal(time.canReadFacts, true);
+assert.equal(time.canWrite, false);
+assert.equal(feedback.health, 'attention');
+assert.equal(feedback.canReadFacts, true);
+assert.equal(feedback.canWrite, false);
 
 const loop = buildHqSystemViews({
   snapshot: {

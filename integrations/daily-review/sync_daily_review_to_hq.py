@@ -17,8 +17,10 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-import uuid
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from feedback_continuity import build_continuity, evidence_ref, stable_id
 
 
 DEFAULT_ENDPOINT = "https://liangzai666.com/taskbox-api/v1"
@@ -108,70 +110,65 @@ class Api:
             return json.loads(raw.decode("utf-8")) if raw else None
 
 
-def normalized_text(value: str) -> str:
-    return re.sub(r"\s+", " ", value).strip().casefold()
-
-
-def upsert_commitment_task(
-    api: Api,
-    snapshot: dict,
+def proposal_payload(
     content: str,
-    box_id: str | None,
     role: str,
-    pin_level: int,
-    brief_date: str,
-) -> tuple[dict | None, str | None]:
-    if not content:
-        return None, None
-    tasks = snapshot.get("tasks") or []
-    task = next(
-        (
-            item
-            for item in tasks
-            if not item.get("deleted")
-            and not item.get("isCompleted")
-            and normalized_text(item.get("content", "")) == normalized_text(content)
-        ),
-        None,
-    )
-    patch = {
-        "content": content,
-        "boxId": task.get("boxId") if task else box_id,
-        "commitmentRole": role,
-        "commitmentDate": brief_date,
-        "commitmentSource": "daily_review",
-        "pinLevel": pin_level,
-        "pinned": True,
-        "visibleAfter": f"{brief_date}T00:00:00+08:00",
+    index: int,
+    review_key: str,
+    brief_key: str,
+    source_authority: str,
+    standing_rule_id: str,
+    existing_task_id: str | None,
+    shadow_mode: bool,
+) -> dict:
+    stable_role = role if role == "primary" else f"maintenance-{index}"
+    return {
+        "proposalType": "daily_action_proposal",
+        "sourceAuthority": source_authority,
+        "standingRuleId": standing_rule_id or None,
+        "title": content,
+        "idempotencyKey": f"daily-review:{review_key}:{brief_key}:{stable_role}",
+        "existingTaskId": existing_task_id or None,
+        "shadowMode": shadow_mode,
+        "content": {"role": role, "plannedFromReviewDate": review_key},
+        "evidence": {"markdownDate": review_key},
+        "sourceRef": {"type": "daily_review", "reviewDate": review_key, "briefDate": brief_key},
+        "taskSpec": {
+            "content": content,
+            "role": role,
+            "pinLevel": 1 if role == "primary" else index + 1,
+            "commitmentDate": brief_key,
+            "scheduledAt": f"{brief_key}T00:00:00+08:00",
+            "visibleAfter": f"{brief_key}T00:00:00+08:00",
+            "priority": 1 if role == "primary" else 2,
+            "deviceContext": "universal",
+            "executionMode": "self",
+            "note": f"来源：{review_key}日省；审批状态由HQ管理",
+        },
+        "actor": "daily_review",
+    }
+
+
+def write_local_outbox(path: Path, payload: dict, error: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    record = {
+        "schemaVersion": 1,
+        "status": "pending",
+        "controlPlanePending": True,
+        "payload": payload,
+        "lastError": error,
         "updatedAt": dt.datetime.now(dt.timezone.utc).isoformat(),
     }
-    if task:
-        task = api.request(
-            f"/tasks/{urllib.parse.quote(task['id'])}",
-            "PATCH",
-            {**task, **patch},
-        )
-        action = "updated"
+    if path.exists():
+        try:
+            previous = json.loads(path.read_text(encoding="utf-8"))
+            record["attempts"] = int(previous.get("attempts", 0)) + 1
+        except (OSError, ValueError, TypeError):
+            record["attempts"] = 1
     else:
-        now = dt.datetime.now(dt.timezone.utc).isoformat()
-        task = api.request(
-            "/tasks",
-            "POST",
-            {
-                "id": str(uuid.uuid4()),
-                **patch,
-                "deviceContext": "universal",
-                "executionMode": "self",
-                "priority": 1 if role == "primary" else 2,
-                "progress": 0,
-                "isCompleted": False,
-                "createdAt": now,
-                "syncKey": f"daily-review::{brief_date}::{role}::{hashlib.sha1(content.encode('utf-8')).hexdigest()[:12]}",
-            },
-        )
-        snapshot.setdefault("tasks", []).append(task)
-        action = "created"
-    return task, action
+        record["attempts"] = 1
+    path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return path
 
 
 def main() -> int:
@@ -182,40 +179,38 @@ def main() -> int:
     parser.add_argument("--endpoint", default=os.environ.get("TASKBOX_API_ENDPOINT", DEFAULT_ENDPOINT))
     parser.add_argument("--feishu-url", default="")
     parser.add_argument("--card-url", default="")
+    parser.add_argument("--source-authority", choices=("explicit_user", "standing_rule", "ai_derived"), default="ai_derived")
+    parser.add_argument("--standing-rule-id", default="")
+    parser.add_argument("--existing-primary-task-id", default="")
+    parser.add_argument("--existing-maintenance-task-id", action="append", default=[])
+    parser.add_argument("--enable-promotion", action="store_true", help="仅对已批准来源请求TaskBox晋升；服务器仍需启用生产开关")
+    parser.add_argument("--proposal-outbox", type=Path)
     args = parser.parse_args()
-
-    token = resolve_token()
-    if not token:
-        print(json.dumps({"ok": False, "error": "TASKBOX_API_TOKEN_missing"}, ensure_ascii=False))
+    if args.source_authority == "standing_rule" and not args.standing_rule_id:
+        print(json.dumps({"ok": False, "error": "standing_rule_id_required"}, ensure_ascii=False))
         return 2
     review_date = dt.date.fromisoformat(args.date)
     brief_date = dt.date.fromisoformat(args.brief_date) if args.brief_date else review_date + dt.timedelta(days=1)
     review_key = review_date.isoformat()
     brief_key = brief_date.isoformat()
     markdown = args.file.read_text(encoding="utf-8")
-    api = Api(args.endpoint, token)
-
-    taskbox = api.request("/taskbox")
-    boxes = taskbox.get("boxes") or []
-    important_box = next((box for box in boxes if box.get("color") == "important" or box.get("name") == "重要盒"), None)
-    todo_box = next((box for box in boxes if box.get("color") == "misc" or box.get("name") == "待办盒"), None)
-
     action_block = section(markdown, "明日唯一动作")
     primary_content = bullet_value(action_block, "动作")
     maintenance = list_lines(section(markdown, "维护动作（最多 2 项）"))[:2]
-    primary_task, primary_action = upsert_commitment_task(
-        api, taskbox, primary_content, important_box.get("id") if important_box else None,
-        "primary", 1, brief_key,
-    )
-    maintenance_results = [
-        upsert_commitment_task(
-            api, taskbox, content, todo_box.get("id") if todo_box else None,
-            "maintenance", index + 2, brief_key,
-        )
-        for index, content in enumerate(maintenance)
-    ]
-    maintenance_tasks = [task for task, _ in maintenance_results if task]
-    task_actions = [action for _, action in [(primary_task, primary_action), *maintenance_results] if action]
+    proposal_inputs = []
+    if primary_content:
+        proposal_inputs.append(proposal_payload(
+            primary_content, "primary", 0, review_key, brief_key,
+            args.source_authority, args.standing_rule_id,
+            args.existing_primary_task_id or None, not args.enable_promotion,
+        ))
+    for index, content in enumerate(maintenance, start=1):
+        existing_id = args.existing_maintenance_task_id[index - 1] if index <= len(args.existing_maintenance_task_id) else None
+        proposal_inputs.append(proposal_payload(
+            content, "maintenance", index, review_key, brief_key,
+            args.source_authority, args.standing_rule_id, existing_id,
+            not args.enable_promotion,
+        ))
 
     closure_block = section(markdown, "昨日唯一承诺闭环")
     closure = {
@@ -225,10 +220,32 @@ def main() -> int:
         "reason": bullet_value(closure_block, "未完成的直接原因"),
         "decision": bullet_value(closure_block, "处理决定"),
     }
-    api.request(
-        f"/hq/daily-briefs/{review_key}",
-        "POST",
-        {
+    task_ref = evidence_ref("taskbox_task", args.existing_primary_task_id, "昨日唯一承诺")
+    continuity_source = {"feedbackContinuity": {"deviations": []}}
+    if closure.get("reason") or closure.get("decision") in {"升级处理", "待用户决定"}:
+        continuity_source["feedbackContinuity"]["deviations"].append({
+            "deviationId": stable_id("deviation", f"daily:{review_key}:primary"),
+            "subjectRef": args.existing_primary_task_id or closure.get("commitment") or "昨日唯一承诺",
+            "expectedResult": closure.get("commitment", ""),
+            "actualResult": closure.get("result", ""),
+            "type": "execution" if closure.get("reason") else "unknown",
+            "severity": "high" if closure.get("decision") == "升级处理" else "medium" if closure.get("reason") else "low",
+            "facts": [value for value in (closure.get("result"), closure.get("reason")) if value],
+            "interpretation": closure.get("decision", ""),
+            "observedAt": f"{review_key}T23:59:00+08:00",
+        })
+    feedback_continuity = build_continuity(
+        "day", review_key, args.file, continuity_source,
+        [item for item in (task_ref, evidence_ref("review_evidence", closure.get("evidence"), "日省完成证据")) if item],
+    )
+    sync_payload = {
+        "reviewDate": review_key,
+        "briefDate": brief_key,
+        "sourceAuthority": args.source_authority,
+        "standingRuleId": args.standing_rule_id or None,
+        "proposals": proposal_inputs,
+        "feedbackContinuity": feedback_continuity,
+        "reviewBrief": {
             "reviewDate": review_key,
             "outcomes": parse_outcomes(section(markdown, "今日外部结果")),
             "yesterdayClosure": closure,
@@ -240,46 +257,83 @@ def main() -> int:
                 "cardUrl": args.card_url.strip(),
             },
         },
-    )
-    tomorrow_brief = api.request(
-        f"/hq/daily-briefs/{brief_key}",
-        "POST",
-        {
+        "tomorrowBrief": {
             "reviewDate": brief_key,
-            "primaryTaskId": primary_task.get("id") if primary_task else None,
-            "maintenanceTaskIds": [task["id"] for task in maintenance_tasks],
             "stopDoing": list_lines(section(markdown, "明日停止做")),
             "continueDoing": list_lines(section(markdown, "明日继续做")),
             "source": "daily_review",
             "plannedFromReviewDate": review_key,
         },
-    )
+    }
+    outbox = args.proposal_outbox or args.file.resolve().parents[1] / "99_系统" / "实时日省" / "proposal-outbox" / f"{review_key}.json"
+    token = resolve_token()
+    if not token:
+        path = write_local_outbox(outbox, sync_payload, "TASKBOX_API_TOKEN_missing")
+        print(json.dumps({"ok": True, "controlPlanePending": True, "outbox": str(path)}, ensure_ascii=False))
+        return 0
+
+    api = Api(args.endpoint, token)
+    try:
+        proposals = [api.request("/hq/proposals", "POST", payload) for payload in proposal_inputs]
+        promoted = []
+        if args.enable_promotion and args.source_authority != "ai_derived":
+            for proposal in proposals:
+                promoted.append(api.request(
+                    f"/hq/proposals/{urllib.parse.quote(proposal['decisionId'])}/promote",
+                    "POST",
+                    {"actor": "daily_review", "shadowMode": False},
+                ))
+        primary_task_id = next((item.get("taskId") for item in promoted if (item.get("taskSpec") or {}).get("role") == "primary"), None)
+        maintenance_task_ids = [
+            item.get("taskId") for item in promoted
+            if (item.get("taskSpec") or {}).get("role") == "maintenance" and item.get("taskId")
+        ]
+        api.request(f"/hq/daily-briefs/{review_key}", "POST", sync_payload["reviewBrief"])
+        tomorrow_payload = {
+            **sync_payload["tomorrowBrief"],
+            "actionProposalIds": [item["decisionId"] for item in proposals],
+            "controlPlanePending": any(item.get("status") == "proposed" for item in proposals),
+        }
+        if primary_task_id:
+            tomorrow_payload["primaryTaskId"] = primary_task_id
+        if maintenance_task_ids:
+            tomorrow_payload["maintenanceTaskIds"] = maintenance_task_ids
+        tomorrow_brief = api.request(f"/hq/daily-briefs/{brief_key}", "POST", tomorrow_payload)
+    except (OSError, ValueError, urllib.error.URLError) as exc:
+        path = write_local_outbox(outbox, sync_payload, f"{type(exc).__name__}:{exc}")
+        print(json.dumps({"ok": True, "controlPlanePending": True, "outbox": str(path)}, ensure_ascii=False))
+        return 0
 
     if closure.get("decision") in {"升级处理", "待用户决定"}:
         decision_title = closure.get("commitment") or "连续未完成事项需要处理"
         decision_id = f"daily-{review_key}-{hashlib.sha1(decision_title.encode('utf-8')).hexdigest()[:12]}"
-        api.request(
-            "/hq/decisions",
-            "POST",
-            {
-                "id": decision_id,
-                "title": decision_title,
-                "context": closure.get("reason") or "来自日省承诺闭环",
-                "urgency": "high" if closure.get("decision") == "升级处理" else "normal",
-                "status": "open",
-                "createdAt": dt.datetime.now(dt.timezone.utc).isoformat(),
-                "source": "daily_review",
-            },
-        )
+        try:
+            api.request(
+                "/hq/decisions",
+                "POST",
+                {
+                    "id": decision_id,
+                    "title": decision_title,
+                    "context": closure.get("reason") or "来自日省承诺闭环",
+                    "urgency": "high" if closure.get("decision") == "升级处理" else "normal",
+                    "status": "open",
+                    "createdAt": dt.datetime.now(dt.timezone.utc).isoformat(),
+                    "source": "daily_review",
+                },
+            )
+        except (OSError, ValueError, urllib.error.URLError):
+            pass
 
     print(json.dumps({
         "ok": True,
         "reviewDate": review_key,
         "briefDate": brief_key,
-        "primaryTaskId": primary_task.get("id") if primary_task else None,
-        "maintenanceTaskIds": [task["id"] for task in maintenance_tasks],
-        "tasksCreated": task_actions.count("created"),
-        "tasksUpdated": task_actions.count("updated"),
+        "sourceAuthority": args.source_authority,
+        "proposalIds": [item["decisionId"] for item in proposals],
+        "proposalStatuses": [item["status"] for item in proposals],
+        "primaryTaskId": primary_task_id,
+        "maintenanceTaskIds": maintenance_task_ids,
+        "controlPlanePending": any(item.get("status") == "proposed" for item in proposals),
         "briefUpdatedAt": tomorrow_brief.get("updatedAt"),
     }, ensure_ascii=False))
     return 0

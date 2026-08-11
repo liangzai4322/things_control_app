@@ -3,6 +3,10 @@ const EXACT_REFRESH_KEYS = new Set([
   'taskbox_points_cache',
   'taskbox_hq_cache_v1',
   'taskbox_api_sync_state_v1',
+  'taskbox_mission_os_v1',
+  'taskbox_health_energy_os_v1',
+  'taskbox_health_energy_protocol_v1',
+  'taskbox_time_attention_os_v1',
 ]);
 
 const REFRESH_KEY_PREFIXES = [

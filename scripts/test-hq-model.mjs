@@ -5,6 +5,7 @@ import {
   describeHqSyncState,
   freezeHqStrategicCommitmentSnapshot,
   hqReviewDateKey,
+  isHqExecutableTaskRecord,
   mergeHqCacheDate,
   normalizeHqBrief,
   normalizePeriodSnapshot,
@@ -33,6 +34,10 @@ assert.deepEqual(normalized.maintenanceTaskIds, ['maintenance-a', 'maintenance-b
 assert.equal(normalized.strategicCommitmentTaskId, 'main');
 assert.equal(normalized.currentActionTaskId, 'main');
 assert.deepEqual(normalized.candidateState, { dismissals: {}, accepted: [] });
+assert.equal(isHqExecutableTaskRecord({ itemType: 'task' }), true);
+assert.equal(isHqExecutableTaskRecord({}), true);
+assert.equal(isHqExecutableTaskRecord({ itemType: 'pool' }), false);
+assert.equal(isHqExecutableTaskRecord({ itemType: 'collection' }), false);
 
 const authoritativeClear = normalizeHqBrief({
   primaryTaskId: null,

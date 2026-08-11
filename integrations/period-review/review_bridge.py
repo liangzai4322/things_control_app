@@ -66,6 +66,14 @@ def section_prefix(markdown: str, prefix: str, level: int = 2) -> tuple[str, str
     return (match.group(1).strip(), match.group(2).strip()) if match else ("", "")
 
 
+def first_section(markdown: str, headings: list[str], level: int = 2) -> str:
+    for heading in headings:
+        block = section(markdown, heading, level)
+        if block:
+            return block
+    return ""
+
+
 def bullet_map(block: str) -> dict[str, str]:
     result = {}
     for line in block.splitlines():

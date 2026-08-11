@@ -97,7 +97,7 @@ function maybeResetViewPosition(options = {}) {
 }
 
 function syncWorkspaceSwitch(path) {
-  const active = path === 'hq' ? 'hq' : 'boxes';
+  const active = ['hq', 'mission', 'health', 'time', 'execution', 'feedback'].includes(path) ? 'hq' : 'boxes';
   document.querySelectorAll('[data-workspace]').forEach((link) => {
     const selected = link.dataset.workspace === active;
     link.classList.toggle('active', selected);
@@ -110,7 +110,7 @@ function route(options = {}) {
   applyTheme();
   const parts = (location.hash || '#hq').replace('#', '').split('/').filter(Boolean);
   const [path, param, subParam, contextParam] = parts;
-  document.body.classList.toggle('hq-mode', path === 'hq');
+  document.body.classList.toggle('hq-mode', ['hq', 'mission', 'health', 'time', 'execution', 'feedback'].includes(path));
   syncWorkspaceSwitch(path);
 
   if (path === 'home') {
@@ -126,6 +126,41 @@ function route(options = {}) {
       renderHqPage(app, { refreshRemote: true, dimension: ['week', 'month'].includes(param) ? param : 'day' });
       maybeResetViewPosition(options);
     });
+    return;
+  }
+
+  if (path === 'mission') {
+    const load = ROUTE_MODULE_CACHE.mission || import('./mission-page.js');
+    ROUTE_MODULE_CACHE.mission = load;
+    load.then(({ renderMissionPage }) => { renderMissionPage(app); maybeResetViewPosition(options); });
+    return;
+  }
+
+  if (path === 'health') {
+    const load = ROUTE_MODULE_CACHE.health || import('./health-page.js');
+    ROUTE_MODULE_CACHE.health = load;
+    load.then(({ renderHealthPage }) => { renderHealthPage(app); maybeResetViewPosition(options); });
+    return;
+  }
+
+  if (path === 'time') {
+    const load = ROUTE_MODULE_CACHE.time || import('./time-attention-page.js');
+    ROUTE_MODULE_CACHE.time = load;
+    load.then(({ renderTimeAttentionPage }) => { renderTimeAttentionPage(app); maybeResetViewPosition(options); });
+    return;
+  }
+
+  if (path === 'execution') {
+    const load = ROUTE_MODULE_CACHE.execution || import('./execution-page.js');
+    ROUTE_MODULE_CACHE.execution = load;
+    load.then(({ renderExecutionPage }) => { renderExecutionPage(app); maybeResetViewPosition(options); });
+    return;
+  }
+
+  if (path === 'feedback') {
+    const load = ROUTE_MODULE_CACHE.feedback || import('./feedback-page.js');
+    ROUTE_MODULE_CACHE.feedback = load;
+    load.then(({ renderFeedbackPage }) => { renderFeedbackPage(app); maybeResetViewPosition(options); });
     return;
   }
 
