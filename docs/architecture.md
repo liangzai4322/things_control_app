@@ -82,6 +82,7 @@ GitHub Pages (dist)
 | `hq_proposals` | 按稳定幂等键保存一条日省行动、周省实验或月省押注提案及当前 revision |
 | `hq_proposal_events` | 提案创建、修订、批准、拒绝、延期和晋升的不可变审计事件 |
 | `hq_period_reviews` | 按 `week/month + period_key` 幂等保存的周省或月省 |
+| `system_candidates` | 按稳定 `candidate_id` 保存日省派给五个独立系统的未验证候选及保留/忽略状态 |
 
 业务字段有独立列便于查询和索引，同时保留 `raw_json` 兼容尚未拆列的前端字段。数据库定义位于 `server/taskbox-api/schema.sql`，启动和导入脚本会为旧库补列。
 
@@ -116,6 +117,9 @@ GitHub Pages (dist)
 - `GET/POST/PATCH/DELETE /v1/hq/decisions`
 - `GET/POST /v1/hq/proposals`、`GET /v1/hq/proposals/:id`
 - `POST /v1/hq/proposals/:id/approve|reject|defer|promote`
+- `POST /v1/system-candidates/batch`
+- `GET /v1/system-candidates?systemId=mission|health|time|execution|feedback&status=pending|kept|dismissed`
+- `PATCH /v1/system-candidates/:id`（只接受 `kept` 或 `dismissed`）
 - `GET /v1/daily-snapshot?date=YYYY-MM-DD`
 
 任务的 `pinLevel` 只决定显示顺序；`commitmentRole`、`commitmentDate`和`commitmentSource`记录日省/参谋部承诺语义，二者不混为同一字段。扩展字段继续保存在任务 `raw_json` 中，保持旧客户端兼容。
@@ -131,6 +135,8 @@ P3 子系统契约层位于`js/hq-systems.js`，以代码内轻量`system_regist
 P4 控制平面把复盘输出统一保存为 proposal。`sourceAuthority=explicit_user / standing_rule`初始为`approved`（持续授权必须有`standingRuleId`），`ai_derived`初始为`proposed`；同一`idempotencyKey`内容未变时返回原 decision，内容变化只增加 revision 和审计事件。只有`daily_action_proposal`可在明确授权与promotion开关允许时晋升TaskBox；周/月保持战略对象。前端与API/schema均已于2026-08-10完成生产发布，服务器回滚点为`/opt/taskbox-api/backups/p4-review-proposals-20260809T170701Z`。
 
 五系统 V3 于 2026-08-11 完成本地统一集成。2026-08-12 发布候选进一步恢复“系统独立、接口耦合HQ”的边界：使命、健康、时间、执行、反馈各自拥有独立页面、模型/状态与HQ端口，`js/five-system-hq-ports.js`只聚合标准快照；`js/hq-page.js`不得直接读取五系统store/model。HQ 首屏固定入口带只负责发现与跳转，仍保留参谋部/盒子两级全局导航。mission/health/time/feedback 为 L1 只读；execution 是独立L2系统，TaskBox只是其唯一任务、完成状态与完成证据事实引擎。五个系统从 V2 读取候选但保持各自域过滤和 `validated_fact=0`：使命要求明确用户裁决及二次发布批准；健康 unknown/range 只保存上下文，裁决留审计；时间确认活动日仍不是事实；执行只写本地 shadow proposal draft；反馈多文件导入原子幂等，active 对象降级 proposed，所有高权限转换默认拒绝。TaskBox 写入仍只能走 HQ proposal → 明确批准 → 幂等 promote；execution shadow draft 公共消费者和更深自动 L2 接线未实现。
+
+日省消费层在上述独立边界之外增加一条统一候选传输协议：六问先生成 `daily-review-envelope`，再按 `systemId`拆成最多五份候选包，通过`POST /v1/system-candidates/batch`幂等投递。`candidate_id`是跨重试身份，服务端按系统隔离读取；页面只能保留或忽略。`candidate_unvalidated`与`writesTargetSystem=false`是写入前置条件，服务端固定返回`writesTargetSystem=false`，因此“保留”只改变候选收件箱状态，不会改变任何目标系统事实或权限状态。
 
 周期数据遵循“月省定资源边界 → 周省定唯一实验 → 日省定当天动作”的下行约束；执行证据从盒子向日省、周省、月省逐层聚合。周省和月省不批量创建普通任务，避免周期记分牌污染行动盒子。
 

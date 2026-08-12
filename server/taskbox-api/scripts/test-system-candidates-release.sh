@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+APP_DIR="$TMP/app"
+RELEASE_DIR="$TMP/release"
+BACKUP_ROOT="$TMP/backups"
+ENV_FILE="$TMP/taskbox-api.env"
+BIN_DIR="$TMP/bin"
+STATE_FILE="$TMP/service-state"
+mkdir -p "$APP_DIR/data" "$RELEASE_DIR" "$BACKUP_ROOT" "$BIN_DIR"
+
+cp -a "$ROOT/package.json" "$ROOT/package-lock.json" "$ROOT/schema.sql" "$ROOT/src" "$ROOT/scripts" "$APP_DIR/"
+cp -a "$ROOT/package.json" "$ROOT/package-lock.json" "$ROOT/schema.sql" "$ROOT/src" "$ROOT/scripts" "$RELEASE_DIR/"
+printf 'TASKBOX_DB_PATH=%s\n' "$APP_DIR/data/taskbox.sqlite" > "$ENV_FILE"
+printf 'active\n' > "$STATE_FILE"
+printf 'fixture\n' > "$APP_DIR/data/taskbox.sqlite"
+
+cat > "$BIN_DIR/systemctl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$1" in
+  stop) printf 'inactive\n' > "$SYSTEMCTL_STATE_FILE" ;;
+  start) printf 'active\n' > "$SYSTEMCTL_STATE_FILE" ;;
+  is-active) grep -qx active "$SYSTEMCTL_STATE_FILE" ;;
+  *) exit 2 ;;
+esac
+EOF
+cat > "$BIN_DIR/npm" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$NPM_CALL_LOG"
+EOF
+chmod +x "$BIN_DIR/systemctl" "$BIN_DIR/npm"
+
+export PATH="$BIN_DIR:$PATH"
+export SYSTEMCTL_STATE_FILE="$STATE_FILE"
+export NPM_CALL_LOG="$TMP/npm.log"
+export TASKBOX_APP_DIR="$APP_DIR"
+export TASKBOX_ENV_FILE="$ENV_FILE"
+export TASKBOX_BACKUP_DIR="$BACKUP_ROOT/snapshot"
+
+"$ROOT/scripts/deploy-system-candidates-release.sh" "$RELEASE_DIR" > "$TMP/deploy.log"
+grep -qx active "$STATE_FILE"
+test -f "$BACKUP_ROOT/snapshot/data/taskbox.sqlite"
+grep -q 'deployment_ok' "$TMP/deploy.log"
+grep -q 'ci --omit=dev' "$TMP/npm.log"
+grep -q 'run init-db' "$TMP/npm.log"
+grep -q 'run test:schema' "$TMP/npm.log"
+
+printf 'changed\n' > "$APP_DIR/schema.sql"
+"$ROOT/scripts/rollback-system-candidates-release.sh" "$BACKUP_ROOT/snapshot" > "$TMP/rollback.log"
+cmp -s "$APP_DIR/schema.sql" "$BACKUP_ROOT/snapshot/code/schema.sql"
+grep -qx active "$STATE_FILE"
+grep -q 'rollback_ok' "$TMP/rollback.log"
+
+echo "system candidate release script tests passed"

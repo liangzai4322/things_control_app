@@ -1,6 +1,6 @@
 # TaskBox / things_control_app
 
-最后核对：2026-08-11。
+最后核对：2026-08-12。
 
 TaskBox 是一个本地优先的个人行动与决策系统：人生参谋部是默认主面板，负责日、周、月三个时间尺度的判断、项目健康和行动派发；盒子是执行副面板，负责任务、场景、进度和证据。积分、抽奖转盘和“小世界”承担游戏化反馈。这个目录也放了一些内容导出脚本，用于把 SCYS、ZSXQ、飞书等来源整理成 Markdown 或 JSON 产物。
 
@@ -52,6 +52,8 @@ P3 已于 2026-08-09 完成生产发布，Build ID 为`dca5c12098ba`，Pages 工
 P4 已于 2026-08-10 完成生产发布：提交`3660969`、前端 Build ID`1962464071d3`及生产API/schema均已上线；认证`200`、未认证`401`、CORS`204`、proposal状态机与服务状态已验证。当前服务器回滚点为`/opt/taskbox-api/backups/p4-review-proposals-20260809T170701Z`。
 
 2026-08-12 五系统V3已正式部署。使命、健康、时间、执行、反馈各自拥有独立页面、状态和HQ端口；人生参谋部只通过`js/five-system-hq-ports.js`消费标准摘要。执行是独立L2系统，TaskBox仅是其唯一任务与完成事实引擎。全量测试和双视口六页面验收通过；Pages工作流`31556529819`发布Build ID`6ee91e341ff7`。execution shadow draft公共消费者和更深自动L2接线仍未实现。
+
+2026-08-12 日省候选消费前端已由 PR #2 发布：Pages 工作流`31558585173`，Build ID`e95fe81c2a02`。正式日省六问可生成统一 envelope 和五份独立候选包；五系统页面只允许保留/忽略。生产 API 的`system_candidates`表与批量/读取/决策路由尚未完成服务器发布验收，候选因此留在本地 outbox，不会降级写入其他系统。发布和回滚脚本位于`server/taskbox-api/scripts/`，完整门槛见`docs/runbook.md`。
 
 ## 内容导出脚本
 
