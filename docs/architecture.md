@@ -130,7 +130,7 @@ P3 子系统契约层位于`js/hq-systems.js`，以代码内轻量`system_regist
 
 P4 控制平面把复盘输出统一保存为 proposal。`sourceAuthority=explicit_user / standing_rule`初始为`approved`（持续授权必须有`standingRuleId`），`ai_derived`初始为`proposed`；同一`idempotencyKey`内容未变时返回原 decision，内容变化只增加 revision 和审计事件，拒绝、延期或已晋升对象不会被后续同步自动复活。批准 AI 来源提案代表用户本轮授权，但只有`daily_action_proposal`可在请求显式关闭 shadow mode 且服务器`HQ_PROPOSAL_PROMOTION_ENABLED=1`时晋升 TaskBox；周省实验和月省押注始终保留为战略对象。月省`evidenceStatus=provisional`禁止批准。前端和代码已于 2026-08-10 完成，前端已生产，API/schema 尚待生产发布。
 
-五系统 V3 于 2026-08-11 完成本地统一集成。HQ 首屏固定入口带只负责发现与跳转，仍保留参谋部/盒子两级全局导航。mission/health/time/feedback 通过 `js/hq-systems.js`发布 L1 只读视图；execution 继续从 TaskBox 读取任务与完成事实。五个系统从 V2 读取候选但保持各自域过滤和 `validated_fact=0`：使命要求明确用户裁决及二次发布批准；健康 unknown/range 只保存上下文，裁决留审计；时间确认活动日仍不是事实；执行只写本地 shadow proposal draft；反馈多文件导入原子幂等，active 对象降级 proposed，所有高权限转换默认拒绝。TaskBox 写入仍只能走 HQ proposal → 明确批准 → 幂等 promote。最终联合合同见 `docs/v3-five-system-final-acceptance.md`；该增量未提交或部署，execution shadow draft 公共消费者和更深自动 L2 接线未实现。
+五系统 V3 于 2026-08-11 完成本地统一集成。2026-08-12 发布候选进一步恢复“系统独立、接口耦合HQ”的边界：使命、健康、时间、执行、反馈各自拥有独立页面、模型/状态与HQ端口，`js/five-system-hq-ports.js`只聚合标准快照；`js/hq-page.js`不得直接读取五系统store/model。HQ 首屏固定入口带只负责发现与跳转，仍保留参谋部/盒子两级全局导航。mission/health/time/feedback 为 L1 只读；execution 是独立L2系统，TaskBox只是其唯一任务、完成状态与完成证据事实引擎。五个系统从 V2 读取候选但保持各自域过滤和 `validated_fact=0`：使命要求明确用户裁决及二次发布批准；健康 unknown/range 只保存上下文，裁决留审计；时间确认活动日仍不是事实；执行只写本地 shadow proposal draft；反馈多文件导入原子幂等，active 对象降级 proposed，所有高权限转换默认拒绝。TaskBox 写入仍只能走 HQ proposal → 明确批准 → 幂等 promote；execution shadow draft 公共消费者和更深自动 L2 接线未实现。
 
 周期数据遵循“月省定资源边界 → 周省定唯一实验 → 日省定当天动作”的下行约束；执行证据从盒子向日省、周省、月省逐层聚合。周省和月省不批量创建普通任务，避免周期记分牌污染行动盒子。
 

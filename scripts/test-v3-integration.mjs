@@ -13,7 +13,7 @@ const executionPageSource = fs.readFileSync(new URL('../js/execution-page.js', i
 for (const route of ['mission', 'health', 'time', 'execution', 'feedback']) {
   assert.match(appSource, new RegExp(`path === '${route}'`));
 }
-for (const [systemId, route] of [['mission', '#mission'], ['health', '#health'], ['time', '#time'], ['taskbox', '#execution'], ['feedback', '#feedback']]) {
+for (const [systemId, route] of [['mission', '#mission'], ['health', '#health'], ['time', '#time'], ['execution', '#execution'], ['feedback', '#feedback']]) {
   assert.match(hqSource, new RegExp(`systemId: '${systemId}'`));
   assert.match(hqSource, new RegExp(route.replace('#', '\\#')));
 }
@@ -24,7 +24,9 @@ for (const systemId of ['mission', 'health', 'time', 'feedback']) {
   assert.equal(registry[systemId].accessLevel, 'L1');
   assert.equal(registry[systemId].writeMethod, '');
 }
-assert.equal(registry.taskbox.accessLevel, 'L2');
+assert.equal(registry.execution.accessLevel, 'L2');
+assert.match(hqSource, /readFiveSystemHqPorts/);
+assert.doesNotMatch(hqSource, /from '.\/(?:mission|health|time-attention|feedback)-(?:model|store)\.js'/, 'HQ must consume system ports instead of internal stores/models');
 assert.match(executionPageSource, /getTasks/);
 assert.doesNotMatch(executionSource, /addTask\s*\(/);
 assert.doesNotMatch(executionPageSource, /addTask\s*\(/);

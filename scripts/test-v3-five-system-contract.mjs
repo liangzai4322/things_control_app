@@ -175,11 +175,14 @@ for (const systemId of ['mission', 'health', 'time', 'feedback']) {
   assert.equal(registry[systemId].accessLevel, 'L1');
   assert.equal(registry[systemId].writeMethod, '');
 }
-assert.equal(registry.taskbox.accessLevel, 'L2');
+assert.equal(registry.execution.accessLevel, 'L2');
+const hqPageSource = fs.readFileSync('js/hq-page.js', 'utf8');
+assert.match(hqPageSource, /readFiveSystemHqPorts/);
+assert.doesNotMatch(hqPageSource, /from '.\/(?:mission|health|time-attention|feedback)-(?:model|store)\.js'/, 'HQ must not know five-system storage internals');
 const clientSources = ['js/mission-model.js', 'js/mission-page.js', 'js/health-model.js', 'js/health-page.js', 'js/time-attention-model.js', 'js/time-attention-page.js', 'js/execution-model.js', 'js/execution-page.js', 'js/feedback-model.js', 'js/feedback-page.js'].map((file) => fs.readFileSync(file, 'utf8')).join('\n');
 assert.doesNotMatch(clientSources, /\b(?:addTask|updateTask)\s*\(/, 'five-system clients must not write TaskBox directly');
 const executionPageSource = fs.readFileSync('js/execution-page.js', 'utf8');
 assert.match(executionPageSource, /taskbox_execution_hq_proposal_drafts_v1/);
-assert.doesNotMatch(fs.readFileSync('js/app.js', 'utf8') + fs.readFileSync('js/hq-page.js', 'utf8'), /taskbox_execution_hq_proposal_drafts_v1/, 'shadow drafts must not auto-consume on page load');
+assert.doesNotMatch(fs.readFileSync('js/app.js', 'utf8') + hqPageSource, /taskbox_execution_hq_proposal_drafts_v1/, 'shadow drafts must not auto-consume on page load');
 
 console.log('V3 B-F joint authorization and real-data contract tests passed');

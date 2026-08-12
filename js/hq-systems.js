@@ -24,12 +24,12 @@ export const HQ_SYSTEM_REGISTRY = Object.freeze([
     evidenceReturn: '候选确认后关联任务；完成回执由 TaskBox 返回', owner: '人生参谋部',
   },
   {
-    systemId: 'taskbox', code: 'BOX', name: '行动盒子', accessLevel: 'L2', action: 'execution',
-    responsibility: '任务执行、完成事实与场景分发',
-    factSource: 'TaskBox 记录级 API', readMethod: '/v1/tasks + 本地离线缓存',
-    writeMethod: '用户确认后幂等创建或更新任务', healthCheck: 'API 同步状态、待同步队列与认证状态',
+    systemId: 'execution', code: 'EXE', name: '执行系统', accessLevel: 'L2', action: 'execution',
+    responsibility: '承诺执行、在制品控制、完成证据与推进节奏',
+    factSource: '执行系统端口；TaskBox作为唯一任务与完成事实引擎', readMethod: 'execution HQ port schema v1',
+    writeMethod: '只经HQ提案批准与幂等promotion写入TaskBox', healthCheck: '端口状态、TaskBox同步状态、WIP与待同步队列',
     freshnessSlaMs: 10 * MINUTE_MS, actionTriggers: ['任务完成', '同步阻塞'],
-    evidenceReturn: 'completionReceipt 与进度记录', owner: 'TaskBox',
+    evidenceReturn: '执行摘要、completionReceipt引用与进度计数', owner: '执行系统',
   },
   {
     systemId: 'mission', code: 'MIS', name: '使命系统', accessLevel: 'L1', action: 'mission',
@@ -128,18 +128,33 @@ function mainlineView(system, context) {
   };
 }
 
-function taskboxView(context) {
-  const sync = context.syncState || {};
-  const pending = Math.max(0, Number(sync.pendingCount) || 0);
-  let health = 'healthy';
-  if (sync.authBlocked || sync.offline || sync.status === 'offline' || sync.status === 'unknown') health = 'unknown';
-  else if (pending || Number(sync.deadLetterCount)) health = 'attention';
+function executionView(context) {
+  const snapshot = context.systemSnapshots.execution || {};
+  const summary = snapshot.summary || {};
+  if (!snapshot.generatedAt) {
+    const sync = context.syncState || {};
+    const pending = Math.max(0, Number(sync.pendingCount) || 0);
+    let health = 'healthy';
+    if (sync.authBlocked || sync.offline || sync.status === 'offline' || sync.status === 'unknown') health = 'unknown';
+    else if (pending || Number(sync.deadLetterCount)) health = 'attention';
+    return {
+      health,
+      lastSyncAt: context.snapshot.generatedAt || null,
+      candidateSignalCount: 0,
+      factSummary: `${context.tasks.filter((task) => !task.deleted && !task.isCompleted).length} 项待执行 · ${pending} 项待同步`,
+      highestSignal: health === 'unknown' ? 'TaskBox事实引擎状态未确认' : pending ? `${pending} 项等待同步` : '等待执行系统端口；TaskBox记录级同步正常',
+    };
+  }
   return {
-    health,
-    lastSyncAt: context.snapshot.generatedAt || null,
+    health: snapshot.status || 'unknown',
+    lastSyncAt: snapshot.generatedAt || null,
     candidateSignalCount: 0,
-    factSummary: `${context.tasks.filter((task) => !task.deleted && !task.isCompleted).length} 项待执行 · ${pending} 项待同步`,
-    highestSignal: health === 'unknown' ? 'API 状态未确认' : pending ? `${pending} 项等待同步` : '记录级同步正常',
+    factSummary: snapshot.generatedAt
+      ? `${Number(summary.wipCount) || 0}/${Number(summary.wipLimit) || 3} 项WIP · ${Number(summary.outcomeCount) || 0} 项战果 · ${Number(summary.pendingSync) || 0} 项待同步`
+      : '等待执行系统端口发布摘要',
+    highestSignal: snapshot.status === 'unknown'
+      ? 'TaskBox事实引擎状态未确认'
+      : summary.currentActionTitle || (summary.pendingSync ? `${summary.pendingSync} 项等待同步` : '当前行动席位空置'),
   };
 }
 
@@ -156,7 +171,7 @@ function dailyView(context) {
 }
 
 function missionView(context) {
-  const snapshot = context.missionSnapshot || {};
+  const snapshot = context.systemSnapshots.mission || {};
   const summary = snapshot.summary || {};
   const readable = Boolean(snapshot.generatedAt && summary.activeVersionId);
   const factSummary = readable
@@ -175,7 +190,7 @@ function missionView(context) {
 }
 
 function healthView(context) {
-  const snapshot = context.healthSnapshot || {};
+  const snapshot = context.systemSnapshots.health || {};
   const summary = snapshot.summary || {};
   const readable = Boolean(snapshot.generatedAt && summary.healthSnapshotId);
   const capacity = summary.availableCapacity == null ? '容量未知' : `容量 ${Math.round(summary.availableCapacity * 100)}%`;
@@ -196,7 +211,7 @@ function healthView(context) {
 }
 
 function timeView(system, context) {
-  const snapshot = context.timeSnapshot || {};
+  const snapshot = context.systemSnapshots.time || {};
   const summary = snapshot.summary || snapshot;
   const hasFacts = Boolean(snapshot.generatedAt || summary.protectedWindow || summary.availableMinutes != null);
   let health = 'healthy';
@@ -221,7 +236,7 @@ function timeView(system, context) {
 }
 
 function feedbackView(context) {
-  const snapshot = context.feedback || {};
+  const snapshot = context.systemSnapshots.feedback || {};
   const summary = snapshot.summary || snapshot;
   const readable = Boolean(summary.lastSyncAt || summary.experiment || summary.rule || summary.latestDeviation);
   const highestSignal = summary.rule
@@ -243,9 +258,18 @@ function feedbackView(context) {
 }
 
 export function buildHqSystemViews({
-  snapshot = {}, syncState = {}, tasks = [], missionSnapshot = {}, healthSnapshot = {}, timeSnapshot = {}, feedback = {}, remote = false, now = new Date(), registry = HQ_SYSTEM_REGISTRY,
+  snapshot = {}, syncState = {}, tasks = [], systemSnapshots = {},
+  missionSnapshot = {}, healthSnapshot = {}, timeSnapshot = {}, feedback = {}, executionSnapshot = {},
+  remote = false, now = new Date(), registry = HQ_SYSTEM_REGISTRY,
 } = {}) {
-  const context = { snapshot, syncState, tasks, missionSnapshot, healthSnapshot, timeSnapshot, feedback, remote, now: new Date(now) };
+  const ports = {
+    mission: systemSnapshots.mission || missionSnapshot,
+    health: systemSnapshots.health || healthSnapshot,
+    time: systemSnapshots.time || timeSnapshot,
+    execution: systemSnapshots.execution || executionSnapshot,
+    feedback: systemSnapshots.feedback || feedback,
+  };
+  const context = { snapshot, syncState, tasks, systemSnapshots: ports, remote, now: new Date(now) };
   return registry.map((system) => {
     const access = HQ_SYSTEM_ACCESS_LEVELS[system.accessLevel] || HQ_SYSTEM_ACCESS_LEVELS.L0;
     let dynamic = {
@@ -253,7 +277,7 @@ export function buildHqSystemViews({
       factSummary: '尚未接入事实读取', highestSignal: '接入卡已登记，等待升级到 L1',
     };
     if (system.systemId === 'mainline') dynamic = mainlineView(system, context);
-    else if (system.systemId === 'taskbox') dynamic = taskboxView(context);
+    else if (system.systemId === 'execution') dynamic = executionView(context);
     else if (system.systemId === 'daily') dynamic = dailyView(context);
     else if (system.systemId === 'mission') dynamic = missionView(context);
     else if (system.systemId === 'health') dynamic = healthView(context);

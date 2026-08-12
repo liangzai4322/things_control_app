@@ -30,14 +30,7 @@ import { bindHqDimensionNav, renderHqDimensionNav, renderHqPeriodPage } from './
 import { isTaskReleased } from './task-visibility.js';
 import { buildHqActionCandidates, dismissHqCandidate } from './hq-candidates.js';
 import { buildHqSystemViews, summarizeHqSystemViews } from './hq-systems.js';
-import { buildTimeAttentionSnapshot } from './time-attention-model.js';
-import { readTimeStore } from './time-attention-store.js';
-import { buildFeedbackHqSummary } from './feedback-model.js';
-import { readFeedbackStore } from './feedback-store.js';
-import { buildMissionHqSnapshot } from './mission-model.js';
-import { readMissionStore } from './mission-store.js';
-import { buildHealthHqSnapshot } from './health-model.js';
-import { readHealthProtocolStore } from './health-store.js';
+import { readFiveSystemHqPorts } from './five-system-hq-ports.js';
 import {
   proposalActionModel,
   proposalPeriodLabel,
@@ -363,7 +356,7 @@ function renderHqSystemEntryBand(systems = []) {
     { systemId: 'mission', label: '使命', route: '#mission' },
     { systemId: 'health', label: '健康', route: '#health' },
     { systemId: 'time', label: '时间', route: '#time' },
-    { systemId: 'taskbox', label: '执行', route: '#execution' },
+    { systemId: 'execution', label: '执行', route: '#execution' },
     { systemId: 'feedback', label: '反馈', route: '#feedback' },
   ];
   return `
@@ -545,11 +538,11 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
   const syncState = getApiSyncState();
   const syncPresentation = describeHqSyncState(syncState, { remote });
   const tasks = getTasks();
-  const missionSnapshot = buildMissionHqSnapshot(readMissionStore(), { mainlines: getMainlines() });
-  const healthSnapshot = buildHealthHqSnapshot(readHealthProtocolStore());
-  const timeSnapshot = buildTimeAttentionSnapshot({ store: readTimeStore(), tasks, healthSnapshot, date: snapshot.reviewDate });
-  const feedback = buildFeedbackHqSummary(readFeedbackStore());
-  const systems = buildHqSystemViews({ snapshot, syncState, tasks, missionSnapshot, healthSnapshot, timeSnapshot, feedback, remote });
+  const systemSnapshots = readFiveSystemHqPorts({
+    tasks, boxes: getBoxes(), mainlines: getMainlines(), brief,
+    reviewDate: snapshot.reviewDate, syncState,
+  });
+  const systems = buildHqSystemViews({ snapshot, syncState, tasks, systemSnapshots, remote });
   const systemSummary = summarizeHqSystemViews(systems);
 
   app.innerHTML = `

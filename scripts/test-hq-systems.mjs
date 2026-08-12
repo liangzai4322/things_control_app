@@ -29,6 +29,7 @@ assert.equal(HQ_SYSTEM_REGISTRY.find((system) => system.systemId === 'mission').
 assert.equal(HQ_SYSTEM_REGISTRY.find((system) => system.systemId === 'health').accessLevel, 'L1');
 assert.equal(HQ_SYSTEM_REGISTRY.find((system) => system.systemId === 'mission').writeMethod, '');
 assert.equal(HQ_SYSTEM_REGISTRY.find((system) => system.systemId === 'health').writeMethod, '');
+assert.equal(HQ_SYSTEM_REGISTRY.find((system) => system.systemId === 'execution').accessLevel, 'L2');
 
 const mainline = views.find((system) => system.systemId === 'mainline');
 assert.equal(mainline.accessLevel, 'L1');
@@ -65,11 +66,16 @@ const integratedReadOnly = buildHqSystemViews({
     lastSyncAt: '2026-08-09T03:58:00.000Z', deviationCount: 2, pendingRuleCount: 1,
     rule: { statement: '先验证再写回', status: 'proposed' },
   },
+  executionSnapshot: {
+    generatedAt: '2026-08-09T03:58:00.000Z', status: 'healthy',
+    summary: { currentActionTitle: '推进当前行动', wipCount: 1, wipLimit: 3, outcomeCount: 2, pendingSync: 0 },
+  },
 });
 const time = integratedReadOnly.find((system) => system.systemId === 'time');
 const feedback = integratedReadOnly.find((system) => system.systemId === 'feedback');
 const mission = integratedReadOnly.find((system) => system.systemId === 'mission');
 const health = integratedReadOnly.find((system) => system.systemId === 'health');
+const execution = integratedReadOnly.find((system) => system.systemId === 'execution');
 assert.equal(mission.health, 'healthy');
 assert.equal(mission.canWrite, false);
 assert.equal(health.health, 'attention');
@@ -80,6 +86,9 @@ assert.equal(time.canWrite, false);
 assert.equal(feedback.health, 'attention');
 assert.equal(feedback.canReadFacts, true);
 assert.equal(feedback.canWrite, false);
+assert.equal(execution.health, 'healthy');
+assert.equal(execution.canWrite, true);
+assert.match(execution.highestSignal, /推进当前行动/);
 
 const loop = buildHqSystemViews({
   snapshot: {
