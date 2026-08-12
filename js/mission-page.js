@@ -4,6 +4,7 @@ import { MISSION_CANDIDATE_DECISIONS, MISSION_PORTFOLIO_CLASSES, activeMissionSn
 import { readMissionStore, writeMissionStore } from './mission-store.js';
 import { readTimeStore } from './time-attention-store.js';
 import { parseMissionV2Text } from './mission-v2-adapter.js';
+import { mountSystemCandidateInbox } from './system-candidate-inbox.js';
 
 const esc = (v = '') => String(v).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 const text = (v = []) => Array.isArray(v) ? v.join('\n') : '';
@@ -100,6 +101,7 @@ export function renderMissionPage(app) {
   <aside class="mission-boundary"><strong>V3 边界</strong><p>当前协议与事件保存在本机。V2候选始终不是事实；使命系统只读 TaskBox、时间系统与候选缓存，不创建任务、不写回其他系统、不向 HQ 自动提交提案。</p></aside>
   <footer class="mission-actions safe-bottom"><button id="missionSave">保存未发布草稿</button><button class="primary" id="missionPublish">发布战略版本</button></footer></main>`;
   app.querySelector('#missionBack').onclick = () => navigate('#hq');
+  mountSystemCandidateInbox(app, 'mission', '.mission-draft-label');
   app.querySelector('#missionSave').onclick = () => { const next = updateMissionReviewContext({ ...readMissionStore(), draft: readDraft(app, draft) }, readReviewContext(app)); writeMissionStore(next); showToast('未发布草稿与证据链已保存到本机'); };
   app.querySelector('.mission-candidates').onclick = (event) => {
     const action = event.target.closest('[data-candidate-action]');

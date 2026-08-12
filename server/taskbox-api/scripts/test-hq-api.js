@@ -71,6 +71,21 @@ child.stderr.on('data', (chunk) => { serverError += chunk.toString('utf8'); });
   try {
     const health = await waitForServer();
     if (!health.ok) throw new Error('health check failed');
+    const candidateBatch = await request('/v1/system-candidates/batch', 'POST', { candidates: [{
+      candidateId: 'daily-review:2026-08-12:mission:test:1', systemId: 'mission', reviewDate: '2026-08-12',
+      kind: 'alignment_deviation_candidate', statement: '方向偏离候选', authority: 'ai_summary',
+      epistemicState: 'candidate_unvalidated', evidenceRefs: ['review:L1'], writesTargetSystem: false,
+    }] });
+    if (candidateBatch.created !== 1) throw new Error('system candidate batch create failed');
+    const repeatedBatch = await request('/v1/system-candidates/batch', 'POST', { candidates: [{
+      candidateId: 'daily-review:2026-08-12:mission:test:1', systemId: 'mission', reviewDate: '2026-08-12',
+      kind: 'alignment_deviation_candidate', statement: '方向偏离候选', epistemicState: 'candidate_unvalidated', writesTargetSystem: false,
+    }] });
+    if (repeatedBatch.unchanged !== 1) throw new Error('system candidate batch is not idempotent');
+    const missionCandidates = await request('/v1/system-candidates?systemId=mission&status=pending');
+    if (missionCandidates.count !== 1 || missionCandidates.items[0].writesTargetSystem !== false) throw new Error('system candidate isolation failed');
+    const keptCandidate = await request('/v1/system-candidates/daily-review%3A2026-08-12%3Amission%3Atest%3A1', 'PATCH', { status: 'kept' });
+    if (keptCandidate.status !== 'kept') throw new Error('system candidate decision failed');
     const brief = await request('/v1/hq/daily-briefs/2026-07-30', 'POST', {
       stopDoing: ['停止无效切换'],
       continueDoing: ['先做唯一动作'],

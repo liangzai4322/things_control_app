@@ -7,6 +7,7 @@ import {
 } from './feedback-model.js';
 import { readFeedbackStore, writeFeedbackStore } from './feedback-store.js';
 import { parseFeedbackImportFiles } from './feedback-import.js';
+import { mountSystemCandidateInbox } from './system-candidate-inbox.js';
 
 const esc = (value = '') => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 const lines = (value) => String(value || '').split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
@@ -103,6 +104,7 @@ export function renderFeedbackPage(app) {
     <section class="feedback-rulebook"><header><div><span>CROSS-SYSTEM PROPOSALS</span><h2>跨系统变更提案</h2></div><button id="feedbackAddChange">＋ 提出变更</button></header><div class="feedback-rule-history">${dashboard.crossSystemProposals.length ? dashboard.crossSystemProposals.map((item) => `<article><span>${esc(TARGET_SYSTEMS[item.targetSystem])} · ${esc(item.status)}</span><strong>${esc(item.suggestedChange)}</strong><i>仅提案，未写入目标系统</i></article>`).join('') : '<p class="feedback-empty">反馈系统只能提出建议，不能直接改写其他系统。</p>'}</div></section>
     <footer class="feedback-guard">事实 → 解释 → 实验/规则提案 → 用户批准 → 到期验证。反馈系统不自动改写其他系统。</footer></main>`;
   app.querySelector('#feedbackBack').onclick = () => navigate('#hq');
+  mountSystemCandidateInbox(app, 'feedback', '.feedback-deviations');
   app.querySelector('#feedbackAddPrediction').onclick = () => openPredictionSheet(app);
   app.querySelector('#feedbackImport').onclick = () => app.querySelector('#feedbackImportFile').click();
   app.querySelector('#feedbackImportFile').onchange = async (event) => {

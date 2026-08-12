@@ -36,9 +36,11 @@ try {
     if (!indexes.includes(name)) throw new Error(`missing index ${name}`);
   });
   const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((item) => item.name);
-  ['branches', 'hq_daily_briefs', 'hq_decisions', 'hq_proposals', 'hq_proposal_events', 'hq_period_reviews'].forEach((name) => {
+  ['branches', 'hq_daily_briefs', 'hq_decisions', 'hq_proposals', 'hq_proposal_events', 'hq_period_reviews', 'system_candidates'].forEach((name) => {
     if (!tables.includes(name)) throw new Error(`missing table ${name}`);
   });
+  const candidateIndexes = db.prepare('PRAGMA index_list(system_candidates)').all().map((item) => item.name);
+  if (!candidateIndexes.includes('idx_system_candidates_system_status_date')) throw new Error('missing system candidate index');
   const proposalIndexes = db.prepare('PRAGMA index_list(hq_proposals)').all().map((item) => item.name);
   ['idx_hq_proposals_status_updated', 'idx_hq_proposals_type_updated'].forEach((name) => {
     if (!proposalIndexes.includes(name)) throw new Error(`missing proposal index ${name}`);
