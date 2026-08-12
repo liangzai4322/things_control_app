@@ -94,7 +94,7 @@ API 目录默认 `/opt/taskbox-api`，数据库默认 `/opt/taskbox-api/data/tas
 
 2026-08-12 五系统V3已正式发布：五个系统通过独立HQ端口耦合人生参谋部，执行系统成为同级L2系统，TaskBox保留为唯一任务/完成事实引擎。全量测试、Build ID`6ee91e341ff7`、1280px与390×844六页面验收通过；PR #1合并提交`4cc2ae5`，Pages工作流`31556529819`成功，线上`service-worker.js`命中`taskbox-dist-6ee91e341ff7`。
 
-2026-08-12 日省候选五系统消费层已由 PR #2 合并，Pages 工作流`31558585173`成功，线上 Build ID`e95fe81c2a02`。前端五页面和日省本地生成/重试链路已验证；生产候选 API 路由当前仍为认证后`404`，所以候选安全保留在本地 outbox。服务器发布必须使用本仓库的备份优先脚本，并以认证`200`、未认证`401`、CORS`204`、候选路由`200`、首次创建/重复不变、五系统隔离读取和`systemd active`作为完成门槛；在这些证据齐全前不得写成“API已上线”。
+2026-08-13 日省候选五系统消费层完成生产闭环。API发布脚本生成回滚点`/opt/taskbox-api/backups/system-candidates-20260812T163954Z`；生产探针为认证`200`、未认证`401`、CORS`204`、候选路由`200`。2026-08-11 outbox首次写入`created=3`，连续重放均为`unchanged=3`；SQLite内使命1条、执行2条，其余系统0条，五个`systemId`读取均通过隔离检查，`taskbox-api.service`保持active。部署脚本在systemd启动后最多等待10秒，只有认证健康接口就绪才报告成功，避免Node尚未绑定端口时的启动竞态误报。
 
 ### 任务中枢桥接验证
 
@@ -122,7 +122,7 @@ python "D:\note_new\06-日常输入_输出\.agents\skills\任务中枢\scripts\t
 - 日省没有派发到盒子：检查本机私有 Token 文件或`TASKBOX_API_TOKEN`，并单独运行 `sync_daily_review_to_hq.py` 查看不含凭据的 JSON 结果。
 - 周省/月省没有进入参谋部：先运行`fetch_period_review_context.py`核对周期键，再运行对应`sync_weekly_review_to_hq.py`或`sync_monthly_review_to_hq.py`。
 - proposal 同步返回 404：生产 API 可能被回滚到 P4 之前或反向代理未指向当前服务；检查`/v1/hq/proposals`路由、`hq_proposals`表和当前部署版本，不要绕过提案直接创建任务。
-- 五系统候选同步返回 404：保留`five-system-candidate-outbox`，发布包含`system_candidates`表与三条候选路由的 API 后重放；不得把候选改走 TaskBox 或 proposal 以绕过收件箱。
+- 五系统候选同步返回 404：生产服务可能回滚到2026-08-13候选API发布之前；保留`five-system-candidate-outbox`，检查`system_candidates`表、三条候选路由和反向代理，再重放；不得把候选改走 TaskBox 或 proposal 以绕过收件箱。
 - promote 返回`proposal_promotion_disabled`：确认提案已批准、类型为日省动作、请求显式`shadowMode=false`，再检查服务器`HQ_PROPOSAL_PROMOTION_ENABLED=1`；周/月提案永远不走 TaskBox promotion。
 - 任务中枢返回`TASKBOX_API_TOKEN_missing`：检查`TASKBOX_API_TOKEN`、`TASKBOX_API_TOKEN_FILE`或`~/.codex/secrets/taskbox-api-token`，不把 Token 粘贴进命令历史或文档。
 - 任务中枢返回`box_not_found / mainline_not_found / branch_not_found`：先用`GET /v1/taskbox`核对真实名称或 ID，再重跑；不要猜测归属。

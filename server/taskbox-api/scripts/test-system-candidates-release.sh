@@ -16,6 +16,8 @@ mkdir -p "$APP_DIR/data" "$RELEASE_DIR" "$BACKUP_ROOT" "$BIN_DIR"
 cp -a "$ROOT/package.json" "$ROOT/package-lock.json" "$ROOT/schema.sql" "$ROOT/src" "$ROOT/scripts" "$APP_DIR/"
 cp -a "$ROOT/package.json" "$ROOT/package-lock.json" "$ROOT/schema.sql" "$ROOT/src" "$ROOT/scripts" "$RELEASE_DIR/"
 printf 'TASKBOX_DB_PATH=%s\n' "$APP_DIR/data/taskbox.sqlite" > "$ENV_FILE"
+printf 'TASKBOX_API_PORT=3107\n' >> "$ENV_FILE"
+printf 'TASKBOX_API_TOKEN=release-test-token\n' >> "$ENV_FILE"
 printf 'active\n' > "$STATE_FILE"
 printf 'fixture\n' > "$APP_DIR/data/taskbox.sqlite"
 
@@ -34,11 +36,25 @@ cat > "$BIN_DIR/npm" <<'EOF'
 set -euo pipefail
 printf '%s\n' "$*" >> "$NPM_CALL_LOG"
 EOF
-chmod +x "$BIN_DIR/systemctl" "$BIN_DIR/npm"
+cat > "$BIN_DIR/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+attempts=0
+if [[ -f "$CURL_ATTEMPTS_FILE" ]]; then attempts="$(cat "$CURL_ATTEMPTS_FILE")"; fi
+attempts=$((attempts + 1))
+printf '%s\n' "$attempts" > "$CURL_ATTEMPTS_FILE"
+printf '%s\n' "$*" >> "$CURL_CALL_LOG"
+[[ "$*" == *"Authorization: Bearer release-test-token"* ]]
+[[ "$*" == *"http://127.0.0.1:3107/health"* ]]
+(( attempts >= 3 ))
+EOF
+chmod +x "$BIN_DIR/systemctl" "$BIN_DIR/npm" "$BIN_DIR/curl"
 
 export PATH="$BIN_DIR:$PATH"
 export SYSTEMCTL_STATE_FILE="$STATE_FILE"
 export NPM_CALL_LOG="$TMP/npm.log"
+export CURL_CALL_LOG="$TMP/curl.log"
+export CURL_ATTEMPTS_FILE="$TMP/curl-attempts"
 export TASKBOX_APP_DIR="$APP_DIR"
 export TASKBOX_ENV_FILE="$ENV_FILE"
 export TASKBOX_BACKUP_DIR="$BACKUP_ROOT/snapshot"
@@ -50,6 +66,9 @@ grep -q 'deployment_ok' "$TMP/deploy.log"
 grep -q 'ci --omit=dev' "$TMP/npm.log"
 grep -q 'run init-db' "$TMP/npm.log"
 grep -q 'run test:schema' "$TMP/npm.log"
+grep -qx 3 "$CURL_ATTEMPTS_FILE"
+grep -q 'Authorization: Bearer release-test-token' "$CURL_CALL_LOG"
+grep -q 'http://127.0.0.1:3107/health' "$CURL_CALL_LOG"
 
 printf 'changed\n' > "$APP_DIR/schema.sql"
 "$ROOT/scripts/rollback-system-candidates-release.sh" "$BACKUP_ROOT/snapshot" > "$TMP/rollback.log"
