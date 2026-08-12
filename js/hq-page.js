@@ -1,5 +1,4 @@
 import {
-  addTask,
   getBoxes,
   getApiSyncState,
   getPendingApiMutationCount,
@@ -31,6 +30,7 @@ import { bindHqDimensionNav, renderHqDimensionNav, renderHqPeriodPage } from './
 import { isTaskReleased } from './task-visibility.js';
 import { buildHqActionCandidates, dismissHqCandidate } from './hq-candidates.js';
 import { buildHqSystemViews, summarizeHqSystemViews } from './hq-systems.js';
+import { readFiveSystemHqPorts } from './five-system-hq-ports.js';
 import {
   proposalActionModel,
   proposalPeriodLabel,
@@ -351,6 +351,41 @@ function renderSystem(system) {
   `;
 }
 
+function renderHqSystemEntryBand(systems = []) {
+  const entries = [
+    { systemId: 'mission', label: '使命', route: '#mission' },
+    { systemId: 'health', label: '健康', route: '#health' },
+    { systemId: 'time', label: '时间', route: '#time' },
+    { systemId: 'execution', label: '执行', route: '#execution' },
+    { systemId: 'feedback', label: '反馈', route: '#feedback' },
+  ];
+  return `
+    <section class="hq-system-entry-band" aria-labelledby="hqSystemEntryTitle">
+      <header>
+        <div><span>FIVE SYSTEMS · 决策输入链</span><strong id="hqSystemEntryTitle">五系统固定入口</strong></div>
+        <small>读事实 → 做判断 → 经批准进入盒子</small>
+      </header>
+      <nav aria-label="五系统固定入口">
+        ${entries.map((entry, index) => {
+          const system = systems.find((item) => item.systemId === entry.systemId);
+          const health = system?.health || 'unknown';
+          const level = system?.access?.shortLabel || 'L0';
+          const status = system?.healthLabel || '状态未知';
+          const summary = system?.highestSignal || system?.factSummary || '等待系统事实';
+          return `
+            <a class="hq-system-entry health-${escapeHtml(health)}" href="${entry.route}" data-fixed-system-entry="${escapeHtml(entry.systemId)}">
+              <span><b>${String(index + 1).padStart(2, '0')}</b>${escapeHtml(entry.label)}</span>
+              <em>${escapeHtml(level)}</em>
+              <strong>${escapeHtml(status)}</strong>
+              <small>${escapeHtml(summary)}</small>
+            </a>
+          `;
+        }).join('')}
+      </nav>
+    </section>
+  `;
+}
+
 function renderProposal(proposal) {
   const type = proposalTypeMeta(proposal.proposalType);
   const status = proposalStatusMeta(proposal.status);
@@ -468,7 +503,12 @@ function openSystemInspector(app, snapshot, system) {
   root.querySelector('#ackHqSystemLevel')?.addEventListener('click', close);
   root.querySelector('#openHqSystemSource')?.addEventListener('click', () => {
     close();
-    if (system.action === 'home') navigate('#home');
+    if (system.action === 'execution') navigate('#execution');
+    else if (system.action === 'home') navigate('#home');
+    else if (system.action === 'mission') navigate('#mission');
+    else if (system.action === 'health') navigate('#health');
+    else if (system.action === 'time') navigate('#time');
+    else if (system.action === 'feedback') navigate('#feedback');
     else if (system.action === 'projects') app.querySelector('#hqProjects')?.scrollIntoView({ behavior: 'smooth' });
     else if (system.action === 'brief') openBriefEditor(app, snapshot);
   });
@@ -497,7 +537,12 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
   const riskCount = projects.filter((project) => ['blocked', 'stale', 'needs_action'].includes(project.health)).length;
   const syncState = getApiSyncState();
   const syncPresentation = describeHqSyncState(syncState, { remote });
-  const systems = buildHqSystemViews({ snapshot, syncState, tasks: getTasks(), remote });
+  const tasks = getTasks();
+  const systemSnapshots = readFiveSystemHqPorts({
+    tasks, boxes: getBoxes(), mainlines: getMainlines(), brief,
+    reviewDate: snapshot.reviewDate, syncState,
+  });
+  const systems = buildHqSystemViews({ snapshot, syncState, tasks, systemSnapshots, remote });
   const systemSummary = summarizeHqSystemViews(systems);
 
   app.innerHTML = `
@@ -523,6 +568,7 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
           <article><span>RISK SIGNALS</span><strong>${riskCount}</strong><small>项目预警</small></article>
           <article><span>AI QUEUE</span><strong>${snapshot.ai?.open || 0}</strong><small>AI执行中</small></article>
         </div>
+        ${renderHqSystemEntryBand(systems)}
       </section>
 
       ${renderHqDimensionNav('day')}
@@ -877,68 +923,80 @@ function bindPageEvents(app, snapshot, candidates = [], systems = []) {
       const candidate = candidates.find((item) => item.id === button.dataset.confirmCandidate);
       if (!candidate) return;
       button.disabled = true;
-      let task = getTasks().find((item) => item.id === candidate.taskId)
+      const task = getTasks().find((item) => item.id === candidate.taskId)
         || getTasks().find((item) => item.candidateDedupeKey === candidate.dedupeKey)
         || getTasks().find((item) => item.syncKey === `hq-candidate:${candidate.dedupeKey}`)
         || null;
-      if (!task && candidate.sourceSystemId !== 'taskbox') {
-        const boxes = getBoxes();
-        const targetBox = boxes.find((item) => item.color === 'important' || item.name === '重要盒')
-          || boxes.find((item) => item.boxType === 'todo')
-          || boxes[0]
-          || null;
-        if (targetBox) {
-          task = addTask({
-            content: candidate.title,
-            note: candidate.completionCriteria,
-            boxId: candidate.suggestedBoxId || targetBox.id,
-            priority: 2,
-            durationMinutes: candidate.estimatedMinutes || 0,
-            mainlineId: candidate.mainlineId || null,
-            deviceContext: 'universal',
-            executionMode: 'self',
-            syncKey: `hq-candidate:${candidate.dedupeKey}`,
-            candidateDedupeKey: candidate.dedupeKey,
-            candidateSourceSystemId: candidate.sourceSystemId,
-            candidateSourceRef: candidate.sourceRef,
-            roiInputs: candidate.roiInputs,
-          });
-        }
-      }
-      if (!task || task.isCompleted || task.deleted) {
+      if (task?.isCompleted || task?.deleted) {
         showToast('候选事实已变化，正在重新计算');
         renderHqPage(app, { refreshRemote: true });
         return;
       }
-      const brief = normalizeHqBrief(snapshot.brief, snapshot.reviewDate);
-      const accepted = [...brief.candidateState.accepted, {
-        candidateId: candidate.id,
-        dedupeKey: candidate.dedupeKey,
-        taskId: task.id,
-        score: candidate.score,
-        acceptedAt: new Date().toISOString(),
-      }].slice(-20);
-      const nextBrief = {
-        ...brief,
-        currentActionTaskId: task.id,
-        candidateState: { ...brief.candidateState, accepted },
-        source: 'hq_candidate',
-        updatedAt: new Date().toISOString(),
-      };
-      writeCache({ brief: nextBrief });
-      updateTask(task.id, {
-        commitmentRole: 'primary', commitmentDate: snapshot.reviewDate,
-        commitmentSource: 'hq_candidate', pinLevel: 1, pinned: true,
-      });
+      const boxes = getBoxes();
+      const targetBox = boxes.find((item) => item.color === 'important' || item.name === '重要盒')
+        || boxes.find((item) => item.boxType === 'todo')
+        || boxes[0]
+        || null;
       try {
+        const proposal = await requestTaskboxApi('/hq/proposals', {
+          method: 'POST',
+          body: JSON.stringify({
+            proposalType: 'daily_action_proposal',
+            sourceAuthority: 'explicit_user',
+            title: candidate.title,
+            idempotencyKey: `hq-candidate:${candidate.dedupeKey}`,
+            existingTaskId: task?.id || null,
+            shadowMode: false,
+            content: { candidateId: candidate.id, score: candidate.score, reason: candidate.reason },
+            evidence: { sourceSystemId: candidate.sourceSystemId, sourceRef: candidate.sourceRef },
+            sourceRef: { type: 'hq_candidate', dedupeKey: candidate.dedupeKey },
+            taskSpec: {
+              content: candidate.title,
+              note: candidate.completionCriteria,
+              boxId: task?.boxId || candidate.suggestedBoxId || targetBox?.id || null,
+              priority: task?.priority || 2,
+              mainlineId: task?.mainlineId || candidate.mainlineId || null,
+              deviceContext: task?.deviceContext || 'universal',
+              executionMode: task?.executionMode || 'self',
+              role: 'primary',
+              commitmentDate: snapshot.reviewDate,
+            },
+            actor: 'hq_user',
+          }),
+        });
+        const promoted = await requestTaskboxApi(`/hq/proposals/${encodeURIComponent(proposal.decisionId)}/promote`, {
+          method: 'POST', body: JSON.stringify({ actor: 'hq_user', shadowMode: false }),
+        });
+        await pullDataFromCloud({ force: true });
+        const promotedTask = getTasks().find((item) => item.id === promoted.taskId);
+        if (!promotedTask) throw new Error('promoted_task_not_loaded');
+        const brief = normalizeHqBrief(snapshot.brief, snapshot.reviewDate);
+        const accepted = [...brief.candidateState.accepted, {
+          candidateId: candidate.id,
+          dedupeKey: candidate.dedupeKey,
+          taskId: promotedTask.id,
+          decisionId: proposal.decisionId,
+          score: candidate.score,
+          acceptedAt: new Date().toISOString(),
+        }].slice(-20);
+        const nextBrief = {
+          ...brief,
+          currentActionTaskId: promotedTask.id,
+          candidateState: { ...brief.candidateState, accepted },
+          source: 'hq_candidate_approval',
+          updatedAt: new Date().toISOString(),
+        };
+        writeCache({ brief: nextBrief });
         const queuedMutation = queueTaskboxApiMutation(`/hq/daily-briefs/${snapshot.reviewDate}`, {
           method: 'POST', body: JSON.stringify(nextBrief),
         });
         if (!queuedMutation) throw new Error('api_disabled');
         await queuedMutation;
         showToast('已接棒：当前行动席位已更新');
-      } catch {
-        showToast('已在本机接棒，恢复连接后自动同步');
+      } catch (error) {
+        showToast(error?.payload?.error === 'promotion_shadow_mode'
+          ? '审批链仍在影子模式，未改动盒子'
+          : '候选审批或晋升失败，未改动盒子');
       }
       renderHqPage(app, { refreshRemote: true });
     });

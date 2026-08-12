@@ -6,6 +6,9 @@ import {
 
 assert.equal(isTaskboxRefreshStorageKey('taskbox_hq_cache_v1'), true);
 assert.equal(isTaskboxRefreshStorageKey('taskbox_api_sync_state_v1'), true);
+assert.equal(isTaskboxRefreshStorageKey('taskbox_mission_os_v1'), true);
+assert.equal(isTaskboxRefreshStorageKey('taskbox_health_energy_os_v1'), true);
+assert.equal(isTaskboxRefreshStorageKey('taskbox_time_attention_os_v1'), true);
 assert.equal(isTaskboxRefreshStorageKey('taskbox_api_mutation_outbox_v1:entry:abc'), true);
 assert.equal(isTaskboxRefreshStorageKey('taskbox_api_mutation_dead_letters_v1:entry:def'), true);
 assert.equal(isTaskboxRefreshStorageKey('unrelated'), false);

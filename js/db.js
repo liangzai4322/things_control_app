@@ -109,8 +109,7 @@ export function uid() {
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 function normalize(data = {}) {
-  return {
-    boxes: (Array.isArray(data.boxes) ? data.boxes : []).map((b) => {
+  const boxes = (Array.isArray(data.boxes) ? data.boxes : []).map((b) => {
       const renamed = b.name === '杂事盒' ? '待办盒' : (b.name === '重要事项' ? '重要盒' : b.name);
       const orderMap = { '重要盒': 0, '待办盒': 1, '放松盒': 2, '奖励盒': 3, '惩罚盒': 4, '碎片学习盒': 5, '健康盒': 6 };
       const color = b.color || BOX_COLOR_POOL[orderMap[renamed] ?? 0];
@@ -125,7 +124,9 @@ function normalize(data = {}) {
         homePinned: FIXED_HOME_BOX_COLORS.has(color) ? false : Boolean(b.homePinned),
         updatedAt: b.updatedAt || b.createdAt || data.meta?.updatedAt || new Date().toISOString(),
       };
-    }),
+    });
+  return {
+    boxes,
     tasks: (Array.isArray(data.tasks) ? data.tasks : []).map((t) => {
       const rawPinLevel = Number(t.pinLevel ?? (t.pinned ? 1 : 0));
       const pinLevel = rawPinLevel >= 1 && rawPinLevel <= 3 ? rawPinLevel : null;
@@ -163,7 +164,7 @@ function normalize(data = {}) {
         deferredAt: t.deferredAt || null,
         deferNote: String(t.deferNote || ''),
         progressLogs: Array.isArray(t.progressLogs) ? t.progressLogs : [],
-        itemType: t.itemType || null,
+        itemType: t.itemType || inferBoxType(boxes.find((box) => box.id === t.boxId)),
         durationMinutes: Math.max(0, Number(t.durationMinutes) || 0),
         cooldownMinutes: Math.max(0, Number(t.cooldownMinutes) || 0),
         usageCount: Math.max(0, Number(t.usageCount) || 0),

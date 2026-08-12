@@ -24,12 +24,32 @@ export const HQ_SYSTEM_REGISTRY = Object.freeze([
     evidenceReturn: '候选确认后关联任务；完成回执由 TaskBox 返回', owner: '人生参谋部',
   },
   {
-    systemId: 'taskbox', code: 'BOX', name: '行动盒子', accessLevel: 'L2', action: 'home',
-    responsibility: '任务执行、完成事实与场景分发',
-    factSource: 'TaskBox 记录级 API', readMethod: '/v1/tasks + 本地离线缓存',
-    writeMethod: '用户确认后幂等创建或更新任务', healthCheck: 'API 同步状态、待同步队列与认证状态',
+    systemId: 'execution', code: 'EXE', name: '执行系统', accessLevel: 'L2', action: 'execution',
+    responsibility: '承诺执行、在制品控制、完成证据与推进节奏',
+    factSource: '执行系统端口；TaskBox作为唯一任务与完成事实引擎', readMethod: 'execution HQ port schema v1',
+    writeMethod: '只经HQ提案批准与幂等promotion写入TaskBox', healthCheck: '端口状态、TaskBox同步状态、WIP与待同步队列',
     freshnessSlaMs: 10 * MINUTE_MS, actionTriggers: ['任务完成', '同步阻塞'],
-    evidenceReturn: 'completionReceipt 与进度记录', owner: 'TaskBox',
+    evidenceReturn: '执行摘要、completionReceipt引用与进度计数', owner: '执行系统',
+  },
+  {
+    systemId: 'mission', code: 'MIS', name: '使命系统', accessLevel: 'L1', action: 'mission',
+    responsibility: '长期方向、当前战役、项目组合与不做清单', factSource: '使命系统明确批准的 activeVersion', readMethod: '本地 mission L1 最小只读快照',
+    writeMethod: '', healthCheck: '已批准版本、批准时间与复查日期有效；草稿不进入事实层', freshnessSlaMs: 0, actionTriggers: ['使命复查到期', '项目组合映射缺失'], evidenceReturn: '版本ID、当前战役与计数型摘要', owner: '使命系统',
+  },
+  {
+    systemId: 'health', code: 'HLT', name: '健康与能量', accessLevel: 'L1', action: 'health',
+    responsibility: '睡眠、精力、恢复、风险与可用容量', factSource: '健康系统明确发布的本地协议 outbox 快照', readMethod: '本地 health L1 最小容量/约束快照',
+    writeMethod: '', healthCheck: '36小时新鲜度、来源冲突、关键字段与置信度', freshnessSlaMs: 36 * 60 * MINUTE_MS, actionTriggers: ['容量约束', '快照过期', '来源冲突'], evidenceReturn: '容量、约束、来源计数与评估时间；不含原始健康数据', owner: '健康与能量系统',
+  },
+  {
+    systemId: 'time', code: 'TIM', name: '时间与注意力', accessLevel: 'L1', action: 'time',
+    responsibility: '时间预算、保护时段、实际投入与注意力泄漏', factSource: '时间系统统一日视图（人工计划 + 日历只读快照 + TaskBox引用）', readMethod: '本地 time-attention P1 只读快照',
+    writeMethod: '', healthCheck: '今日容量与保护时段可读；外部日历不可用时明确降级', freshnessSlaMs: 36 * 60 * MINUTE_MS, actionTriggers: ['超载', '保护时段冲突', '注意力泄漏'], evidenceReturn: '容量、保护时段、超载与最高泄漏只读发布给HQ', owner: '时间与注意力系统',
+  },
+  {
+    systemId: 'feedback', code: 'FDB', name: '反馈与进化', accessLevel: 'L1', action: 'feedback',
+    responsibility: '预测误差、重复模式、单变量实验与规则版本', factSource: '反馈系统本地证据链', readMethod: '独立反馈系统入口',
+    writeMethod: '', healthCheck: '读取跨周期连续性摘要；规则提案不会自动改写目标系统', freshnessSlaMs: 0, actionTriggers: [], evidenceReturn: '统一偏差、实验、规则ID与结构化证据引用', owner: '反馈与进化系统',
   },
   {
     systemId: 'trade', code: '001', name: '交易系统', accessLevel: 'L0', action: '',
@@ -108,18 +128,33 @@ function mainlineView(system, context) {
   };
 }
 
-function taskboxView(context) {
-  const sync = context.syncState || {};
-  const pending = Math.max(0, Number(sync.pendingCount) || 0);
-  let health = 'healthy';
-  if (sync.authBlocked || sync.offline || sync.status === 'offline' || sync.status === 'unknown') health = 'unknown';
-  else if (pending || Number(sync.deadLetterCount)) health = 'attention';
+function executionView(context) {
+  const snapshot = context.systemSnapshots.execution || {};
+  const summary = snapshot.summary || {};
+  if (!snapshot.generatedAt) {
+    const sync = context.syncState || {};
+    const pending = Math.max(0, Number(sync.pendingCount) || 0);
+    let health = 'healthy';
+    if (sync.authBlocked || sync.offline || sync.status === 'offline' || sync.status === 'unknown') health = 'unknown';
+    else if (pending || Number(sync.deadLetterCount)) health = 'attention';
+    return {
+      health,
+      lastSyncAt: context.snapshot.generatedAt || null,
+      candidateSignalCount: 0,
+      factSummary: `${context.tasks.filter((task) => !task.deleted && !task.isCompleted).length} 项待执行 · ${pending} 项待同步`,
+      highestSignal: health === 'unknown' ? 'TaskBox事实引擎状态未确认' : pending ? `${pending} 项等待同步` : '等待执行系统端口；TaskBox记录级同步正常',
+    };
+  }
   return {
-    health,
-    lastSyncAt: context.snapshot.generatedAt || null,
+    health: snapshot.status || 'unknown',
+    lastSyncAt: snapshot.generatedAt || null,
     candidateSignalCount: 0,
-    factSummary: `${context.tasks.filter((task) => !task.deleted && !task.isCompleted).length} 项待执行 · ${pending} 项待同步`,
-    highestSignal: health === 'unknown' ? 'API 状态未确认' : pending ? `${pending} 项等待同步` : '记录级同步正常',
+    factSummary: snapshot.generatedAt
+      ? `${Number(summary.wipCount) || 0}/${Number(summary.wipLimit) || 3} 项WIP · ${Number(summary.outcomeCount) || 0} 项战果 · ${Number(summary.pendingSync) || 0} 项待同步`
+      : '等待执行系统端口发布摘要',
+    highestSignal: snapshot.status === 'unknown'
+      ? 'TaskBox事实引擎状态未确认'
+      : summary.currentActionTitle || (summary.pendingSync ? `${summary.pendingSync} 项等待同步` : '当前行动席位空置'),
   };
 }
 
@@ -135,10 +170,106 @@ function dailyView(context) {
   };
 }
 
+function missionView(context) {
+  const snapshot = context.systemSnapshots.mission || {};
+  const summary = snapshot.summary || {};
+  const readable = Boolean(snapshot.generatedAt && summary.activeVersionId);
+  const factSummary = readable
+    ? `${summary.campaignTitle || '当前战役待命名'} · ${summary.successConditionCount || 0} 条成功条件 · ${summary.stopDoingCount || 0} 项不做`
+    : '尚未发布使命版本';
+  let highestSignal = readable ? `复查 ${summary.reviewAt || '日期待确认'}` : '只有明确批准的 activeVersion 才能进入 HQ';
+  if (summary.portfolioDriftCount) highestSignal = `${summary.portfolioDriftCount} 项组合映射需要复核`;
+  else if (summary.hasPendingDraft) highestSignal = '有待审批草稿；当前事实仍保持已发布版本';
+  return {
+    health: snapshot.status || 'unknown',
+    lastSyncAt: snapshot.generatedAt || null,
+    candidateSignalCount: 0,
+    factSummary,
+    highestSignal,
+  };
+}
+
+function healthView(context) {
+  const snapshot = context.systemSnapshots.health || {};
+  const summary = snapshot.summary || {};
+  const readable = Boolean(snapshot.generatedAt && summary.healthSnapshotId);
+  const capacity = summary.availableCapacity == null ? '容量未知' : `容量 ${Math.round(summary.availableCapacity * 100)}%`;
+  const factSummary = readable
+    ? `${capacity} · ${(summary.constraints || []).length} 项约束 · ${summary.sourceTypeCount || 0} 类证据来源`
+    : '尚无已发布健康快照';
+  let highestSignal = readable ? ((summary.constraints || [])[0] || '当前没有额外容量约束') : '原始健康记录不会被 HQ 直接读取';
+  if (summary.conflictCount) highestSignal = `${summary.conflictCount} 项来源冲突，已降级为未知`;
+  else if ((summary.missingFields || []).length) highestSignal = '关键字段缺失，已降级为未知';
+  else if (snapshot.status === 'stale') highestSignal = '健康容量快照已超过 36 小时';
+  return {
+    health: snapshot.status || 'unknown',
+    lastSyncAt: snapshot.generatedAt || null,
+    candidateSignalCount: 0,
+    factSummary,
+    highestSignal,
+  };
+}
+
+function timeView(system, context) {
+  const snapshot = context.systemSnapshots.time || {};
+  const summary = snapshot.summary || snapshot;
+  const hasFacts = Boolean(snapshot.generatedAt || summary.protectedWindow || summary.availableMinutes != null);
+  let health = 'healthy';
+  if (!hasFacts || summary.overloadState === 'unknown') health = 'unknown';
+  else if (!isFresh(snapshot.generatedAt, system.freshnessSlaMs, context.now)) health = 'stale';
+  else if (summary.overloadState === 'overloaded' || Number(summary.conflictCount) > 0) health = 'alert';
+  else if (summary.overloadState === 'warning' || summary.highestLeak) health = 'attention';
+  const window = summary.protectedWindow;
+  const signalParts = [];
+  if (summary.conflictCount) signalParts.push(`${summary.conflictCount} 项保护时段冲突`);
+  if (summary.overloadState === 'overloaded') signalParts.push('容量已经超载');
+  if (summary.highestLeak) signalParts.push(`最高泄漏：${summary.highestLeak}`);
+  return {
+    health,
+    lastSyncAt: snapshot.generatedAt || null,
+    candidateSignalCount: 0,
+    factSummary: hasFacts
+      ? `${summary.availableMinutes == null ? '容量待确认' : `可用 ${summary.availableMinutes} 分钟`} · ${window ? `保护 ${window.start}–${window.end}` : '保护时段待确认'} · ${summary.calendarStatus === 'connected' ? '日历已读取' : '日历降级'}`
+      : '等待时间系统生成今日只读事实',
+    highestSignal: signalParts.join(' · ') || (window ? `今日保护 ${window.start}–${window.end}` : '尚无可发布保护时段'),
+  };
+}
+
+function feedbackView(context) {
+  const snapshot = context.systemSnapshots.feedback || {};
+  const summary = snapshot.summary || snapshot;
+  const readable = Boolean(summary.lastSyncAt || summary.experiment || summary.rule || summary.latestDeviation);
+  const highestSignal = summary.rule
+    ? `待批准规则：${summary.rule.statement}`
+    : summary.experiment
+      ? `${summary.experiment.status === 'active' ? '运行中' : '待批准'}实验：${summary.experiment.hypothesis}`
+      : summary.latestDeviation
+        ? `最近偏差：${summary.latestDeviation.subjectRef || summary.latestDeviation.deviationId}`
+        : '尚未导入日省、周省或月省连续性载荷';
+  return {
+    health: snapshot.status || (readable ? (summary.pendingRuleCount ? 'attention' : 'healthy') : 'unknown'),
+    lastSyncAt: snapshot.generatedAt || summary.lastSyncAt || null,
+    candidateSignalCount: 0,
+    factSummary: readable
+      ? `${Number(summary.deviationCount) || 0} 个连续偏差 · ${summary.experiment ? '1 个当前实验' : '无当前实验'} · ${Number(summary.pendingRuleCount) || 0} 条待批准规则`
+      : '等待反馈系统本地连续性事实',
+    highestSignal,
+  };
+}
+
 export function buildHqSystemViews({
-  snapshot = {}, syncState = {}, tasks = [], remote = false, now = new Date(), registry = HQ_SYSTEM_REGISTRY,
+  snapshot = {}, syncState = {}, tasks = [], systemSnapshots = {},
+  missionSnapshot = {}, healthSnapshot = {}, timeSnapshot = {}, feedback = {}, executionSnapshot = {},
+  remote = false, now = new Date(), registry = HQ_SYSTEM_REGISTRY,
 } = {}) {
-  const context = { snapshot, syncState, tasks, remote, now: new Date(now) };
+  const ports = {
+    mission: systemSnapshots.mission || missionSnapshot,
+    health: systemSnapshots.health || healthSnapshot,
+    time: systemSnapshots.time || timeSnapshot,
+    execution: systemSnapshots.execution || executionSnapshot,
+    feedback: systemSnapshots.feedback || feedback,
+  };
+  const context = { snapshot, syncState, tasks, systemSnapshots: ports, remote, now: new Date(now) };
   return registry.map((system) => {
     const access = HQ_SYSTEM_ACCESS_LEVELS[system.accessLevel] || HQ_SYSTEM_ACCESS_LEVELS.L0;
     let dynamic = {
@@ -146,8 +277,12 @@ export function buildHqSystemViews({
       factSummary: '尚未接入事实读取', highestSignal: '接入卡已登记，等待升级到 L1',
     };
     if (system.systemId === 'mainline') dynamic = mainlineView(system, context);
-    else if (system.systemId === 'taskbox') dynamic = taskboxView(context);
+    else if (system.systemId === 'execution') dynamic = executionView(context);
     else if (system.systemId === 'daily') dynamic = dailyView(context);
+    else if (system.systemId === 'mission') dynamic = missionView(context);
+    else if (system.systemId === 'health') dynamic = healthView(context);
+    else if (system.systemId === 'time') dynamic = timeView(system, context);
+    else if (system.systemId === 'feedback') dynamic = feedbackView(context);
     const healthPresentation = HEALTH_PRESENTATION[dynamic.health] || HEALTH_PRESENTATION.unknown;
     return {
       ...system,

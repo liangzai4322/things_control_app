@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import unittest
+import json
+import tempfile
+from pathlib import Path
 
 import sync_monthly_review_to_hq as monthly
 import sync_weekly_review_to_hq as weekly
@@ -176,6 +179,48 @@ class PeriodReviewBridgeTests(unittest.TestCase):
         text = render_context(snapshot, [])
         self.assertIn("日省记录：4", text)
         self.assertIn("项目 A", text)
+
+    def test_weekly_payload_emits_shared_ids_and_evidence_refs(self):
+        markdown = """
+## 四、唯一主瓶颈与 5Why
+### 主瓶颈：发布反复延期
+- 根因：验收太晚
+- 验证证据：TaskBox task-1
+## 六、下周唯一实验
+- 假设：提前验收移动端可减少延期
+- 实验动作：每天先验收390px
+- 成功阈值：按时发布
+- 失败阈值：延期两天
+- 截止日期：2026-08-16
+""".strip()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "week.md"
+            path.write_text(markdown, encoding="utf-8")
+            first = weekly.build_sync_payload(path, "2026-08-03", "2026-08-09")
+            second = weekly.build_sync_payload(path, "2026-08-03", "2026-08-09")
+        continuity = first["feedbackContinuity"]
+        self.assertEqual(continuity["deviations"][0]["deviationId"], second["feedbackContinuity"]["deviations"][0]["deviationId"])
+        self.assertEqual(continuity["experiments"][0]["experimentId"], second["feedbackContinuity"]["experiments"][0]["experimentId"])
+        self.assertTrue(any(item["type"] == "markdown" for item in continuity["experiments"][0]["evidenceRefs"]))
+
+    def test_monthly_explicit_continuity_preserves_ids_but_forces_rule_proposed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            markdown = root / "month.md"
+            summary = root / "summary.json"
+            markdown.write_text("# 月省", encoding="utf-8")
+            summary.write_text(json.dumps({
+                "periodKey": "2026-08-01_to_2026-08-31",
+                "feedbackContinuity": {"rules": [{
+                    "ruleId": "rule-shared", "version": 2, "statement": "减少并行项目",
+                    "targetSystem": "mission", "status": "active", "approvedBy": "imported",
+                }]},
+            }, ensure_ascii=False), encoding="utf-8")
+            parsed = monthly.payload_from_summary(json.loads(summary.read_text(encoding="utf-8")))
+            continuity = monthly.build_continuity("month", "2026-08-01_to_2026-08-31", markdown, parsed)
+        self.assertEqual(continuity["rules"][0]["ruleId"], "rule-shared")
+        self.assertEqual(continuity["rules"][0]["status"], "proposed")
+        self.assertNotIn("approvedBy", continuity["rules"][0])
 
 
 if __name__ == "__main__":

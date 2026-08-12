@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { buildHqActionCandidates, dismissHqCandidate, scoreHqCandidate } from '../js/hq-candidates.js';
 
 const now = new Date('2026-08-09T04:00:00.000Z');
@@ -58,5 +59,16 @@ const convertedProjectCandidates = buildHqActionCandidates({
   now,
 });
 assert.equal(convertedProjectCandidates.some((item) => item.sourceSystemId === 'mainline'), false);
+
+const hqPageSource = fs.readFileSync(new URL('../js/hq-page.js', import.meta.url), 'utf8');
+const confirmationStart = hqPageSource.indexOf("app.querySelectorAll('[data-confirm-candidate]')");
+const confirmationEnd = hqPageSource.indexOf("app.querySelectorAll('[data-skip-candidate]')", confirmationStart);
+const confirmationBlock = hqPageSource.slice(confirmationStart, confirmationEnd);
+assert.ok(confirmationStart >= 0 && confirmationEnd > confirmationStart);
+assert.match(confirmationBlock, /\/hq\/proposals/);
+assert.match(confirmationBlock, /sourceAuthority:\s*'explicit_user'/);
+assert.match(confirmationBlock, /\/promote/);
+assert.doesNotMatch(confirmationBlock, /addTask\s*\(/);
+assert.doesNotMatch(confirmationBlock, /updateTask\s*\(/);
 
 console.log('hq candidate tests passed');

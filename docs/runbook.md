@@ -1,14 +1,18 @@
 # TaskBox 运维手册
 
-最后核对：2026-08-10。
+最后核对：2026-08-11。
 
 ## 本地验证
 
 ```powershell
 npm ci
+npm --prefix server/taskbox-api ci
 npm test
+npm run test:feedback-python
+npm run test:v3-integration
+npm run test:v3-five-system
 npm run build
-npm run preview
+npm run preview -- --port 4173
 ```
 
 访问 `http://127.0.0.1:4173/`。源码调试可运行 `python -m http.server 8000`，但发布验证必须使用 `dist/`。
@@ -71,6 +75,8 @@ API 目录默认 `/opt/taskbox-api`，数据库默认 `/opt/taskbox-api/data/tas
 12. 完成一条带备注的测试任务，确认回执从 8 款模板随机抽取、模板名正确、“换一款”不重复当前款、长内容分页保持同款、已完成列表可再次打开；用 390px 窄屏确认卡片与分享/保存按钮可见，手机支持时调用系统分享，其他浏览器回退为 PNG 保存。
 13. 把一条临时任务设为当日主动作，在盒子完成后立即切回参谋部；本地卡片应立即退出，远端刷新后不得回闪或重新占位。随后主动取消完成并再次刷新，确认较新的未完成版本可以正常恢复。弱网测试时还应确认离开`#hq`后，较早发出的 HQ 请求不会覆盖盒子或其他页面。
 14. P4 发布后分别创建日/周/月提案：重复 POST 不增加 decision，内容变化只增加 revision；验证 approve/reject/defer 与审计事件。只有批准的日动作在`HQ_PROPOSAL_PROMOTION_ENABLED=1`且请求`shadowMode=false`时可晋升 TaskBox；周/月 promote 返回`409`，`provisional`月度 approve 返回`409`。
+15. 五系统 V3 Gate 0–3 发布前检查 `#hq/#mission/#health/#time/#execution/#feedback`：HQ 首屏五入口、接入卡跳转、刷新、返回 HQ、1440px/390×844 无溢出和控制台无 warning/error。
+16. 使命先保存草稿，确认 HQ 仍只显示 unknown 或原 activeVersion；完成二次明确批准后再确认 L1 更新。健康依次验证无快照、发布最小快照、冲突来源和超过 36 小时，HQ 应为 unknown/对应状态/unknown/stale，且不出现症状或医疗记录原文。
 
 2026-08-07 已完成 P0 全链路：此前通过的完成后不回显、取消完成恢复、跨来源删除/本地缓存收敛、3.5 秒弱网跨路由防覆盖和离线 outbox 重放均保持有效；服务端`primaryTaskId: null`修复已发布生产。服务器发布由临时 GitHub 托管 Runner 完成，因为当前执行环境仍被源站入站规则过滤，而 Runner 到 22/8090/80/443 可达。发布前停止`taskbox-api.service`并备份代码与 SQLite/WAL/SHM，恢复点为`/opt/taskbox-api/backups/p0-null-clear-20260807T060141Z`；服务端 schema 与 HQ 集成测试、systemd active 检查全部通过。线上验收为认证健康 200、未认证 401、生产 Origin 预检 204、清空读回`null`且原 brief 恢复成功。
 
@@ -81,6 +87,8 @@ API 目录默认 `/opt/taskbox-api`，数据库默认 `/opt/taskbox-api/data/tas
 2026-08-09 P3 已完成生产发布：`npm run test:hq-systems`验证接入等级、未知/过期状态、主线行动门槛、P2 候选数量一致性和完整闭环状态；全量`npm test`与`npm run build`通过。浏览器在 1440px/390px 验证六张接入卡、L0/L1/L2 图例、主线八字段契约、只读权限、五段闭环、进入项目中心跳转和无横向溢出，控制台无错误。Pages 工作流`31302177865`首轮构建成功但因旧部署并发锁拒绝 deploy，attempt 2 成功；生产 Build ID 为`dca5c12098ba`，入口为`assets/app-VLRUGPBP.js`，样式为`assets/style-VA4J23EG.css`，生产分块命中`SYSTEM CONTRACT`、`L1 只读`、`/v1/hq/today.projects`、`blocked`、`needs_action`、`READ-ONLY LOOP`与`状态未知`。现有 API 未认证健康`401`、生产 Origin 预检`204`；P3 没有 API 运行代码或 schema 变更，服务端未重新部署。
 
 2026-08-10 P4 发布中：实现提交`3660969`已通过 proposal 专项、schema 迁移、HQ API、日省/周期桥接、全量前端测试与构建；本地浏览器验证日动作“批准→写入盒子”、周实验批准后不建任务、月度 provisional 护栏、revision/audit，以及 390px/1440px 无溢出和控制台无错误。Pages Source 曾被切回 legacy，已恢复 GitHub Actions；工作流`31324155726`成功发布 Build ID`1962464071d3`，入口`assets/app-AEO5YO7V.js`、样式`assets/style-KKWZZMR4.css`、P4 分块`assets/chunk-XDQ4ZDYX.js`。API 生产发布尚未执行：当前机器到服务器 22/8090/9090 均超时，GitHub Runner 路线需要用户明确批准把 root 密码保存为一次性加密仓库 Secret。生产环境尚无`hq_proposals / hq_proposal_events`验证记录，也尚未启用`HQ_PROPOSAL_PROMOTION_ENABLED`；当前服务器回滚点仍是 P1。
+
+2026-08-11 五系统 V3 会话 G 已本地完成 B–F 统一集成和最终联合验收：`npm test`、反馈 Python 专项、Gate 0–3 组合合同、B–F 联合合同与 `npm run build`通过，Build ID 为 `eb3cac0b27a2`。独立端口 `4317` 的 1440px/390×844 六页面、固定入口、五张接入卡、返回、使命候选/二次批准、健康候选审计/隐私、时间日期确认非事实、执行 shadow draft 不晋升、反馈四 JSONL 幂等导入和明确授权激活验收通过，页面控制台无 warning/error。该增量未提交、未推送或部署；生产版本与 P4 API/schema 状态不变。完整交接见 `docs/v3-five-system-final-acceptance.md`。
 
 ### 任务中枢桥接验证
 
