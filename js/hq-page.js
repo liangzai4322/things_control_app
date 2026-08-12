@@ -31,6 +31,7 @@ import { isTaskReleased } from './task-visibility.js';
 import { buildHqActionCandidates, dismissHqCandidate } from './hq-candidates.js';
 import { buildHqSystemViews, summarizeHqSystemViews } from './hq-systems.js';
 import { readFiveSystemHqPorts } from './five-system-hq-ports.js';
+import { applyFiveSystemBootstrap, parseFiveSystemBootstrapFile, readFiveSystemBootstrapState } from './five-system-bootstrap.js';
 import {
   proposalActionModel,
   proposalPeriodLabel,
@@ -352,6 +353,7 @@ function renderSystem(system) {
 }
 
 function renderHqSystemEntryBand(systems = []) {
+  const bootstrap = readFiveSystemBootstrapState();
   const entries = [
     { systemId: 'mission', label: '使命', route: '#mission' },
     { systemId: 'health', label: '健康', route: '#health' },
@@ -363,7 +365,7 @@ function renderHqSystemEntryBand(systems = []) {
     <section class="hq-system-entry-band" aria-labelledby="hqSystemEntryTitle">
       <header>
         <div><span>FIVE SYSTEMS · 决策输入链</span><strong id="hqSystemEntryTitle">五系统固定入口</strong></div>
-        <small>读事实 → 做判断 → 经批准进入盒子</small>
+        <div class="hq-system-bootstrap"><small>${bootstrap ? `已初始化 ${escapeHtml(bootstrap.sourceReviewCount)} 份日省 · ${escapeHtml(bootstrap.reviewRange?.earliest)}—${escapeHtml(bootstrap.reviewRange?.latest)} · validated fact 0` : '尚未导入历史基线'}</small><button id="hqBootstrapSystems">${bootstrap ? '重新校验初始化包' : '导入30日日省初始化包'}</button><input id="hqBootstrapSystemsFile" type="file" accept="application/json,.json" hidden></div>
       </header>
       <nav aria-label="五系统固定入口">
         ${entries.map((entry, index) => {
@@ -915,6 +917,20 @@ function bindPageEvents(app, snapshot, candidates = [], systems = []) {
     renderHqPage(app, { refreshRemote: true });
   });
   app.querySelector('#hqEditBrief').addEventListener('click', () => openBriefEditor(app, snapshot));
+  app.querySelector('#hqBootstrapSystems')?.addEventListener('click', () => app.querySelector('#hqBootstrapSystemsFile')?.click());
+  app.querySelector('#hqBootstrapSystemsFile')?.addEventListener('change', async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const result = applyFiveSystemBootstrap(await parseFiveSystemBootstrapFile(file));
+      if (!result.ok) throw new Error(result.errors.join('；'));
+      showToast('五系统历史基线已原子初始化；0条自动事实');
+      renderHqPage(app, { refreshRemote: false });
+    } catch (error) {
+      event.target.value = '';
+      showToast(`初始化失败：${String(error?.message || error).slice(0, 90)}`);
+    }
+  });
   app.querySelector('#hqReviewEvidence')?.addEventListener('click', () => openReviewEvidence(snapshot));
   app.querySelector('#editBriefEmpty')?.addEventListener('click', () => openBriefEditor(app, snapshot));
   app.querySelector('#hqManualCandidate')?.addEventListener('click', () => openBriefEditor(app, snapshot));

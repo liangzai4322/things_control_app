@@ -2119,6 +2119,10 @@ body.hq-mode .app-container {
   display: block;
 }
 
+.hq-system-bootstrap { display:flex; align-items:center; justify-content:flex-end; gap:10px; flex-wrap:wrap; }
+.hq-system-bootstrap button { border:1px solid rgba(255,255,255,.2); border-radius:999px; background:rgba(255,255,255,.08); color:inherit; padding:8px 12px; font:inherit; cursor:pointer; }
+.hq-system-bootstrap button:hover { background:rgba(255,255,255,.14); }
+
 .hq-system-entry-band > header span {
   color: rgba(102, 211, 208, .78);
   font: 800 8px/1.2 ui-monospace, "SFMono-Regular", Consolas, monospace;
