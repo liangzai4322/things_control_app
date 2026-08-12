@@ -120,7 +120,7 @@ python "D:\note_new\06-日常输入_输出\.agents\skills\任务中枢\scripts\t
 - 日省事实包没有生成：运行`fetch_daily_review_context.py --date YYYY-MM-DD`，检查私有 Token 文件或`TASKBOX_API_TOKEN`，并确认 API Origin 配置。
 - 日省没有派发到盒子：检查本机私有 Token 文件或`TASKBOX_API_TOKEN`，并单独运行 `sync_daily_review_to_hq.py` 查看不含凭据的 JSON 结果。
 - 周省/月省没有进入参谋部：先运行`fetch_period_review_context.py`核对周期键，再运行对应`sync_weekly_review_to_hq.py`或`sync_monthly_review_to_hq.py`。
-- proposal 同步返回 404：生产 API 尚未发布 P4，检查`/v1/hq/proposals`路由与`hq_proposals`表，不要绕过提案直接创建任务。
+- proposal 同步返回 404：生产 API 可能被回滚到 P4 之前或反向代理未指向当前服务；检查`/v1/hq/proposals`路由、`hq_proposals`表和当前部署版本，不要绕过提案直接创建任务。
 - 五系统候选同步返回 404：保留`five-system-candidate-outbox`，发布包含`system_candidates`表与三条候选路由的 API 后重放；不得把候选改走 TaskBox 或 proposal 以绕过收件箱。
 - promote 返回`proposal_promotion_disabled`：确认提案已批准、类型为日省动作、请求显式`shadowMode=false`，再检查服务器`HQ_PROPOSAL_PROMOTION_ENABLED=1`；周/月提案永远不走 TaskBox promotion。
 - 任务中枢返回`TASKBOX_API_TOKEN_missing`：检查`TASKBOX_API_TOKEN`、`TASKBOX_API_TOKEN_FILE`或`~/.codex/secrets/taskbox-api-token`，不把 Token 粘贴进命令历史或文档。
