@@ -52,6 +52,22 @@ npm run init-db
 npm run test:schema
 systemctl start "$SERVICE"
 systemctl is-active --quiet "$SERVICE"
+
+HEALTH_URL="http://127.0.0.1:${TASKBOX_API_PORT:-3107}/health"
+health_ready=false
+for _ in {1..40}; do
+  if curl --silent --show-error --fail --output /dev/null \
+    --header "Authorization: Bearer $TASKBOX_API_TOKEN" \
+    "$HEALTH_URL" 2>/dev/null; then
+    health_ready=true
+    break
+  fi
+  sleep 0.25
+done
+if [[ "$health_ready" != true ]]; then
+  echo "service active but authenticated health check did not become ready: $HEALTH_URL" >&2
+  exit 1
+fi
 trap - ERR
 
 echo "deployment_ok"
