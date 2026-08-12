@@ -49,9 +49,9 @@ P0 已于 2026-08-07 完成端到端收尾，P1 与 P2 已于 2026-08-09 完成�
 
 P3 已于 2026-08-09 完成生产发布，Build ID 为`dca5c12098ba`，Pages 工作流`31302177865`在解除旧部署并发锁后由 attempt 2 成功：`js/hq-systems.js`以轻量配置登记六个现役/预留系统，统一职责、事实源、读写方式、健康检查、同步时效、行动门槛、证据回流、负责人和 L0/L1/L2 接入等级。主线系统是首个 L1 只读事实源，数据读取失败或过期显示未知/过期，只有`blocked / needs_action`进入既有 ROI 候选；TaskBox 与日省显示为 L2 受控链路，交易、镜像和 GAP 保持 L0 入口。
 
-P4 代码已于 2026-08-10 以提交`3660969`完成：新增日省行动、周省实验、月省押注三类 HQ proposal，统一`proposed / approved / rejected / deferred / promoted`状态、授权来源、幂等 revision、审计事件和证据护栏；只有获批日省动作可受控晋升 TaskBox，周/月批准后仍是战略对象，`provisional`月度证据禁止批准。前端审批与校准区已由 Pages 工作流`31324155726`发布，Build ID`1962464071d3`，入口`assets/app-AEO5YO7V.js`、样式`assets/style-KKWZZMR4.css`，P4 分块`assets/chunk-XDQ4ZDYX.js`；390px/1440px、审批→写回、周省不建任务、审计与控制台验收通过。服务端 schema/API 专项、迁移、HQ 集成和桥接测试均通过，但生产 API 尚未部署；`HQ_PROPOSAL_PROMOTION_ENABLED`尚未在生产启用，生产仍使用 P1 API 回滚点。
+P4 已于 2026-08-10 完成生产发布：提交`3660969`、前端 Build ID`1962464071d3`及生产API/schema均已上线；认证`200`、未认证`401`、CORS`204`、proposal状态机与服务状态已验证。当前服务器回滚点为`/opt/taskbox-api/backups/p4-review-proposals-20260809T170701Z`。
 
-2026-08-11 五系统 V3 会话 G 已在独立 worktree 完成 B–F 最新交付的统一集成和本地最终联合验收。使命/健康/time/feedback 继续使用统一 L1 只读外壳，execution 继续以 TaskBox 为唯一任务与完成事实源；执行候选只生成本地 shadow HQ proposal draft，不会页面加载自动消费或直接写 TaskBox。真实 V2 四文件导入得到 790 条 feedback 候选、22 簇（20 模板）、42 条 candidate_unvalidated 和 5 条 proposed calibration，重复导入幂等，损坏 JSONL 整批拒绝。最终 `npm test`、Build ID `eb3cac0b27a2` 和 1440px/390×844 六页面浏览器验收通过。该增量未提交、未推送、未部署；P4 API/schema 和更深自动 L2 接线仍未实施。
+2026-08-12 五系统V3已正式部署。使命、健康、时间、执行、反馈各自拥有独立页面、状态和HQ端口；人生参谋部只通过`js/five-system-hq-ports.js`消费标准摘要。执行是独立L2系统，TaskBox仅是其唯一任务与完成事实引擎。全量测试和双视口六页面验收通过；Pages工作流`31556529819`发布Build ID`6ee91e341ff7`。execution shadow draft公共消费者和更深自动L2接线仍未实现。
 
 ## 内容导出脚本
 

@@ -151,6 +151,6 @@ TaskBox 是一套以人生参谋部为决策入口、以盒子为执行入口的
 - 子系统事实 → 信号 → 行动候选 → TaskBox → 完成证据的统一闭环。
 - `js/hq-systems.js`维护轻量`system_registry`；L0 只提供入口，L1 只读事实，L2 仅在用户确认后受控写回。
 
-唯一规划文档为`docs/hq-primary-action-system-loop-v2.md`。P1–P3 已完成生产发布；P4 提案控制平面和审批 UI 已于 2026-08-10 进入代码，前端 Build ID`1962464071d3`已生产，API/schema 尚待生产发布。只有批准日动作可以 promotion，周省实验和月省押注保持战略对象，月度 provisional 证据禁止批准。
+唯一规划文档为`docs/hq-primary-action-system-loop-v2.md`。P1–P4均已完成生产发布；P4 API/schema与proposal状态机已完成生产验收。只有批准日动作可以promotion，周省实验和月省押注保持战略对象。
 
-五系统 V3 Gate 0–3 基线保留在 Build ID `d8378401cd66`。B–F 最新交付已于 2026-08-11 在会话 G 本地联合验收通过，最终 Build ID 为 `eb3cac0b27a2`；未提交、未推送或部署。execution shadow draft 公共 HQ 消费者、更深自动 L2 接线和生产 P4 API/schema 仍未实施。完整交接见 `docs/v3-five-system-final-acceptance.md`。
+五系统V3已于2026-08-12通过Pages工作流`31556529819`发布，Build ID为`6ee91e341ff7`；五个系统独立运行并通过各自HQ端口耦合人生参谋部。历史Gate/会话G文档继续保留为验收证据。
