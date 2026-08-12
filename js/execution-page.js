@@ -12,6 +12,7 @@ import {
   normalizeExecutionCandidates,
   taskSourceProposalId,
 } from './execution-model.js';
+import { mountSystemCandidateInbox } from './system-candidate-inbox.js';
 
 const HQ_CACHE_KEY = 'taskbox_hq_cache_v1';
 const EXECUTION_CANDIDATES_KEY = 'taskbox_execution_v2_candidates_v1';
@@ -127,6 +128,7 @@ export function renderExecutionPage(app) {
     <footer class="execution-rule">TaskBox保存任务、进度与证据；本页只负责观察和推进，不复制事实。</footer>
   </main>`;
   app.querySelector('#executionBack').onclick = () => navigate('#hq');
+  mountSystemCandidateInbox(app, 'execution', '.execution-outcomes.execution-candidates');
   app.querySelector('#executionSetAction')?.addEventListener('click', () => navigate('#hq'));
   app.querySelector('#executionCandidateImport')?.addEventListener('change', async (event) => {
     const file = event.target.files?.[0];

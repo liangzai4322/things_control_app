@@ -12,6 +12,7 @@ import {
 import { addTimeCandidates, confirmTimeCandidateDate, readTimeStore, rejectTimeCandidate, upsertTimePlan, writeTimeStore } from './time-attention-store.js';
 import { buildHealthHqSnapshot } from './health-model.js';
 import { readHealthProtocolStore } from './health-store.js';
+import { mountSystemCandidateInbox } from './system-candidate-inbox.js';
 
 const esc = (value = '') => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date());
@@ -106,6 +107,7 @@ export function renderTimeAttentionPage(app) {
   <aside class="time-boundary"><strong>V3 只读边界</strong><p>健康容量、人工计划、ICS 日历事实、实际投入和 TaskBox 引用保持分离。V2 候选不进入事实层；冲突与超载只发布信号，不写健康、日历或 TaskBox。</p></aside></main>`;
 
   app.querySelector('#timeBack').onclick = () => navigate('#hq');
+  mountSystemCandidateInbox(app, 'time', '.time-block');
   app.querySelectorAll('[data-open-time-task]').forEach((button) => { button.onclick = () => navigate(button.dataset.timeTaskBox ? `#box/${button.dataset.timeTaskBox}/${button.dataset.openTimeTask}` : '#home'); });
   app.querySelector('#timeCalendarFile').onchange = async (event) => {
     const file = event.target.files?.[0];

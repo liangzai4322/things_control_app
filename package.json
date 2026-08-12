@@ -4,9 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "npm run test:recurrence && npm run test:box-types && npm run test:visibility && npm run test:db-visibility && npm run test:branches && npm run test:completion-receipt && npm run test:hq && npm run test:hq-candidates && npm run test:hq-systems && npm run test:hq-proposals && npm run test:mission && npm run test:health && npm run test:time-attention && npm run test:execution && npm run test:feedback && npm run test:feedback-python && npm run test:p1-integration && npm run test:v3-integration && npm run test:v3-five-system && npm run test:calendar && npm run test:app-storage && npm run test:daily-review && npm run test:period-review && npm --prefix server/taskbox-api run test:schema && npm --prefix server/taskbox-api run test:hq",
+    "test": "npm run test:system-candidates && npm run test:recurrence && npm run test:box-types && npm run test:visibility && npm run test:db-visibility && npm run test:branches && npm run test:completion-receipt && npm run test:hq && npm run test:hq-candidates && npm run test:hq-systems && npm run test:hq-proposals && npm run test:mission && npm run test:health && npm run test:time-attention && npm run test:execution && npm run test:feedback && npm run test:feedback-python && npm run test:p1-integration && npm run test:v3-integration && npm run test:v3-five-system && npm run test:calendar && npm run test:app-storage && npm run test:daily-review && npm run test:period-review && npm --prefix server/taskbox-api run test:schema && npm --prefix server/taskbox-api run test:hq",
     "build": "node scripts/build-app.mjs",
     "preview": "node scripts/preview-app.mjs --dir dist",
+    "test:system-candidates": "node scripts/test-system-candidate-inbox.mjs",
     "test:recurrence": "node scripts/test-recurrence.mjs",
     "test:box-types": "node scripts/test-box-types.mjs",
     "test:visibility": "node scripts/test-task-visibility.mjs",

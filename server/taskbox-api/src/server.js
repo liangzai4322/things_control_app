@@ -1549,6 +1549,71 @@ app.post('/v1/hq/proposals/:id/promote', (req, res) => {
   }
 });
 
+const SYSTEM_CANDIDATE_SYSTEMS = new Set(['mission', 'health', 'time', 'execution', 'feedback']);
+const SYSTEM_CANDIDATE_STATUSES = new Set(['pending', 'kept', 'dismissed']);
+function rowToSystemCandidate(row) {
+  if (!row) return null;
+  const raw = parseJson(row.raw_json, {});
+  return { ...raw, candidateId: row.candidate_id, systemId: row.system_id, reviewDate: row.review_date,
+    kind: row.kind, statement: row.statement, authority: row.authority, epistemicState: row.epistemic_state,
+    status: row.status, evidenceRefs: parseJson(row.evidence_json, []), source: parseJson(row.source_json, {}),
+    createdAt: row.created_at, updatedAt: row.updated_at, writesTargetSystem: false };
+}
+
+app.get('/v1/system-candidates', (req, res) => {
+  const systemId = String(req.query.systemId || '').trim();
+  const status = String(req.query.status || '').trim();
+  if (!SYSTEM_CANDIDATE_SYSTEMS.has(systemId)) return res.status(400).json({ error: 'invalid_system_id' });
+  if (status && !SYSTEM_CANDIDATE_STATUSES.has(status)) return res.status(400).json({ error: 'invalid_status' });
+  const limit = Math.max(1, Math.min(500, Number(req.query.limit) || 100));
+  const rows = status
+    ? db.prepare('SELECT * FROM system_candidates WHERE system_id=? AND status=? ORDER BY review_date DESC, updated_at DESC LIMIT ?').all(systemId, status, limit)
+    : db.prepare('SELECT * FROM system_candidates WHERE system_id=? ORDER BY review_date DESC, updated_at DESC LIMIT ?').all(systemId, limit);
+  res.json({ systemId, items: rows.map(rowToSystemCandidate), count: rows.length });
+});
+
+app.post('/v1/system-candidates/batch', (req, res) => {
+  const candidates = Array.isArray(req.body?.candidates) ? req.body.candidates : [];
+  if (candidates.length > 500) return res.status(400).json({ error: 'too_many_candidates' });
+  try {
+    const result = db.transaction(() => {
+      let created = 0; let unchanged = 0;
+      const insert = db.prepare(`INSERT INTO system_candidates
+        (candidate_id,system_id,review_date,kind,statement,authority,epistemic_state,status,evidence_json,source_json,created_at,updated_at,raw_json)
+        VALUES (@candidate_id,@system_id,@review_date,@kind,@statement,@authority,'candidate_unvalidated','pending',@evidence_json,@source_json,@created_at,@updated_at,@raw_json)
+        ON CONFLICT(candidate_id) DO NOTHING`);
+      candidates.forEach((item) => {
+        const candidateId = String(item.candidateId || '').trim(); const systemId = String(item.systemId || '').trim();
+        const reviewDate = String(item.reviewDate || '').trim(); const statement = String(item.statement || '').trim();
+        if (!candidateId || !SYSTEM_CANDIDATE_SYSTEMS.has(systemId) || !/^\d{4}-\d{2}-\d{2}$/.test(reviewDate) || !statement
+          || item.writesTargetSystem !== false || item.epistemicState !== 'candidate_unvalidated') {
+          const error = new Error('invalid_system_candidate'); error.status = 400; throw error;
+        }
+        const timestamp = now();
+        const info = insert.run({ candidate_id: candidateId, system_id: systemId, review_date: reviewDate,
+          kind: String(item.kind || 'observation'), statement, authority: String(item.authority || 'ai_summary'),
+          evidence_json: json(item.evidenceRefs || []), source_json: json(item.source || req.body.source || {}),
+          created_at: timestamp, updated_at: timestamp, raw_json: json(item) });
+        if (info.changes) created += 1; else unchanged += 1;
+      });
+      return { created, unchanged, total: candidates.length };
+    })();
+    res.status(result.created ? 201 : 200).json(result);
+  } catch (error) {
+    if (error.status) return res.status(error.status).json({ error: error.message });
+    throw error;
+  }
+});
+
+app.patch('/v1/system-candidates/:id', (req, res) => {
+  const status = String(req.body?.status || '').trim();
+  if (!['kept', 'dismissed'].includes(status)) return res.status(400).json({ error: 'invalid_status' });
+  const row = db.prepare('SELECT * FROM system_candidates WHERE candidate_id=?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'candidate_not_found' });
+  db.prepare('UPDATE system_candidates SET status=?, updated_at=? WHERE candidate_id=?').run(status, now(), req.params.id);
+  res.json(rowToSystemCandidate(db.prepare('SELECT * FROM system_candidates WHERE candidate_id=?').get(req.params.id)));
+});
+
 app.get('/v1/hq/decisions', (req, res) => {
   const status = String(req.query.status || '').trim();
   const rows = status

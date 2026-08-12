@@ -328,3 +328,23 @@ CREATE TABLE IF NOT EXISTS hq_period_reviews (
 
 CREATE INDEX IF NOT EXISTS idx_hq_period_reviews_range
   ON hq_period_reviews(period_type, start_date DESC, end_date DESC);
+
+CREATE TABLE IF NOT EXISTS system_candidates (
+  candidate_id TEXT PRIMARY KEY,
+  system_id TEXT NOT NULL,
+  review_date TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  statement TEXT NOT NULL,
+  authority TEXT NOT NULL DEFAULT 'ai_summary',
+  epistemic_state TEXT NOT NULL DEFAULT 'candidate_unvalidated',
+  status TEXT NOT NULL DEFAULT 'pending',
+  evidence_json TEXT NOT NULL DEFAULT '[]',
+  source_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  raw_json TEXT NOT NULL,
+  CHECK (system_id IN ('mission','health','time','execution','feedback')),
+  CHECK (status IN ('pending','kept','dismissed'))
+);
+CREATE INDEX IF NOT EXISTS idx_system_candidates_system_status_date
+  ON system_candidates(system_id, status, review_date DESC);

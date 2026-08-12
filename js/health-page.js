@@ -16,6 +16,7 @@ import {
   upsertHealthObservation,
   writeHealthStore,
 } from './health-store.js';
+import { mountSystemCandidateInbox } from './system-candidate-inbox.js';
 
 const esc = (value = '') => String(value)
   .replaceAll('&', '&amp;')
@@ -225,6 +226,7 @@ export function renderHealthPage(app) {
   </main>`;
 
   app.querySelector('#healthBack').onclick = () => navigate('#hq');
+  mountSystemCandidateInbox(app, 'health', '.health-block');
   app.querySelector('#healthSave').onclick = () => {
     const observation = normalizeHealthObservation({
       observationId: `health-observation-${date}-manual`,
