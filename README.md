@@ -41,7 +41,7 @@ npm run preview
 - `docs/runbook.md`: 本地验证、部署、任务中枢桥接、备份和回滚。
 - `docs/production-build.md`: 线上压缩构建规则。
 - `docs/life-hq-roadmap.md`: 人生参谋部已实现边界与后续路线。
-- `docs/hq-primary-action-system-loop-v2.md`: 主动作席位、投产比候选、统一子系统接入和复盘校准的唯一实施方案；P0–P4 已进入代码，P4 API 仍待生产发布。
+- `docs/hq-primary-action-system-loop-v2.md`: 主动作席位、投产比候选、统一子系统接入和复盘校准的唯一实施方案；P0–P4 已完成生产发布。
 - `docs/v3-five-system-gate-0-3.md`: 2026-08-10 五系统 V3 会话 A 的 Gate 0–3 冻结基线。
 - `docs/v3-five-system-final-acceptance.md`: 2026-08-11 会话 G 的 B–F 统一集成、权限合同、真实 V2 验收、浏览器结果和回滚交接。
 
