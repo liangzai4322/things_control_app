@@ -138,6 +138,8 @@ P4 控制平面把复盘输出统一保存为 proposal。`sourceAuthority=explic
 
 日省消费层在上述独立边界之外增加一条统一候选传输协议：六问先生成 `daily-review-envelope`，再按 `systemId`拆成最多五份候选包，通过`POST /v1/system-candidates/batch`幂等投递。`candidate_id`是跨重试身份，服务端按系统隔离读取；页面只能保留或忽略。`candidate_unvalidated`与`writesTargetSystem=false`是写入前置条件，服务端固定返回`writesTargetSystem=false`，因此“保留”只改变候选收件箱状态，不会改变任何目标系统事实或权限状态。
 
+历史初始化由`js/five-system-bootstrap.js`协调五个独立store，输入是本机私有V2初始化包，不是公开静态资源。事务开始前保存五个store与初始化状态快照；任一校验或写入失败则全部恢复。使命复用候选适配器，健康/时间/执行复用各自导入器，反馈复用四层V2原子导入器；已有用户裁决覆盖再次导入的默认状态。初始化状态只记录runId、包哈希、日期范围和计数，不复制历史原文到HQ。该层不会生成activeVersion、Observation、validated fact、TaskBox任务、活动实验或规则。
+
 周期数据遵循“月省定资源边界 → 周省定唯一实验 → 日省定当天动作”的下行约束；执行证据从盒子向日省、周省、月省逐层聚合。周省和月省不批量创建普通任务，避免周期记分牌污染行动盒子。
 
 参谋部进入盒子使用`#box/:boxId/:taskId/hq-primary|hq-maintenance`深链；第四段明确链接来自参谋部及其任务角色。盒子内普通任务跳转可只使用前三段。路由把`taskId`与来源交给盒子详情页，详情页展开可能折叠的任务分组、滚动到目标任务并显示指挥上下文。周实验从周期缓存读取，并通过周期 API 异步刷新；所属项目和任务角色继续来自本地记录级任务字段或深链角色，因此离线时仍有基本上下文。
