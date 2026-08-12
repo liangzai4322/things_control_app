@@ -77,6 +77,7 @@ API 目录默认 `/opt/taskbox-api`，数据库默认 `/opt/taskbox-api/data/tas
 14. P4 发布后分别创建日/周/月提案：重复 POST 不增加 decision，内容变化只增加 revision；验证 approve/reject/defer 与审计事件。只有批准的日动作在`HQ_PROPOSAL_PROMOTION_ENABLED=1`且请求`shadowMode=false`时可晋升 TaskBox；周/月 promote 返回`409`，`provisional`月度 approve 返回`409`。
 15. 五系统 V3 Gate 0–3 发布前检查 `#hq/#mission/#health/#time/#execution/#feedback`：HQ 首屏五入口、接入卡跳转、刷新、返回 HQ、1440px/390×844 无溢出和控制台无 warning/error。
 16. 使命先保存草稿，确认 HQ 仍只显示 unknown 或原 activeVersion；完成二次明确批准后再确认 L1 更新。健康依次验证无快照、发布最小快照、冲突来源和超过 36 小时，HQ 应为 unknown/对应状态/unknown/stale，且不出现症状或医疗记录原文。
+17. 五系统候选 API 发布后运行 `server/taskbox-api/scripts/verify-system-candidates-production.sh`，必须依次得到认证健康`200`、未认证`401`、CORS`204`、候选路由`200`。随后重放日省候选 outbox 两次：首次只允许`created`，第二次相同候选必须全部`unchanged`；分别读取五个`systemId`，不得跨系统返回候选。
 
 2026-08-07 已完成 P0 全链路：此前通过的完成后不回显、取消完成恢复、跨来源删除/本地缓存收敛、3.5 秒弱网跨路由防覆盖和离线 outbox 重放均保持有效；服务端`primaryTaskId: null`修复已发布生产。服务器发布由临时 GitHub 托管 Runner 完成，因为当前执行环境仍被源站入站规则过滤，而 Runner 到 22/8090/80/443 可达。发布前停止`taskbox-api.service`并备份代码与 SQLite/WAL/SHM，恢复点为`/opt/taskbox-api/backups/p0-null-clear-20260807T060141Z`；服务端 schema 与 HQ 集成测试、systemd active 检查全部通过。线上验收为认证健康 200、未认证 401、生产 Origin 预检 204、清空读回`null`且原 brief 恢复成功。
 
@@ -91,6 +92,8 @@ API 目录默认 `/opt/taskbox-api`，数据库默认 `/opt/taskbox-api/data/tas
 2026-08-11 五系统 V3 会话 G 已本地完成 B–F 统一集成和最终联合验收：`npm test`、反馈 Python 专项、Gate 0–3 组合合同、B–F 联合合同与 `npm run build`通过，Build ID 为 `eb3cac0b27a2`。独立端口 `4317` 的 1440px/390×844 六页面、固定入口、五张接入卡、返回、使命候选/二次批准、健康候选审计/隐私、时间日期确认非事实、执行 shadow draft 不晋升、反馈四 JSONL 幂等导入和明确授权激活验收通过，页面控制台无 warning/error。该增量未提交、未推送或部署；生产版本与 P4 API/schema 状态不变。完整交接见 `docs/v3-five-system-final-acceptance.md`。
 
 2026-08-12 五系统V3已正式发布：五个系统通过独立HQ端口耦合人生参谋部，执行系统成为同级L2系统，TaskBox保留为唯一任务/完成事实引擎。全量测试、Build ID`6ee91e341ff7`、1280px与390×844六页面验收通过；PR #1合并提交`4cc2ae5`，Pages工作流`31556529819`成功，线上`service-worker.js`命中`taskbox-dist-6ee91e341ff7`。
+
+2026-08-12 日省候选五系统消费层已由 PR #2 合并，Pages 工作流`31558585173`成功，线上 Build ID`e95fe81c2a02`。前端五页面和日省本地生成/重试链路已验证；生产候选 API 路由当前仍为认证后`404`，所以候选安全保留在本地 outbox。服务器发布必须使用本仓库的备份优先脚本，并以认证`200`、未认证`401`、CORS`204`、候选路由`200`、首次创建/重复不变、五系统隔离读取和`systemd active`作为完成门槛；在这些证据齐全前不得写成“API已上线”。
 
 ### 任务中枢桥接验证
 
@@ -118,6 +121,7 @@ python "D:\note_new\06-日常输入_输出\.agents\skills\任务中枢\scripts\t
 - 日省没有派发到盒子：检查本机私有 Token 文件或`TASKBOX_API_TOKEN`，并单独运行 `sync_daily_review_to_hq.py` 查看不含凭据的 JSON 结果。
 - 周省/月省没有进入参谋部：先运行`fetch_period_review_context.py`核对周期键，再运行对应`sync_weekly_review_to_hq.py`或`sync_monthly_review_to_hq.py`。
 - proposal 同步返回 404：生产 API 尚未发布 P4，检查`/v1/hq/proposals`路由与`hq_proposals`表，不要绕过提案直接创建任务。
+- 五系统候选同步返回 404：保留`five-system-candidate-outbox`，发布包含`system_candidates`表与三条候选路由的 API 后重放；不得把候选改走 TaskBox 或 proposal 以绕过收件箱。
 - promote 返回`proposal_promotion_disabled`：确认提案已批准、类型为日省动作、请求显式`shadowMode=false`，再检查服务器`HQ_PROPOSAL_PROMOTION_ENABLED=1`；周/月提案永远不走 TaskBox promotion。
 - 任务中枢返回`TASKBOX_API_TOKEN_missing`：检查`TASKBOX_API_TOKEN`、`TASKBOX_API_TOKEN_FILE`或`~/.codex/secrets/taskbox-api-token`，不把 Token 粘贴进命令历史或文档。
 - 任务中枢返回`box_not_found / mainline_not_found / branch_not_found`：先用`GET /v1/taskbox`核对真实名称或 ID，再重跑；不要猜测归属。
