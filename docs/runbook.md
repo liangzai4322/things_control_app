@@ -99,6 +99,8 @@ API 目录默认 `/opt/taskbox-api`，数据库默认 `/opt/taskbox-api/data/tas
 
 2026-08-13 五系统可回退V1历史基线由PR #7完成生产发布：合并提交`47624b3`，Pages工作流`31660897657`成功，线上Build ID`0edb9e215060`。该发布只改变前端与浏览器localStorage协议，不重启API服务。
 
+2026-08-13 自动基线链由PR #8完成生产发布：合并提交`7a9c536`，Pages工作流`31712549246`成功，线上Build ID`56ce0c452a92`。私有包部署于服务器Git外受限目录；认证基线接口200、未认证401，`taskbox-api.service` active，回滚点`/opt/taskbox-api/backups/system-candidates-20260813T145401Z`。
+
 ### 任务中枢桥接验证
 
 桥接脚本位于`D:\note_new\06-日常输入_输出\.agents\skills\任务中枢\scripts\task_hub_bridge.py`。先使用`--dry-run`验证认证、盒子匹配和任务字段，不产生远端测试记录：
