@@ -12,6 +12,7 @@ const allowedOrigins = String(process.env.TASKBOX_ALLOWED_ORIGINS || 'https://li
   .split(',')
   .map((item) => item.trim())
   .filter(Boolean);
+const fiveSystemBaselinePath = String(process.env.TASKBOX_FIVE_SYSTEM_BASELINE_PATH || path.join(root, 'data', 'private', 'five-system-baseline-v1.json')).trim();
 
 const app = express();
 const db = new Database(dbPath);
@@ -1612,6 +1613,22 @@ app.patch('/v1/system-candidates/:id', (req, res) => {
   if (!row) return res.status(404).json({ error: 'candidate_not_found' });
   db.prepare('UPDATE system_candidates SET status=?, updated_at=? WHERE candidate_id=?').run(status, now(), req.params.id);
   res.json(rowToSystemCandidate(db.prepare('SELECT * FROM system_candidates WHERE candidate_id=?').get(req.params.id)));
+});
+
+app.get('/v1/system-baseline/current', (req, res) => {
+  try {
+    if (!fiveSystemBaselinePath || !fs.existsSync(fiveSystemBaselinePath)) return res.status(404).json({ error: 'system_baseline_not_configured' });
+    const raw = fs.readFileSync(fiveSystemBaselinePath, 'utf8');
+    const payload = JSON.parse(raw);
+    if (payload?.schemaVersion !== 'five-system-bootstrap-v1' || !payload?.dataset?.runId) {
+      return res.status(500).json({ error: 'system_baseline_invalid' });
+    }
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    return res.json(payload);
+  } catch {
+    return res.status(500).json({ error: 'system_baseline_unreadable' });
+  }
 });
 
 app.get('/v1/hq/decisions', (req, res) => {

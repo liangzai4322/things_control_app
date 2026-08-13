@@ -48,6 +48,7 @@ import {
 
 const HQ_CACHE_KEY = 'taskbox_hq_cache_v1';
 let hqRenderVersion = 0;
+let baselineAutoSyncAttempted = false;
 const OUTCOME_FIELDS = [
   ['published', '发布'],
   ['conversations', '有效对话'],
@@ -1145,6 +1146,21 @@ export async function renderHqPage(app, { refreshRemote = true, dimension = 'day
   if (dimension !== 'day') {
     await renderHqPeriodPage(app, { dimension, refreshRemote });
     return;
+  }
+  if (readFiveSystemBootstrapState()?.mode !== 'published_baseline' && !baselineAutoSyncAttempted) {
+    baselineAutoSyncAttempted = true;
+    try {
+      const payload = await requestTaskboxApi('/system-baseline/current');
+      if (payload) {
+        const result = publishFiveSystemBaseline(payload, localStorage, {
+          authorization: { sourceAuthority: 'explicit_user' },
+        });
+        if (!result.ok) throw new Error(result.errors.join('；'));
+        showToast(`五系统历史基线 ${result.version.versionId} 已自动上线`);
+      }
+    } catch {
+      // Keep the private-file fallback visible when API credentials or baseline are unavailable.
+    }
   }
   const reviewDate = hqReviewDateKey();
   const cache = readCache(reviewDate);
