@@ -31,7 +31,13 @@ import { isTaskReleased } from './task-visibility.js';
 import { buildHqActionCandidates, dismissHqCandidate } from './hq-candidates.js';
 import { buildHqSystemViews, summarizeHqSystemViews } from './hq-systems.js';
 import { readFiveSystemHqPorts } from './five-system-hq-ports.js';
-import { applyFiveSystemBootstrap, parseFiveSystemBootstrapFile, readFiveSystemBootstrapState } from './five-system-bootstrap.js';
+import {
+  parseFiveSystemBootstrapFile,
+  publishFiveSystemBaseline,
+  readFiveSystemBaselineHistory,
+  readFiveSystemBootstrapState,
+  rollbackFiveSystemBaseline,
+} from './five-system-bootstrap.js';
 import {
   proposalActionModel,
   proposalPeriodLabel,
@@ -354,6 +360,13 @@ function renderSystem(system) {
 
 function renderHqSystemEntryBand(systems = []) {
   const bootstrap = readFiveSystemBootstrapState();
+  const baselineHistory = readFiveSystemBaselineHistory();
+  const promoted = bootstrap?.promotedCounts;
+  const baselineLabel = bootstrap?.mode === 'published_baseline'
+    ? `基线 ${escapeHtml(bootstrap.activeBaselineVersion)} · 健康事实 ${escapeHtml(promoted?.healthObservations || 0)} · 时间事实 ${escapeHtml(promoted?.timeFacts || 0)} · 执行历史 ${escapeHtml(promoted?.executionHistory || 0)} · 反馈模式 ${escapeHtml(promoted?.feedbackObservedPatterns || 0)}`
+    : bootstrap
+      ? `已导入 ${escapeHtml(bootstrap.sourceReviewCount)} 份日省候选 · 尚未发布V1基线`
+      : '尚未导入历史基线';
   const entries = [
     { systemId: 'mission', label: '使命', route: '#mission' },
     { systemId: 'health', label: '健康', route: '#health' },
@@ -365,7 +378,7 @@ function renderHqSystemEntryBand(systems = []) {
     <section class="hq-system-entry-band" aria-labelledby="hqSystemEntryTitle">
       <header>
         <div><span>FIVE SYSTEMS · 决策输入链</span><strong id="hqSystemEntryTitle">五系统固定入口</strong></div>
-        <div class="hq-system-bootstrap"><small>${bootstrap ? `已初始化 ${escapeHtml(bootstrap.sourceReviewCount)} 份日省 · ${escapeHtml(bootstrap.reviewRange?.earliest)}—${escapeHtml(bootstrap.reviewRange?.latest)} · validated fact 0` : '尚未导入历史基线'}</small><button id="hqBootstrapSystems">${bootstrap ? '重新校验初始化包' : '导入30日日省初始化包'}</button><input id="hqBootstrapSystemsFile" type="file" accept="application/json,.json" hidden></div>
+        <div class="hq-system-bootstrap"><small>${baselineLabel}</small><button id="hqBootstrapSystems">${bootstrap?.mode === 'published_baseline' ? '发布下一版基线' : '发布30日日省V1基线'}</button>${baselineHistory.length ? '<button id="hqRollbackSystems">回退上一版</button>' : ''}<input id="hqBootstrapSystemsFile" type="file" accept="application/json,.json" hidden></div>
       </header>
       <nav aria-label="五系统固定入口">
         ${entries.map((entry, index) => {
@@ -922,14 +935,23 @@ function bindPageEvents(app, snapshot, candidates = [], systems = []) {
     const file = event.target.files?.[0];
     if (!file) return;
     try {
-      const result = applyFiveSystemBootstrap(await parseFiveSystemBootstrapFile(file));
+      const result = publishFiveSystemBaseline(await parseFiveSystemBootstrapFile(file), localStorage, {
+        authorization: { sourceAuthority: 'explicit_user' },
+      });
       if (!result.ok) throw new Error(result.errors.join('；'));
-      showToast('五系统历史基线已原子初始化；0条自动事实');
+      showToast(`五系统历史基线 ${result.version.versionId} 已发布，可随时回退`);
       renderHqPage(app, { refreshRemote: false });
     } catch (error) {
       event.target.value = '';
       showToast(`初始化失败：${String(error?.message || error).slice(0, 90)}`);
     }
+  });
+  app.querySelector('#hqRollbackSystems')?.addEventListener('click', () => {
+    if (!window.confirm('确认回退上一版五系统历史基线？当前版本的整批变更将原子撤销。')) return;
+    const result = rollbackFiveSystemBaseline(localStorage, { authorization: { sourceAuthority: 'explicit_user' } });
+    if (!result.ok) return showToast(`回退失败：${result.errors.join('；')}`);
+    showToast(`已回退 ${result.rolledBackVersion}`);
+    renderHqPage(app, { refreshRemote: false });
   });
   app.querySelector('#hqReviewEvidence')?.addEventListener('click', () => openReviewEvidence(snapshot));
   app.querySelector('#editBriefEmpty')?.addEventListener('click', () => openBriefEditor(app, snapshot));
