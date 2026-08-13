@@ -64,8 +64,10 @@ export function normalizeExecutionCandidates(records = []) {
       lineKind: text(record.lineKind) || null,
       confidence: Number.isFinite(Number(record.confidence)) ? Number(record.confidence) : null,
       layer: 'candidate',
-      factStatus: 'unvalidated',
-      taskStatus: 'not_a_task',
+      factStatus: record.factStatus === 'historical_baseline' ? 'historical_baseline' : 'unvalidated',
+      baselineVersionId: text(record.baselineVersionId) || null,
+      baselinePublishedAt: text(record.baselinePublishedAt) || null,
+      taskStatus: record.taskStatus === 'not_a_current_task' ? 'not_a_current_task' : 'not_a_task',
       readOnly: true,
     });
   });

@@ -187,7 +187,7 @@ export function renderHealthPage(app) {
 
     <section class="health-block health-source-block">
       <header><div><span>V2 CANDIDATE INBOX</span><h2>待确认观测收件箱</h2></div><p>待确认 ${pendingCandidates} · 无时序上下文 ${contextCandidates}</p></header>
-      <p>支持导入 V2 <code>04-claims-observations.jsonl</code> 或 JSON 数组；只接收 health 域。原文、sourceRef、authority 与日期映射会保留，未经确认绝不成为 Observation。</p>
+      <p>支持导入 V2 <code>04-claims-observations.jsonl</code> 或 JSON 数组；只接收 health 域。V1历史基线由用户整批发布并可回退；后续新增仍需确认才成为 Observation。</p>
       <input class="input" id="healthCandidateFile" type="file" accept=".json,.jsonl,application/json">
       <button class="health-save secondary" id="healthImportCandidates">导入候选文件</button>
       <div class="health-source-ledger">${renderCandidateInbox(store.candidates)}</div>

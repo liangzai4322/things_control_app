@@ -41,8 +41,8 @@ export function normalizeTimePlan(value = {}) {
 }
 
 const CANDIDATE_RECORD_TYPES = new Set(['observation', 'claim', 'source_proposal']);
-const CANDIDATE_DATE_MAPPINGS = new Set(['exact', 'range', 'unknown']);
-const CANDIDATE_STATUSES = new Set(['pending', 'confirmed_date', 'rejected']);
+const CANDIDATE_DATE_MAPPINGS = new Set(['exact', 'next-day', 'same-day', 'range', 'next-day-range', 'unknown']);
+const CANDIDATE_STATUSES = new Set(['pending', 'confirmed_date', 'rejected', 'baseline_fact', 'baseline_context']);
 
 export function normalizeTimeCandidate(value = {}) {
   const activity = value.activity && typeof value.activity === 'object' ? value.activity : {};
@@ -52,6 +52,12 @@ export function normalizeTimeCandidate(value = {}) {
   const status = CANDIDATE_STATUSES.has(value.status) ? value.status : 'pending';
   const confirmedActivityDate = /^\d{4}-\d{2}-\d{2}$/.test(value.confirmedActivityDate || '')
     ? value.confirmedActivityDate
+    : null;
+  const activityStart = /^\d{4}-\d{2}-\d{2}$/.test(activity.activityStart || value.activityStart || '')
+    ? (activity.activityStart || value.activityStart)
+    : null;
+  const activityEnd = /^\d{4}-\d{2}-\d{2}$/.test(activity.activityEnd || value.activityEnd || '')
+    ? (activity.activityEnd || value.activityEnd)
     : null;
   return {
     candidateId: clean(value.candidateId || value.claimId || value.candidateLineId),
@@ -63,13 +69,17 @@ export function normalizeTimeCandidate(value = {}) {
     content: clean(value.content || value.sourceExcerpt),
     reviewDate: /^\d{4}-\d{2}-\d{2}$/.test(value.reviewDate || '') ? value.reviewDate : null,
     dateMapping,
+    activityStart,
+    activityEnd,
     sourceRef: clean(value.sourceRef),
     status: status === 'confirmed_date' && !confirmedActivityDate ? 'pending' : status,
     confirmedActivityDate,
     confirmedAt: timestamp(value.confirmedAt)?.toISOString() || null,
     rejectedAt: timestamp(value.rejectedAt)?.toISOString() || null,
     rejectionReason: clean(value.rejectionReason),
-    validatedFact: false,
+    baselineFact: value.baselineFact === true,
+    baselineVersionId: clean(value.baselineVersionId) || null,
+    validatedFact: value.validatedFact === true && value.baselineFact === true,
     readOnlySource: true,
   };
 }
@@ -119,6 +129,8 @@ export function buildTimeCandidateInbox(store = {}) {
     pendingCount: candidates.filter((candidate) => candidate.status === 'pending').length,
     confirmedDateCount: candidates.filter((candidate) => candidate.status === 'confirmed_date').length,
     rejectedCount: candidates.filter((candidate) => candidate.status === 'rejected').length,
+    baselineFactCount: candidates.filter((candidate) => candidate.status === 'baseline_fact').length,
+    baselineContextCount: candidates.filter((candidate) => candidate.status === 'baseline_context').length,
     dailySequenceCandidates: candidates.filter((candidate) => candidate.status === 'confirmed_date' && candidate.confirmedActivityDate),
   };
 }
