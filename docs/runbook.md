@@ -96,6 +96,8 @@ API 目录默认 `/opt/taskbox-api`，数据库默认 `/opt/taskbox-api/data/tas
 
 2026-08-13 日省候选五系统消费层完成生产闭环。API发布脚本生成回滚点`/opt/taskbox-api/backups/system-candidates-20260812T163954Z`；生产探针为认证`200`、未认证`401`、CORS`204`、候选路由`200`。2026-08-11 outbox首次写入`created=3`，连续重放均为`unchanged=3`；SQLite内使命1条、执行2条，其余系统0条，五个`systemId`读取均通过隔离检查，`taskbox-api.service`保持active。部署脚本在systemd启动后最多等待10秒，只有认证健康接口就绪才报告成功，避免Node尚未绑定端口时的启动竞态误报。
 
+2026-08-13 五系统可回退V1历史基线由PR #7完成生产发布：合并提交`47624b3`，Pages工作流`31660897657`成功，线上Build ID`0edb9e215060`。该发布只改变前端与浏览器localStorage协议，不重启API服务。
+
 ### 任务中枢桥接验证
 
 桥接脚本位于`D:\note_new\06-日常输入_输出\.agents\skills\任务中枢\scripts\task_hub_bridge.py`。先使用`--dry-run`验证认证、盒子匹配和任务字段，不产生远端测试记录：
