@@ -8,6 +8,11 @@ const root = path.resolve(__dirname, '..');
 const dbPath = path.join(os.tmpdir(), `taskbox-hq-api-${process.pid}-${Date.now()}.sqlite`);
 const port = 3200 + (process.pid % 500);
 const token = 'hq-integration-test-token';
+const baselinePath = path.join(os.tmpdir(), `taskbox-five-system-baseline-${process.pid}-${Date.now()}.json`);
+fs.writeFileSync(baselinePath, JSON.stringify({
+  schemaVersion: 'five-system-bootstrap-v1',
+  dataset: { runId: 'integration-baseline', sourceReviewCount: 30 },
+}), 'utf8');
 let serverError = '';
 
 function request(route, method = 'GET', payload = null) {
@@ -62,6 +67,7 @@ const child = spawn(process.execPath, [path.join(root, 'src', 'server.js')], {
     TASKBOX_API_PORT: String(port),
     TASKBOX_API_TOKEN: token,
     TASKBOX_ALLOWED_ORIGINS: 'http://127.0.0.1:4176',
+    TASKBOX_FIVE_SYSTEM_BASELINE_PATH: baselinePath,
   },
   stdio: ['ignore', 'ignore', 'pipe'],
 });
@@ -71,6 +77,8 @@ child.stderr.on('data', (chunk) => { serverError += chunk.toString('utf8'); });
   try {
     const health = await waitForServer();
     if (!health.ok) throw new Error('health check failed');
+    const serverBaseline = await request('/v1/system-baseline/current');
+    if (serverBaseline.dataset?.runId !== 'integration-baseline') throw new Error('server baseline read failed');
     const candidateBatch = await request('/v1/system-candidates/batch', 'POST', { candidates: [{
       candidateId: 'daily-review:2026-08-12:mission:test:1', systemId: 'mission', reviewDate: '2026-08-12',
       kind: 'alignment_deviation_candidate', statement: '方向偏离候选', authority: 'ai_summary',
@@ -412,5 +420,6 @@ child.stderr.on('data', (chunk) => { serverError += chunk.toString('utf8'); });
     for (const suffix of ['', '-wal', '-shm']) {
       try { fs.rmSync(`${dbPath}${suffix}`, { force: true }); } catch {}
     }
+    try { fs.rmSync(baselinePath, { force: true }); } catch {}
   }
 })();
