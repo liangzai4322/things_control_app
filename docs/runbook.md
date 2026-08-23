@@ -1,6 +1,6 @@
 # TaskBox 运维手册
 
-最后核对：2026-08-13。
+最后核对：2026-08-23。
 
 ## 本地验证
 
@@ -11,6 +11,8 @@ npm test
 npm run test:feedback-python
 npm run test:v3-integration
 npm run test:v3-five-system
+npm run test:hq
+npm run test:period-review
 npm run build
 npm run preview -- --port 4173
 ```
@@ -81,6 +83,11 @@ API 目录默认 `/opt/taskbox-api`，数据库默认 `/opt/taskbox-api/data/tas
 18. 五系统候选 API 发布后运行 `server/taskbox-api/scripts/verify-system-candidates-production.sh`，必须依次得到认证健康`200`、未认证`401`、CORS`204`、候选路由`200`。随后重放日省候选 outbox 两次：首次只允许`created`，第二次相同候选必须全部`unchanged`；分别读取五个`systemId`，不得跨系统返回候选。
 19. 首次打开五系统时，在HQ“五系统固定入口”选择本机私有`五系统初始化包-v1.json`并发布V1基线。必须显示版本号，以及使命39、健康事实12/上下文72、时间事实22/上下文113、执行历史375/当前任务0、反馈observed 42/proposed 5。再次发布应形成下一版本且不重复健康Observation；点击“回退上一版”必须原子恢复五store和前一版本号。初始化包包含私人日省内容，禁止提交Git、部署Pages或上传到无认证位置。
 20. 生产服务器将同一私有包放在Git外路径并设置`TASKBOX_FIVE_SYSTEM_BASELINE_PATH`。带Token的新浏览器首次打开HQ时应自动显示V1版本，无需文件选择；未认证请求必须401，响应必须`Cache-Control: private, no-store`。没有Token时文件入口继续可用。
+21. P5–P6 发布后，确认唯一赌注只读取已批准月度押注；proposed/deferred/rejected月押注不得显示为正式赌注。项目资源字段与周省治理指标缺失时必须显示未知，不得换算为0。`observationDays < 14`或五项指标不全时只能显示“继续观测”；达到门槛后才显示保留、简化或停止建议，且不得产生任何TaskBox写入。
+
+本地4173端口已被占用时，选择其他未占用端口（例如`npm run preview -- --port 4178`），不要把其他本地站点误认为本项目。
+
+2026-08-23 P5–P6 发布候选已完成全量测试、周期桥接、生产构建和浏览器验收：Build ID`8956dbc8f134`；1440px与390×844均无横向溢出，页面无warning/error。该记录只代表发布候选，生产工作流和线上Build ID应在部署后追加。
 
 2026-08-07 已完成 P0 全链路：此前通过的完成后不回显、取消完成恢复、跨来源删除/本地缓存收敛、3.5 秒弱网跨路由防覆盖和离线 outbox 重放均保持有效；服务端`primaryTaskId: null`修复已发布生产。服务器发布由临时 GitHub 托管 Runner 完成，因为当前执行环境仍被源站入站规则过滤，而 Runner 到 22/8090/80/443 可达。发布前停止`taskbox-api.service`并备份代码与 SQLite/WAL/SHM，恢复点为`/opt/taskbox-api/backups/p0-null-clear-20260807T060141Z`；服务端 schema 与 HQ 集成测试、systemd active 检查全部通过。线上验收为认证健康 200、未认证 401、生产 Origin 预检 204、清空读回`null`且原 brief 恢复成功。
 
