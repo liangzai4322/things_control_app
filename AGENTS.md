@@ -21,6 +21,14 @@ This workspace has two jobs:
 - Put persistent crawler state in `data/`.
 - Never write cookies, tokens, signed curl payloads, Chrome storage dumps, or raw auth headers into tracked files.
 
+## Mission system headquarters authority
+
+- Standing user authorization recorded on 2026-08-23: Codex acting as Mission System HQ may independently inspect, change, test, commit, push, and deploy mission-system code and documentation without requesting per-change approval.
+- Mission-owned files are `js/mission-model.js`, `js/mission-store.js`, `js/mission-page.js`, `js/mission-hq-port.js`, `js/mission-v2-adapter.js`, mission-specific tests, mission-only CSS selectors, and mission-specific documentation sections.
+- Shared integration files such as `js/app.js`, `js/app-storage.js`, `css/style.css`, `package.json`, build/deploy workflows, HQ ports, and cross-system contracts may receive only the smallest mission-required integration edit. Preserve other systems' behavior and run the relevant shared contract tests.
+- This engineering authority does not authorize changing the user's active mission, approving mission candidates, publishing a mission version, or promoting AI suggestions as facts. Those product actions still require `explicit_user` approval through the Mission OS workflow.
+- Mission System HQ does not own TaskBox tasks, HQ decisions, health facts, time facts, or feedback rules. Do not add direct TaskBox writes or bypass the existing L1 read-only HQ projection.
+
 ## Export entry points
 
 - Direct Feishu `docs/docx/wiki` export: prefer `C:\Users\86180\.codex\skills\feishu-cli-markdown-export`.

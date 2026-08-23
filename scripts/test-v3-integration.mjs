@@ -8,6 +8,8 @@ import { buildFeedbackHqSummary, importFeedbackContinuity } from '../js/feedback
 
 const appSource = fs.readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
 const hqSource = fs.readFileSync(new URL('../js/hq-page.js', import.meta.url), 'utf8');
+const missionPageSource = fs.readFileSync(new URL('../js/mission-page.js', import.meta.url), 'utf8');
+const styleSource = fs.readFileSync(new URL('../css/style.css', import.meta.url), 'utf8');
 const executionSource = fs.readFileSync(new URL('../js/execution-model.js', import.meta.url), 'utf8');
 const executionPageSource = fs.readFileSync(new URL('../js/execution-page.js', import.meta.url), 'utf8');
 for (const route of ['mission', 'health', 'time', 'execution', 'feedback']) {
@@ -18,6 +20,10 @@ for (const [systemId, route] of [['mission', '#mission'], ['health', '#health'],
   assert.match(hqSource, new RegExp(route.replace('#', '\\#')));
 }
 assert.match(hqSource, /data-fixed-system-entry/);
+for (const className of ['mission-published', 'mission-evidence', 'mission-candidates', 'mission-review-context', 'mission-boundary']) {
+  assert.match(missionPageSource, new RegExp(`class="[^"]*${className}`));
+  assert.match(styleSource, new RegExp(`\\.${className}(?:[{:>.,])`), `${className} must have mission-owned CSS`);
+}
 
 const registry = Object.fromEntries(HQ_SYSTEM_REGISTRY.map((item) => [item.systemId, item]));
 for (const systemId of ['mission', 'health', 'time', 'feedback']) {
