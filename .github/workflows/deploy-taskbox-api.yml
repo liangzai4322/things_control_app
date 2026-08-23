@@ -1,0 +1,45 @@
+name: Deploy TaskBox API
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: taskbox-api-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SSH client
+        run: sudo apt-get update && sudo apt-get install -y sshpass
+
+      - name: Upload release
+        env:
+          SSHPASS: ${{ secrets.TASKBOX_SERVER_PASSWORD }}
+          HOST: ${{ secrets.TASKBOX_SERVER_HOST }}
+          USER: ${{ secrets.TASKBOX_SERVER_USER }}
+        run: |
+          tar -C server/taskbox-api -czf /tmp/taskbox-api-release.tgz .
+          sshpass -e scp -o StrictHostKeyChecking=accept-new /tmp/taskbox-api-release.tgz "$USER@$HOST:/tmp/taskbox-api-release.tgz"
+
+      - name: Deploy with backup and health check
+        env:
+          SSHPASS: ${{ secrets.TASKBOX_SERVER_PASSWORD }}
+          HOST: ${{ secrets.TASKBOX_SERVER_HOST }}
+          USER: ${{ secrets.TASKBOX_SERVER_USER }}
+        run: |
+          sshpass -e ssh -o StrictHostKeyChecking=accept-new "$USER@$HOST" '
+            set -e
+            release=/tmp/taskbox-api-release
+            rm -rf "$release"
+            mkdir -p "$release"
+            tar -xzf /tmp/taskbox-api-release.tgz -C "$release"
+            bash "$release/scripts/deploy-system-candidates-release.sh" "$release"
+            rm -rf "$release" /tmp/taskbox-api-release.tgz
+          '
