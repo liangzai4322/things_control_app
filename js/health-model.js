@@ -43,25 +43,34 @@ function nextDayAtNoon(date) {
 }
 
 export function normalizeHealthObservation(value = {}) {
-  const date = datePattern.test(value.date || '') ? value.date : '';
+  const date = datePattern.test(value.observationDate || value.date || '') ? (value.observationDate || value.date) : '';
   const source = VALID_SOURCES.has(value.source) ? value.source : 'manual';
   return {
     observationId: clean(value.observationId) || `health-observation-${date || 'undated'}-${source}`,
     date,
+    observationDate: date,
+    effectiveDate: datePattern.test(value.effectiveDate || '') ? value.effectiveDate : date,
+    reviewDate: datePattern.test(value.reviewDate || '') ? value.reviewDate : null,
     sleepHours: numberOrNull(value.sleepHours, 0, 24),
     energy: numberOrNull(value.energy, 1, 5),
     training: clean(value.training),
     nutrition: clean(value.nutrition),
     symptoms: clean(value.symptoms),
-    riskLevel: ['none', 'attention', 'professional'].includes(value.riskLevel) ? value.riskLevel : 'none',
+    riskLevel: ['unknown', 'none', 'attention', 'professional'].includes(value.riskLevel) ? value.riskLevel : (source === 'daily_review' ? 'unknown' : 'none'),
     notes: clean(value.notes),
     source,
     confidence: numberOrNull(value.confidence, 0, 1) ?? SOURCE_CONFIDENCE[source],
     observedAt: clean(value.observedAt) || null,
     candidateId: clean(value.candidateId) || null,
     sourceRef: clean(value.sourceRef) || null,
+    sourceHash: clean(value.sourceHash) || null,
     authority: clean(value.authority) || null,
     dateMapping: clean(value.dateMapping) || null,
+    interventionExecuted: ['yes', 'no', 'unknown', '无干预'].includes(value.interventionExecuted) ? value.interventionExecuted : 'unknown',
+    interventionResult: clean(value.interventionResult),
+    tomorrowCapacity: ['normal', 'reduced', 'recovery', 'unknown'].includes(value.tomorrowCapacity) ? value.tomorrowCapacity : 'unknown',
+    constraint: clean(value.constraint),
+    evidenceRefs: unique(Array.isArray(value.evidenceRefs) ? value.evidenceRefs.map(clean) : []),
     updatedAt: value.updatedAt || null,
   };
 }
@@ -219,6 +228,13 @@ export function buildDailyHealthReading(records = [], date = '') {
   };
 }
 
+function previousDate(date) {
+  if (!datePattern.test(date)) return '';
+  const value = new Date(`${date}T00:00:00Z`);
+  value.setUTCDate(value.getUTCDate() - 1);
+  return value.toISOString().slice(0, 10);
+}
+
 export function calculatePersonalBaseline(records = [], options = {}) {
   const beforeDate = datePattern.test(options.beforeDate || '') ? options.beforeDate : null;
   const windowDays = Number.isFinite(Number(options.windowDays)) ? Math.max(7, Number(options.windowDays)) : 28;
@@ -312,6 +328,39 @@ export function deriveHealthAssessment(records = [], date = '') {
   };
 }
 
+export function deriveHealthDrivingPlan(records = [], planningDate = '') {
+  const normalized = records.map(normalizeHealthObservation);
+  const current = normalized
+    .filter((item) => item.date === planningDate && item.source !== 'daily_review')
+    .sort((left, right) => String(right.updatedAt || right.observedAt || '').localeCompare(String(left.updatedAt || left.observedAt || '')));
+  const effective = normalized
+    .filter((item) => item.effectiveDate === planningDate)
+    .sort((left, right) => String(right.updatedAt || right.observedAt || '').localeCompare(String(left.updatedAt || left.observedAt || '')));
+  const currentRisk = current.find((item) => ['attention', 'professional'].includes(item.riskLevel));
+  const currentComplete = current.find((item) => item.sleepHours != null && item.energy != null);
+  const basisObservation = currentRisk || currentComplete || effective[0] || null;
+  const basisDate = basisObservation?.date || planningDate;
+  const assessment = basisObservation ? deriveHealthAssessment(normalized, basisDate) : deriveHealthAssessment([], planningDate);
+  const priorDate = previousDate(basisDate);
+  const prior = priorDate ? deriveHealthAssessment(normalized, priorDate) : null;
+  const difference = (currentValue, priorValue) => currentValue == null || priorValue == null
+    ? null : Math.round((currentValue - priorValue) * 10) / 10;
+  return {
+    ...assessment,
+    planningDate,
+    basisDate: basisObservation ? basisDate : null,
+    basisSource: basisObservation?.source || null,
+    basisObservation,
+    sourceReviewDate: basisObservation?.reviewDate || null,
+    freshness: basisObservation ? (basisObservation.effectiveDate === planningDate || basisDate === planningDate ? 'current' : 'stale') : 'missing',
+    comparison: {
+      sleepDelta: difference(assessment.reading.sleepHours, prior?.reading.sleepHours),
+      energyDelta: difference(assessment.reading.energy, prior?.reading.energy),
+      priorState: prior?.state || 'unknown',
+    },
+  };
+}
+
 export function deriveHealthState(input = {}, context = {}) {
   const observation = normalizeHealthObservation(input);
   if (!observation.date && !Array.isArray(context.records)) {
@@ -399,13 +448,13 @@ export function addSingleVariableIntervention(store = {}, value = {}) {
 
 export function buildHealthProtocolSnapshot(store = {}, date = '', publishedAt = new Date().toISOString()) {
   const normalized = normalizeHealthStore(store);
-  const assessment = deriveHealthAssessment(normalized.observations, date);
-  const constraints = {
+  const assessment = deriveHealthDrivingPlan(normalized.observations, date);
+  const constraints = unique([...(assessment.basisObservation?.constraint ? [assessment.basisObservation.constraint] : []), ...({
     green: [],
     yellow: ['将计划负载控制在当前可用容量内', '优先保留睡眠与恢复时段'],
     red: ['停止非必要负载', '由用户决定并寻求适当的专业帮助'],
     unknown: ['不得按满负荷排期', '先补充或核对健康数据'],
-  }[assessment.state];
+  }[assessment.state])]);
   const sourceSummary = assessment.reading.sources.reduce((summary, source) => {
     summary[source] = (summary[source] || 0) + 1;
     return summary;
@@ -424,6 +473,8 @@ export function buildHealthProtocolSnapshot(store = {}, date = '', publishedAt =
   const snapshot = {
     schemaVersion: 1,
     date,
+    basisDate: assessment.basisDate,
+    basisSource: assessment.basisSource,
     publishedAt,
     healthState,
     timeSystem: {
@@ -439,6 +490,9 @@ export function buildHealthProtocolSnapshot(store = {}, date = '', publishedAt =
       state: assessment.state,
       availableCapacity: assessment.availableCapacity,
       confidence: assessment.confidence,
+      basisDate: assessment.basisDate,
+      basisSource: assessment.basisSource,
+      freshness: assessment.freshness,
       missing: assessment.reading.missing,
       conflicts: assessment.reading.conflicts,
       sourceSummary,

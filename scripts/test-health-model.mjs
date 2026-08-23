@@ -8,6 +8,7 @@ import {
   calculatePersonalBaseline,
   addSingleVariableIntervention,
   deriveHealthAssessment,
+  deriveHealthDrivingPlan,
   deriveHealthState,
   importHealthCandidates,
   normalizeHealthStore,
@@ -60,6 +61,22 @@ const trendAssessment = deriveHealthAssessment(consecutiveDeviation, '2026-08-07
 assert.equal(trendAssessment.state, 'yellow');
 assert.match(trendAssessment.reasons.join(''), /连续两次偏离个人基线/);
 assert.equal(deriveHealthAssessment([{ date: '2026-08-09', source: 'manual', sleepHours: 8 }], '2026-08-09').state, 'unknown');
+
+const nextDayPlan = deriveHealthDrivingPlan([{
+  observationId: 'daily-review-health:2026-08-09', observationDate: '2026-08-09', effectiveDate: '2026-08-10',
+  reviewDate: '2026-08-09', source: 'daily_review', sleepHours: 5.5, energy: 2, riskLevel: 'none', constraint: '保留午休',
+}], '2026-08-10');
+assert.equal(nextDayPlan.basisDate, '2026-08-09');
+assert.equal(nextDayPlan.basisSource, 'daily_review');
+assert.equal(nextDayPlan.state, 'yellow');
+assert.equal(nextDayPlan.freshness, 'current');
+const morningOverride = deriveHealthDrivingPlan([
+  nextDayPlan.basisObservation,
+  { observationId: 'manual-2026-08-10', date: '2026-08-10', source: 'manual', sleepHours: 8, energy: 4, riskLevel: 'professional' },
+], '2026-08-10');
+assert.equal(morningOverride.basisDate, '2026-08-10', 'fresh explicit morning risk overrides the prior review baseline');
+assert.equal(morningOverride.state, 'red');
+assert.equal(deriveHealthDrivingPlan([], '2026-08-10').state, 'unknown');
 
 const candidateRecords = [
   {

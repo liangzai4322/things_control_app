@@ -13,6 +13,8 @@ import {
   taskSourceProposalId,
 } from './execution-model.js';
 import { mountSystemCandidateInbox } from './system-candidate-inbox.js';
+import { buildHealthHqSnapshot } from './health-model.js';
+import { readHealthProtocolStore } from './health-store.js';
 
 const HQ_CACHE_KEY = 'taskbox_hq_cache_v1';
 const EXECUTION_CANDIDATES_KEY = 'taskbox_execution_v2_candidates_v1';
@@ -92,6 +94,8 @@ export function renderExecutionPage(app) {
   const state = deriveExecutionState({ tasks, boxes, mainlines: getMainlines(), brief: readBrief(reviewDate, tasks), reviewDate, syncState: getApiSyncState() });
   const candidateInbox = readCandidateInbox();
   const proposalDrafts = readJson(EXECUTION_PROPOSAL_DRAFTS_KEY, []);
+  const health = buildHealthHqSnapshot(readHealthProtocolStore());
+  const healthCapacity = health.summary.availableCapacity == null ? '—' : `${Math.round(health.summary.availableCapacity * 100)}%`;
   const current = state.currentAction;
   const strategic = state.strategicCommitment;
   const strategicCompletedAt = strategic?.completedAt || strategic?.completionReceipt?.completedAt;
@@ -108,6 +112,10 @@ export function renderExecutionPage(app) {
     <section class="execution-commitment ${strategic?.isCompleted ? 'completed' : ''}">
       <div><span>STRATEGIC COMMITMENT · 今日原始战略承诺</span><strong>${esc(strategic?.content || '尚未设置今日战略承诺')}</strong></div>
       <p>${esc(strategicState)}</p>
+    </section>
+    <section class="execution-commitment health-${esc(health.status)}">
+      <div><span>HEALTH CONSTRAINT · 只读约束</span><strong>${health.status === 'unknown' || health.status === 'stale' ? '健康容量依据不足' : `当前可用容量 ${healthCapacity}`}</strong></div>
+      <p>${esc(health.constraints.join(' · ') || '没有已发布的新增约束；执行系统不会据此自动创建、延期或删除任务。')}</p>
     </section>
     <section class="execution-seat ${current ? '' : 'empty'}">
       <div class="execution-seat-index">01</div><div class="execution-seat-copy"><span>CURRENT ACTION · 当前行动席位</span><h2>${esc(current?.content || (state.strategicCommitment?.isCompleted ? '战略承诺已闭环，等待下一项确认' : '当前席位空置'))}</h2><p>${current ? `${esc(current.note || '缺少完成标准')} · ${Number(current.progress) || 0}% · ${taskSourceProposalId(current) ? `来自已批准提案 ${esc(taskSourceProposalId(current))}` : 'TaskBox原生任务'}` : '只有用户确认的盒子任务才能进入这里。'}</p></div>
