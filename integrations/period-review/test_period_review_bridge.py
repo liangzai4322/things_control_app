@@ -51,6 +51,13 @@ class PeriodReviewBridgeTests(unittest.TestCase):
 - 先做 MVP
 ## 十一、下周记分牌
 - [ ] 完成 5 次主动作
+## 十三、系统效率观测
+- 观测天数：14
+- 系统维护分钟：180
+- 有效决策数：4
+- 外部结果数：2
+- 重复录入次数：0
+- 信号到行动中位分钟：60
 """.strip()
         result = weekly.parse_weekly_review(markdown)
         self.assertIn("集中完成周期面板", result["verdict"])
@@ -58,6 +65,18 @@ class PeriodReviewBridgeTests(unittest.TestCase):
         self.assertEqual(result["experiment"]["action"], "连续使用周面板 7 天")
         self.assertEqual(result["startStopContinue"]["stop"], ["临时换方向"])
         self.assertEqual(len(result["scoreboard"]), 1)
+        self.assertEqual(result["metrics"]["systemMaintenanceMinutes"], 180)
+        self.assertEqual(result["metrics"]["externalResultCount"], 2)
+
+    def test_weekly_governance_metrics_keep_unrecorded_values_unknown(self):
+        parsed = {"metrics": {"rows": []}}
+        weekly.normalize_governance_metrics(parsed, {"inputCoverage": {"days": ["2026-08-01", "2026-08-01", "2026-08-02"]}})
+        self.assertEqual(parsed["metrics"]["observationDays"], 2)
+        self.assertIsNone(parsed["metrics"]["systemMaintenanceMinutes"])
+        self.assertIsNone(parsed["metrics"]["effectiveDecisionCount"])
+        self.assertIsNone(parsed["metrics"]["externalResultCount"])
+        self.assertIsNone(parsed["metrics"]["duplicateEntryCount"])
+        self.assertIsNone(parsed["metrics"]["medianSignalToActionMinutes"])
 
     def test_weekly_parser_accepts_bold_field_labels(self):
         markdown = """

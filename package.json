@@ -15,7 +15,7 @@
     "test:db-visibility": "node scripts/test-db-visibility.mjs",
     "test:branches": "node scripts/test-branches.mjs",
     "test:completion-receipt": "node scripts/test-completion-receipt.mjs",
-    "test:hq": "node scripts/test-hq-model.mjs",
+    "test:hq": "node scripts/test-hq-model.mjs && node scripts/test-hq-resource-governance.mjs",
     "test:hq-candidates": "node scripts/test-hq-candidates.mjs",
     "test:hq-systems": "node scripts/test-hq-systems.mjs",
     "test:hq-proposals": "node scripts/test-hq-proposals.mjs",

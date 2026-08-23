@@ -1,6 +1,6 @@
 # TaskBox 架构
 
-最后核对：2026-08-13。
+最后核对：2026-08-23。
 
 ## 系统边界
 
@@ -141,6 +141,8 @@ P2 候选层位于`js/hq-candidates.js`：先过滤未释放、已完成、暂�
 P3 子系统契约层位于`js/hq-systems.js`，以代码内轻量`system_registry`配置登记六个系统，不新增数据库表。静态接入卡声明职责、唯一事实源、读取/写回方式、健康检查、同步时效、行动门槛、证据回流、负责人和接入等级；动态视图只把`/v1/hq/today.projects`成功读取且未过期的主线快照视为 L1 已确认事实。读取失败显示`unknown`，超过 SLA 显示`stale`，不会回退为健康。主线的`blocked / needs_action`与 P2 候选门槛共用同一语义；L1 模块本身不写原系统，用户确认后才由既有 TaskBox L2 路径幂等创建任务。日省与 TaskBox 标记为 L2 受控链路，交易、镜像和 GAP 保持 L0 入口。P3 只复用现有 HQ/任务 API，没有服务端运行代码和数据库 schema 变更；已于 2026-08-09 以 Build ID`dca5c12098ba`完成生产发布。
 
 P4 控制平面把复盘输出统一保存为 proposal。`sourceAuthority=explicit_user / standing_rule`初始为`approved`（持续授权必须有`standingRuleId`），`ai_derived`初始为`proposed`；同一`idempotencyKey`内容未变时返回原 decision，内容变化只增加 revision 和审计事件。拒绝提案保留在原表，由回收池读取；`restore`按最近一次拒绝事件的`previousStatus`恢复，不删除审计。日动作选择任务盒后在同一交互内 approve/promote；周/月保持战略对象。前端与API/schema均已于2026-08-10完成生产发布，服务器回滚点为`/opt/taskbox-api/backups/p4-review-proposals-20260809T170701Z`。
+
+P5–P6 资源治理层位于`js/hq-resource-governance.js`，只组合 HQ proposal、项目快照与`taskbox_hq_period_cache_v1`中的周/月省快照，不建立新数据库或第二套任务。唯一赌注只接受`status=approved`的`monthly_bet_proposal`；未批准月省内容最多作为周期页复盘，不进入正式赌注。项目资源偏差按项目名匹配周省`resources`或月省`portfolio`，没有明确字段时显示未知。系统效率读取周省`metrics`中的`observationDays / systemMaintenanceMinutes / effectiveDecisionCount / externalResultCount / duplicateEntryCount / medianSignalToActionMinutes`；除覆盖天数可由`inputCoverage`机械映射外，其余值不得从自然语言猜测。P6 只有在连续观测至少14天且五项指标齐全时才输出保留、简化或停止建议，始终只读，不自动改变项目、功能或TaskBox任务。
 
 五系统 V3 于 2026-08-11 完成本地统一集成。2026-08-12 发布候选进一步恢复“系统独立、接口耦合HQ”的边界：使命、健康、时间、执行、反馈各自拥有独立页面、模型/状态与HQ端口，`js/five-system-hq-ports.js`只聚合标准快照；`js/hq-page.js`不得直接读取五系统store/model。HQ 首屏固定入口带只负责发现与跳转，仍保留参谋部/盒子两级全局导航。mission/health/time/feedback 为 L1 只读；execution 是独立L2系统，TaskBox只是其唯一任务、完成状态与完成证据事实引擎。五个系统从 V2 读取候选但保持各自域过滤和 `validated_fact=0`：使命候选必须经`explicit_user`或精确`standing_rule`裁决，纳入草稿不等于发布；健康 unknown/range 只保存上下文，裁决留审计；时间确认活动日仍不是事实；执行只写本地 shadow proposal draft；反馈多文件导入原子幂等，active 对象降级 proposed，所有高权限转换默认拒绝。TaskBox 写入仍只能走 HQ proposal → 明确批准 → 幂等 promote；execution shadow draft 公共消费者和更深自动 L2 接线未实现。
 

@@ -26,12 +26,19 @@ import {
   resolveHqOutcomeTask,
 } from './hq-model.js';
 import { openCompletionReceiptSheet } from './completion-card.js';
-import { bindHqDimensionNav, renderHqDimensionNav, renderHqPeriodPage } from './hq-period-page.js';
+import {
+  bindHqDimensionNav,
+  readHqPeriodCache,
+  refreshHqPeriodCache,
+  renderHqDimensionNav,
+  renderHqPeriodPage,
+} from './hq-period-page.js';
 import { isTaskReleased } from './task-visibility.js';
 import { isTaskBox } from './box-types.js';
 import { buildHqActionCandidates, dismissHqCandidate } from './hq-candidates.js';
 import { buildHqSystemViews, summarizeHqSystemViews } from './hq-systems.js';
 import { readFiveSystemHqPorts } from './five-system-hq-ports.js';
+import { buildHqResourceGovernance } from './hq-resource-governance.js';
 import {
   parseFiveSystemBootstrapFile,
   publishFiveSystemBaseline,
@@ -309,7 +316,21 @@ function renderReviewLoop(reviewInput, reviewDate) {
   `;
 }
 
-function renderProject(project) {
+function renderWeeklyBet(bet = {}) {
+  const approved = bet.status === 'approved';
+  return `<article class="hq-weekly-bet ${approved ? 'approved' : 'unknown'}">
+    <header><span>WEEKLY BET · 本周唯一赌注</span><i>${approved ? '正式批准' : '尚无正式押注'}</i></header>
+    <h2>${escapeHtml(bet.title)}</h2>
+    <dl>
+      <div><dt>成功标准</dt><dd>${escapeHtml(bet.successCriteria || '未知')}</dd></div>
+      <div><dt>当前瓶颈</dt><dd>${escapeHtml(bet.bottleneck || '未知')}</dd></div>
+      <div><dt>杀死条件</dt><dd>${escapeHtml(bet.killCondition || '未知')}</dd></div>
+      <div><dt>下次验证</dt><dd>${escapeHtml(bet.nextReviewAt || '未知')}</dd></div>
+    </dl>
+  </article>`;
+}
+
+function renderProject(project, bias = {}) {
   const total = Number(project.openTaskCount || 0) + Number(project.completedTaskCount || 0);
   const percent = total ? Math.round((Number(project.completedTaskCount || 0) / total) * 100) : 0;
   return `
@@ -329,8 +350,33 @@ function renderProject(project) {
         <i><b style="width:${percent}%"></b></i>
         <span>${project.openTaskCount || 0} 项待推进</span>
       </div>
+      <dl class="hq-project-resource-bias">
+        <div><dt>计划</dt><dd>${escapeHtml(bias.planned || '未知')}</dd></div>
+        <div><dt>实际</dt><dd>${escapeHtml(bias.actual || '未知')}</dd></div>
+        <div><dt>外部结果</dt><dd>${escapeHtml(bias.outcome || '未知')}</dd></div>
+        <div><dt>资源判断</dt><dd>${escapeHtml(bias.decision || '继续观测')}</dd></div>
+      </dl>
     </button>
   `;
+}
+
+function renderSystemEfficiency(metric = {}) {
+  const value = (input, suffix = '') => input === null || input === undefined ? '未知' : `${input}${suffix}`;
+  return `<section class="hq-section hq-system-efficiency">
+    <div class="hq-section-head">
+      <div><span>06 / SYSTEM EFFICIENCY</span><h2>系统白痴指数</h2></div>
+      <p>${metric.ready ? `两周治理结论：${escapeHtml(metric.recommendation)}` : `继续观测 · ${metric.observationDays || 0}/14 天`}</p>
+    </div>
+    <div class="hq-efficiency-grid">
+      <article><strong>${value(metric.maintenanceMinutes, 'm')}</strong><span>系统维护耗时</span></article>
+      <article><strong>${value(metric.effectiveDecisions)}</strong><span>有效决策</span></article>
+      <article><strong>${value(metric.externalResults)}</strong><span>外部结果</span></article>
+      <article><strong>${value(metric.duplicateEntries)}</strong><span>重复录入</span></article>
+      <article><strong>${value(metric.medianLatency, 'm')}</strong><span>信号→行动中位时间</span></article>
+      <article class="index"><strong>${value(metric.idiotIndex, 'm/结果')}</strong><span>白痴指数</span></article>
+    </div>
+    <small>只读诊断，不评价个人绩效，不自动删除功能或派发任务。五项数据齐全且连续观测满 14 天后，才形成保留、简化或停止建议。</small>
+  </section>`;
 }
 
 function renderDecision(decision) {
@@ -616,6 +662,9 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
   });
   const systems = buildHqSystemViews({ snapshot, syncState, tasks, systemSnapshots, remote });
   const systemSummary = summarizeHqSystemViews(systems);
+  const periods = readHqPeriodCache();
+  const governance = buildHqResourceGovernance({ proposals: snapshot.proposals, projects, periods });
+  const resourceByProject = new Map(governance.projects.map((item) => [item.projectId, item]));
 
   app.innerHTML = `
     <main class="page hq-page">
@@ -649,6 +698,7 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
       <section class="hq-grid hq-action-zone">
         <div class="hq-zone-label"><span>01</span><p>今日行动驾驶舱</p><small>只承诺 1 个主动作 + 2 个维护动作</small></div>
         <div class="hq-action-stack">
+          ${renderWeeklyBet(governance.bet)}
           ${renderActionSeat(actionState)}
           ${renderActionCandidates(candidates, actionState)}
           <div class="hq-maintenance-grid">${renderMaintenance(maintenance)}</div>
@@ -690,9 +740,11 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
           <p>${riskCount ? `${riskCount} 个项目需要注意` : '所有活跃项目均有下一步'}</p>
         </div>
         <div class="hq-project-grid">
-          ${projects.length ? projects.map(renderProject).join('') : '<div class="hq-empty-panel"><strong>还没有活跃项目</strong><span>在盒子中建立主线后，这里会自动形成项目健康视图。</span></div>'}
+          ${projects.length ? projects.map((project) => renderProject(project, resourceByProject.get(project.id))).join('') : '<div class="hq-empty-panel"><strong>还没有活跃项目</strong><span>在盒子中建立主线后，这里会自动形成项目健康视图。</span></div>'}
         </div>
       </section>
+
+      ${renderSystemEfficiency(governance.efficiency)}
 
       <section class="hq-section hq-proposal-zone" id="hqProposals">
         <div class="hq-section-head">
@@ -1270,7 +1322,10 @@ export async function renderHqPage(app, { refreshRemote = true, dimension = 'day
     await replayPendingApiMutations();
     if (renderVersion !== hqRenderVersion) return;
     if (getPendingApiMutationCount()) return;
-    const remote = await requestTaskboxApi(`/hq/today?date=${encodeURIComponent(reviewDate)}`);
+    const [remote] = await Promise.all([
+      requestTaskboxApi(`/hq/today?date=${encodeURIComponent(reviewDate)}`),
+      refreshHqPeriodCache(reviewDate),
+    ]);
     const currentHash = window.location.hash || '#hq';
     const isHqRoute = currentHash === '#hq' || currentHash.startsWith('#hq/');
     if (!remote || renderVersion !== hqRenderVersion || !isHqRoute) return;

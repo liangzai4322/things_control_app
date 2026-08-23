@@ -18,6 +18,21 @@ function readCache() {
   try { return JSON.parse(localStorage.getItem(PERIOD_CACHE_KEY) || '{}'); } catch { return {}; }
 }
 
+export function readHqPeriodCache() {
+  return readCache();
+}
+
+export async function refreshHqPeriodCache(dateKey = localDateKey(new Date())) {
+  const results = await Promise.allSettled(['week', 'month'].map(async (type) => {
+    const snapshot = await requestTaskboxApi(`/hq/periods/${type}/current?date=${encodeURIComponent(dateKey)}&offset=-1`);
+    if (snapshot) writeCache(type, snapshot);
+    return [type, snapshot];
+  }));
+  return Object.fromEntries(results
+    .filter((item) => item.status === 'fulfilled' && item.value[1])
+    .map((item) => item.value));
+}
+
 function writeCache(type, value) {
   const next = { ...readCache(), [type]: value, updatedAt: new Date().toISOString() };
   localStorage.setItem(PERIOD_CACHE_KEY, JSON.stringify(next));
