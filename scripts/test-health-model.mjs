@@ -33,6 +33,10 @@ assert.equal(inferredEnergy.energy, 4);
 assert.equal(inferredEnergy.energyText, '中等偏好');
 assert.equal(inferredEnergy.energyScoreSource, 'qualitative_mapping');
 assert.equal(deriveHealthDrivingPlan([inferredEnergy], '2026-08-23').state, 'green');
+assert.equal(normalizeHealthStore({ observations: [{
+  observationDate: '2026-08-22', source: 'daily_review', energy: 4,
+  energyText: '中等偏好', energyScoreSource: 'qualitative_mapping',
+}] }).observations[0].energyScoreSource, 'qualitative_mapping', 'server-side qualitative scoring provenance must survive client normalization');
 
 const baseline = calculateHealthBaseline([
   { date: '2026-08-08', sleepHours: 6, energy: 3 },

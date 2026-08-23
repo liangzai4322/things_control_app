@@ -60,6 +60,9 @@ export function normalizeHealthObservation(value = {}) {
   const energyText = clean(value.energyText);
   const reportedEnergy = numberOrNull(value.energy, 1, 5);
   const inferredEnergy = reportedEnergy == null ? inferEnergyScore(energyText) : null;
+  const preservedEnergySource = ['reported', 'qualitative_mapping', 'unknown'].includes(value.energyScoreSource)
+    ? value.energyScoreSource
+    : null;
   return {
     observationId: clean(value.observationId) || `health-observation-${date || 'undated'}-${source}`,
     date,
@@ -69,7 +72,7 @@ export function normalizeHealthObservation(value = {}) {
     sleepHours: numberOrNull(value.sleepHours, 0, 24),
     energy: reportedEnergy ?? inferredEnergy,
     energyText,
-    energyScoreSource: reportedEnergy != null ? 'reported' : inferredEnergy != null ? 'qualitative_mapping' : 'unknown',
+    energyScoreSource: preservedEnergySource || (reportedEnergy != null ? 'reported' : inferredEnergy != null ? 'qualitative_mapping' : 'unknown'),
     training: clean(value.training),
     nutrition: clean(value.nutrition),
     symptoms: clean(value.symptoms),
