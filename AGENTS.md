@@ -45,6 +45,19 @@ This workspace has two jobs:
 - Feedback HQ may resolve local/cloud conflicts and release the newest compatible feedback contract directly. Preserve the independent local store and L1 read-only HQ-port boundary; do not restore an older schema over the deployed schema v3.
 - Feedback HQ owns predictions, deviations, pattern candidates, experiments, rule versions, evidence continuity, and feedback-specific candidate/audit state. It does not own TaskBox task/completion facts, mission priorities, health facts, or time facts. Imported/AI-derived content cannot authorize itself; cross-system proposals may be accepted for consideration but cannot directly mutate a target system, become a standing rule, or create a TaskBox task.
 
+## Cross-system coordination directory
+
+- Standing user instruction recorded on 2026-08-23: before modifying or operating another system's owned code, data, rules, deployment, or task state, contact that system's Codex task to communicate the intended change or ask the required question. Contact only when a concrete cross-system need arises; do not send routine or speculative messages. Read-only inspection and changes wholly inside the current system do not require contact.
+- If one action affects multiple systems, contact every affected owner before making the cross-system change. A reply may supply facts or coordination, but it does not replace the existing explicit-user approval and controlled-write boundaries.
+- Execution system: `codex://threads/019fe737-b6f7-7121-9a26-574b22fbffed`
+- Health system: `codex://threads/019fe737-b6f8-7b31-862f-7fb93f71d8d4`
+- Time & Attention system: `codex://threads/019fe737-b6f8-7b31-862f-7f5dd707e3de`
+- Feedback system: `codex://threads/019fe737-b6f8-7b31-862f-7f7f704e9dc0`
+- Mission system: `codex://threads/019fe737-b6f8-7b31-862f-7f951f209c86`
+- Box App: `codex://threads/019d8138-ece0-70b0-8c9d-90b4003aa46f`
+- Daily Review / knowledge-base management: `codex://threads/019dbec0-d3c2-7c53-93f5-7570c3f1dafc`
+- Life HQ: `codex://threads/019fb1e4-de37-74d0-8ea3-ebee097c18a5`
+
 ## Export entry points
 
 - Direct Feishu `docs/docx/wiki` export: prefer `C:\Users\86180\.codex\skills\feishu-cli-markdown-export`.
