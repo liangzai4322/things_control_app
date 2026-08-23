@@ -44,7 +44,9 @@ export function proposalActionModel(proposal = {}) {
 }
 
 export function summarizeProposalCalibration(snapshot = {}) {
-  const proposals = Array.isArray(snapshot.proposals) ? snapshot.proposals : [];
+  const proposals = Array.isArray(snapshot.proposals)
+    ? snapshot.proposals.filter((item) => item.status !== 'rejected')
+    : [];
   const pending = proposals.filter((item) => item.status === 'proposed').length;
   const approved = proposals.filter((item) => item.status === 'approved').length;
   const deferred = proposals.filter((item) => item.status === 'deferred').length;

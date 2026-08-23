@@ -174,6 +174,10 @@ child.stderr.on('data', (chunk) => { serverError += chunk.toString('utf8'); });
       actor: 'user', note: '证据不足',
     });
     if (rejected.status !== 'rejected') throw new Error('proposal rejection failed');
+    const restored = await request(`/v1/hq/proposals/${monthly.decisionId}/restore`, 'POST', { actor: 'user' });
+    if (restored.status !== 'proposed') throw new Error('rejected proposal did not restore its previous status');
+    const rejectedAgain = await request(`/v1/hq/proposals/${monthly.decisionId}/reject`, 'POST', { actor: 'user' });
+    if (rejectedAgain.status !== 'rejected') throw new Error('restored proposal could not be rejected again');
 
     const queue = await request('/v1/hq/proposals?status=proposed,approved,deferred&limit=20');
     if (!queue.items.some((item) => item.decisionId === weekly.decisionId)

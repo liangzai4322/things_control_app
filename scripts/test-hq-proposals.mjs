@@ -30,7 +30,7 @@ assert.equal(proposalActionModel(provisionalMonthly).canApprove, false);
 assert.equal(proposalActionModel(provisionalMonthly).provisionalMonthly, true);
 
 const summary = summarizeProposalCalibration({
-  proposals: [daily, weekly, provisionalMonthly, { proposalType: 'daily_action_proposal', status: 'deferred' }],
+  proposals: [daily, weekly, provisionalMonthly, { proposalType: 'daily_action_proposal', status: 'deferred' }, { proposalType: 'daily_action_proposal', status: 'rejected' }],
   review: { completionRate: 75 },
 });
 assert.deepEqual(summary.cadenceCounts, { daily: 2, weekly: 1, monthly: 1 });
@@ -39,6 +39,7 @@ assert.equal(summary.approved, 2);
 assert.equal(summary.deferred, 1);
 assert.equal(summary.evidenceBlocked, 1);
 assert.equal(summary.completionRate, 75);
+assert.equal(summary.total, 4);
 assert.equal(summarizeProposalCalibration({ review: { completionRate: null } }).completionRate, null);
 
 console.log('hq proposal view-model tests passed');

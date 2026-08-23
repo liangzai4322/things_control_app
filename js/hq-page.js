@@ -28,6 +28,7 @@ import {
 import { openCompletionReceiptSheet } from './completion-card.js';
 import { bindHqDimensionNav, renderHqDimensionNav, renderHqPeriodPage } from './hq-period-page.js';
 import { isTaskReleased } from './task-visibility.js';
+import { isTaskBox } from './box-types.js';
 import { buildHqActionCandidates, dismissHqCandidate } from './hq-candidates.js';
 import { buildHqSystemViews, summarizeHqSystemViews } from './hq-systems.js';
 import { readFiveSystemHqPorts } from './five-system-hq-ports.js';
@@ -422,14 +423,68 @@ function renderProposal(proposal) {
       </div>
       <p>${escapeHtml(actions.writebackLabel)} · 来源 ${escapeHtml(proposal.sourceAuthority || 'unknown')}</p>
       <div class="hq-proposal-actions">
-        ${actions.canApprove ? `<button class="primary" data-proposal-action="approve" data-proposal-id="${escapeHtml(proposal.decisionId)}">批准</button>` : ''}
-        ${actions.canPromote ? `<button class="primary" data-proposal-action="promote" data-proposal-id="${escapeHtml(proposal.decisionId)}">写入盒子</button>` : ''}
+        ${actions.canApprove ? `<button class="primary" data-proposal-action="approve" data-proposal-id="${escapeHtml(proposal.decisionId)}">${proposal.proposalType === 'daily_action_proposal' ? '同意并入盒' : '同意'}</button>` : ''}
+        ${actions.canPromote ? `<button class="primary" data-proposal-action="promote" data-proposal-id="${escapeHtml(proposal.decisionId)}">选择盒子并写入</button>` : ''}
         ${actions.canDefer ? `<button data-proposal-action="defer" data-proposal-id="${escapeHtml(proposal.decisionId)}">延期 7 天</button>` : ''}
         ${actions.canReject ? `<button data-proposal-action="reject" data-proposal-id="${escapeHtml(proposal.decisionId)}">拒绝</button>` : ''}
         <button data-proposal-detail="${escapeHtml(proposal.decisionId)}">审计</button>
       </div>
     </article>
   `;
+}
+
+function renderRejectedProposal(proposal) {
+  return `<article class="hq-rejected-proposal">
+    <div><span>${escapeHtml(proposalTypeMeta(proposal.proposalType).label)} · ${escapeHtml(proposalPeriodLabel(proposal))}</span><strong>${escapeHtml(proposal.title)}</strong></div>
+    <button data-proposal-action="restore" data-proposal-id="${escapeHtml(proposal.decisionId)}">恢复审批</button>
+  </article>`;
+}
+
+function chooseProposalBox(proposal) {
+  const boxes = getBoxes().filter(isTaskBox);
+  if (!boxes.length) {
+    showToast('请先创建一个待办盒');
+    return Promise.resolve(null);
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (boxId = null) => {
+      if (settled) return;
+      settled = true;
+      resolve(boxId);
+    };
+    const { root, close } = openSheet(`
+      <div class="hq-proposal-picker-sheet">
+        <div class="sheet-header hq-proposal-picker-head">
+          <div><p class="eyebrow">APPROVE & ROUTE</p><h2>同意后放进哪个盒子？</h2></div>
+          <button class="icon-btn" id="closeProposalBoxPicker">×</button>
+        </div>
+        <p class="sheet-lead">${escapeHtml(proposal.title)}</p>
+        <div class="hq-proposal-box-picker">
+          ${boxes.map((box) => `<button data-proposal-box="${escapeHtml(box.id)}"><span>${escapeHtml(box.icon || '□')}</span><strong>${escapeHtml(box.name)}</strong><small>同意并立即写入</small></button>`).join('')}
+        </div>
+      </div>
+    `, { height: '70vh', onClose: () => finish(null) });
+    root.querySelector('#closeProposalBoxPicker').addEventListener('click', close);
+    root.querySelectorAll('[data-proposal-box]').forEach((button) => button.addEventListener('click', () => {
+      finish(button.dataset.proposalBox);
+      close();
+    }));
+  });
+}
+
+function showProposalUndo(proposal, onUndo) {
+  document.querySelector('.hq-proposal-undo')?.remove();
+  const banner = document.createElement('div');
+  banner.className = 'hq-proposal-undo';
+  banner.innerHTML = `<span>已拒绝：${escapeHtml(proposal.title)}</span><button type="button">撤销</button>`;
+  document.body.appendChild(banner);
+  const timer = setTimeout(() => banner.remove(), 6000);
+  banner.querySelector('button').addEventListener('click', async () => {
+    clearTimeout(timer);
+    banner.remove();
+    await onUndo();
+  });
 }
 
 async function openProposalInspector(proposal) {
@@ -547,7 +602,8 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
   });
   const maintenance = snapshot.commitments?.maintenance || [];
   const decisions = snapshot.decisions || [];
-  const proposals = snapshot.proposals || [];
+  const proposals = (snapshot.proposals || []).filter((item) => item.status !== 'rejected');
+  const rejectedProposals = (snapshot.proposals || []).filter((item) => item.status === 'rejected');
   const proposalCalibration = summarizeProposalCalibration(snapshot);
   const closure = brief.yesterdayClosure || {};
   const riskCount = projects.filter((project) => ['blocked', 'stale', 'needs_action'].includes(project.health)).length;
@@ -654,6 +710,10 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
         <div class="hq-proposal-grid">
           ${proposals.length ? proposals.map(renderProposal).join('') : '<div class="hq-empty-panel"><strong>没有待处理提案</strong><span>完成日省、周省或月省后，提案会按授权来源进入这里。</span></div>'}
         </div>
+        <details class="hq-proposal-recycle">
+          <summary><span>拒绝回收池</span><strong>${rejectedProposals.length}</strong><small>误拒绝的提案可恢复审批</small></summary>
+          <div>${rejectedProposals.length ? rejectedProposals.map(renderRejectedProposal).join('') : '<p>回收池为空</p>'}</div>
+        </details>
       </section>
 
       <section class="hq-split-zone">
@@ -1093,7 +1153,13 @@ function bindPageEvents(app, snapshot, candidates = [], systems = []) {
       const action = button.dataset.proposalAction;
       const proposalId = button.dataset.proposalId;
       if (!action || !proposalId) return;
-      if (action === 'reject' && !window.confirm('拒绝后，后续复盘同步不会自动复活这项提案。确认拒绝？')) return;
+      const proposal = (snapshot.proposals || []).find((item) => item.decisionId === proposalId);
+      if (!proposal) return;
+      let boxId = null;
+      if ((action === 'approve' && proposal.proposalType === 'daily_action_proposal') || action === 'promote') {
+        boxId = await chooseProposalBox(proposal);
+        if (!boxId) return;
+      }
       const payload = { actor: 'hq_user' };
       if (action === 'defer') {
         const date = new Date();
@@ -1101,14 +1167,33 @@ function bindPageEvents(app, snapshot, candidates = [], systems = []) {
         payload.deferUntil = date.toISOString().slice(0, 10);
         payload.note = '人生参谋部延期 7 天';
       }
+      if (boxId) payload.boxId = boxId;
       if (action === 'promote') payload.shadowMode = false;
       button.disabled = true;
       try {
         await requestTaskboxApi(`/hq/proposals/${encodeURIComponent(proposalId)}/${action}`, {
           method: 'POST', body: JSON.stringify(payload),
         });
-        showToast(action === 'approve' ? '提案已批准' : action === 'promote' ? '已受控写入盒子' : action === 'defer' ? '已延期 7 天' : '提案已拒绝');
+        if (action === 'approve' && proposal.proposalType === 'daily_action_proposal') {
+          await requestTaskboxApi(`/hq/proposals/${encodeURIComponent(proposalId)}/promote`, {
+            method: 'POST', body: JSON.stringify({ actor: 'hq_user', shadowMode: false }),
+          });
+        }
         await renderHqPage(app, { refreshRemote: true });
+        if (action === 'reject') {
+          showProposalUndo(proposal, async () => {
+            await requestTaskboxApi(`/hq/proposals/${encodeURIComponent(proposalId)}/restore`, {
+              method: 'POST', body: JSON.stringify({ actor: 'hq_user' }),
+            });
+            showToast('已撤销拒绝');
+            await renderHqPage(app, { refreshRemote: true });
+          });
+        } else {
+          showToast(action === 'approve'
+            ? (proposal.proposalType === 'daily_action_proposal' ? '已同意并写入盒子' : '提案已同意')
+            : action === 'promote' ? '已写入所选盒子'
+              : action === 'defer' ? '已延期 7 天' : '已恢复到审批区');
+        }
       } catch (error) {
         button.disabled = false;
         const message = String(error?.message || error || '');

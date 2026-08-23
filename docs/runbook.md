@@ -74,7 +74,7 @@ API 目录默认 `/opt/taskbox-api`，数据库默认 `/opt/taskbox-api/data/tas
 11. 在 1440px 与 390px 视口检查参谋部、盒子和任务指挥链：无横向溢出、控制台错误或失败资源请求。
 12. 完成一条带备注的测试任务，确认回执从 8 款模板随机抽取、模板名正确、“换一款”不重复当前款、长内容分页保持同款、已完成列表可再次打开；用 390px 窄屏确认卡片与分享/保存按钮可见，手机支持时调用系统分享，其他浏览器回退为 PNG 保存。
 13. 把一条临时任务设为当日主动作，在盒子完成后立即切回参谋部；本地卡片应立即退出，远端刷新后不得回闪或重新占位。随后主动取消完成并再次刷新，确认较新的未完成版本可以正常恢复。弱网测试时还应确认离开`#hq`后，较早发出的 HQ 请求不会覆盖盒子或其他页面。
-14. P4 发布后分别创建日/周/月提案：重复 POST 不增加 decision，内容变化只增加 revision；验证 approve/reject/defer 与审计事件。只有批准的日动作在`HQ_PROPOSAL_PROMOTION_ENABLED=1`且请求`shadowMode=false`时可晋升 TaskBox；周/月 promote 返回`409`，`provisional`月度 approve 返回`409`。
+14. P4 发布后分别创建日/周/月提案：重复 POST 不增加 decision，内容变化只增加 revision；验证 approve/reject/defer/restore 与审计事件。前端拒绝应立即进入折叠回收池，并可通过6秒撤销或回收池恢复；日动作选盒后应一次完成 approve/promote。只有批准的日动作在`HQ_PROPOSAL_PROMOTION_ENABLED=1`且请求`shadowMode=false`时可晋升 TaskBox；周/月 promote 返回`409`，`provisional`月度 approve 返回`409`。
 15. 五系统 V3 Gate 0–3 发布前检查 `#hq/#mission/#health/#time/#execution/#feedback`：HQ 首屏五入口、接入卡跳转、刷新、返回 HQ、1440px/390×844 无溢出和控制台无 warning/error。
 16. 使命先保存草稿，确认 HQ 仍只显示 unknown 或原 activeVersion；完成二次明确批准后再确认 L1 更新。健康依次验证无快照、发布最小快照、冲突来源和超过 36 小时，HQ 应为 unknown/对应状态/unknown/stale，且不出现症状或医疗记录原文。
 17. 五系统候选 API 发布后运行 `server/taskbox-api/scripts/verify-system-candidates-production.sh`，必须依次得到认证健康`200`、未认证`401`、CORS`204`、候选路由`200`。随后重放日省候选 outbox 两次：首次只允许`created`，第二次相同候选必须全部`unchanged`；分别读取五个`systemId`，不得跨系统返回候选。

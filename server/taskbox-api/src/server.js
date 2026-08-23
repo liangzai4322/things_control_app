@@ -605,12 +605,14 @@ function transitionProposal(decisionId, eventType, input = {}) {
   if (current.status === 'promoted') throw proposalError('proposal_already_promoted', 409);
   let nextStatus = eventType;
   let deferUntil = current.deferUntil || null;
+  let taskSpec = current.taskSpec || {};
   if (eventType === 'approve') {
     nextStatus = 'approved';
     if (current.proposalType === 'monthly_bet_proposal' && current.evidenceStatus === 'provisional') {
       throw proposalError('provisional_evidence_cannot_approve', 409);
     }
     deferUntil = null;
+    if (input.boxId) taskSpec = { ...taskSpec, boxId: String(input.boxId) };
   } else if (eventType === 'reject') {
     nextStatus = 'rejected';
     deferUntil = null;
@@ -618,6 +620,14 @@ function transitionProposal(decisionId, eventType, input = {}) {
     deferUntil = validDateKey(input.deferUntil);
     if (!deferUntil) throw proposalError('valid_defer_until_required');
     nextStatus = 'deferred';
+  } else if (eventType === 'restore') {
+    if (current.status !== 'rejected') throw proposalError('proposal_not_rejected', 409);
+    const rejection = db.prepare(`
+      SELECT detail_json FROM hq_proposal_events
+      WHERE proposal_id=? AND event_type='reject' ORDER BY created_at DESC, id DESC LIMIT 1
+    `).get(current.decisionId);
+    const previousStatus = parseJson(rejection?.detail_json, {}).previousStatus;
+    nextStatus = ['proposed', 'approved', 'deferred'].includes(previousStatus) ? previousStatus : 'proposed';
   } else {
     throw proposalError('invalid_proposal_transition');
   }
@@ -625,6 +635,7 @@ function transitionProposal(decisionId, eventType, input = {}) {
     ...current,
     status: nextStatus,
     deferUntil,
+    taskSpec,
     decisionNote: note,
     decidedAt: now(),
     updatedAt: now(),
@@ -1283,7 +1294,7 @@ function buildHqSnapshot(reviewDate) {
     .map(rowToDecision);
   const proposals = db.prepare(`
     SELECT * FROM hq_proposals
-    WHERE status IN ('proposed', 'approved', 'deferred')
+    WHERE status IN ('proposed', 'approved', 'deferred', 'rejected')
     ORDER BY CASE status WHEN 'proposed' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END, updated_at DESC
     LIMIT 50
   `).all().map(rowToProposal);
@@ -1308,13 +1319,14 @@ function buildHqSnapshot(reviewDate) {
     decisions,
     proposals,
     proposalSummary: {
-      total: proposals.length,
+      total: proposals.filter((item) => item.status !== 'rejected').length,
       proposed: proposals.filter((item) => item.status === 'proposed').length,
       approved: proposals.filter((item) => item.status === 'approved').length,
       deferred: proposals.filter((item) => item.status === 'deferred').length,
-      daily: proposals.filter((item) => item.proposalType === 'daily_action_proposal').length,
-      weekly: proposals.filter((item) => item.proposalType === 'weekly_experiment_proposal').length,
-      monthly: proposals.filter((item) => item.proposalType === 'monthly_bet_proposal').length,
+      rejected: proposals.filter((item) => item.status === 'rejected').length,
+      daily: proposals.filter((item) => item.status !== 'rejected' && item.proposalType === 'daily_action_proposal').length,
+      weekly: proposals.filter((item) => item.status !== 'rejected' && item.proposalType === 'weekly_experiment_proposal').length,
+      monthly: proposals.filter((item) => item.status !== 'rejected' && item.proposalType === 'monthly_bet_proposal').length,
     },
     review: buildReviewStatus(reviewDate, tasks, 7),
     ai: {
@@ -1532,7 +1544,7 @@ app.post('/v1/hq/proposals', (req, res) => {
   }
 });
 
-['approve', 'reject', 'defer'].forEach((action) => {
+['approve', 'reject', 'defer', 'restore'].forEach((action) => {
   app.post(`/v1/hq/proposals/:id/${action}`, (req, res) => {
     try {
       return res.json(db.transaction(() => transitionProposal(req.params.id, action, req.body || {}))());
