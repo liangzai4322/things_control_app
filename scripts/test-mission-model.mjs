@@ -166,6 +166,7 @@ assert.equal(missionHq.status, 'healthy');
 assert.equal(missionHq.summary.campaignTitle, '跑通使命系统');
 assert.notEqual(missionHq.summary.campaignTitle, secondDraft.campaign.title, 'pending draft must not replace activeVersion facts');
 assert.equal(missionHq.summary.hasPendingDraft, true);
+assert.deepEqual(missionHq.summary.pendingDiffFields, ['campaign', 'portfolio']);
 assert.equal(missionHq.sourceRefs.includes(first.store.history[0].approval.approvalId), true);
 const staleMissionHq = buildMissionHqSnapshot(first.store, { mainlines, now: new Date('2026-09-03T00:00:00Z') });
 assert.equal(staleMissionHq.status, 'stale');

@@ -76,6 +76,7 @@ API 目录默认 `/opt/taskbox-api`，数据库默认 `/opt/taskbox-api/data/tas
 13. 把一条临时任务设为当日主动作，在盒子完成后立即切回参谋部；本地卡片应立即退出，远端刷新后不得回闪或重新占位。随后主动取消完成并再次刷新，确认较新的未完成版本可以正常恢复。弱网测试时还应确认离开`#hq`后，较早发出的 HQ 请求不会覆盖盒子或其他页面。
 14. P4 发布后分别创建日/周/月提案：重复 POST 不增加 decision，内容变化只增加 revision；验证 approve/reject/defer/restore 与审计事件。前端拒绝应立即进入折叠回收池，并可通过6秒撤销或回收池恢复；日动作选盒后应一次完成 approve/promote。只有批准的日动作在`HQ_PROPOSAL_PROMOTION_ENABLED=1`且请求`shadowMode=false`时可晋升 TaskBox；周/月 promote 返回`409`，`provisional`月度 approve 返回`409`。
 15. 五系统 V3 Gate 0–3 发布前检查 `#hq/#mission/#health/#time/#execution/#feedback`：HQ 首屏五入口、接入卡跳转、刷新、返回 HQ、1440px/390×844 无溢出和控制台无 warning/error。
+16. 使命云端Beta发布前运行`npm run test:mission`、`npm --prefix server/taskbox-api run test:mission`和`npm --prefix server/taskbox-api run test:schema`；用临时数据库验证首次同步、重复同步、revision冲突、AI发布拒绝和云端store重建。
 16. 使命先保存草稿，确认 HQ 仍只显示 unknown 或原 activeVersion；完成二次明确批准后再确认 L1 更新。健康依次验证无快照、发布最小快照、冲突来源和超过 36 小时，HQ 应为 unknown/对应状态/unknown/stale，且不出现症状或医疗记录原文。
 17. 五系统候选 API 发布后运行 `server/taskbox-api/scripts/verify-system-candidates-production.sh`，必须依次得到认证健康`200`、未认证`401`、CORS`204`、候选路由`200`。随后重放日省候选 outbox 两次：首次只允许`created`，第二次相同候选必须全部`unchanged`；分别读取五个`systemId`，不得跨系统返回候选。
 18. 首次打开五系统时，在HQ“五系统固定入口”选择本机私有`五系统初始化包-v1.json`并发布V1基线。必须显示版本号，以及使命39、健康事实12/上下文72、时间事实22/上下文113、执行历史375/当前任务0、反馈observed 42/proposed 5。再次发布应形成下一版本且不重复健康Observation；点击“回退上一版”必须原子恢复五store和前一版本号。初始化包包含私人日省内容，禁止提交Git、部署Pages或上传到无认证位置。
@@ -128,6 +129,8 @@ python "D:\note_new\06-日常输入_输出\.agents\skills\任务中枢\scripts\t
 - 周省/月省没有进入参谋部：先运行`fetch_period_review_context.py`核对周期键，再运行对应`sync_weekly_review_to_hq.py`或`sync_monthly_review_to_hq.py`。
 - proposal 同步返回 404：生产 API 可能被回滚到 P4 之前或反向代理未指向当前服务；检查`/v1/hq/proposals`路由、`hq_proposals`表和当前部署版本，不要绕过提案直接创建任务。
 - 五系统候选同步返回 404：生产服务可能回滚到2026-08-13候选API发布之前；保留`five-system-candidate-outbox`，检查`system_candidates`表、三条候选路由和反向代理，再重放；不得把候选改走 TaskBox 或 proposal 以绕过收件箱。
+- 使命同步返回404：生产API尚未包含`/v1/mission/state`和`/v1/mission/sync`；保留`taskbox_mission_os_v1`与`taskbox_mission_sync_v1`，先完成API发布再刷新，不要清浏览器数据。
+- 使命同步返回409：表示云端revision已变化；Beta会保留本地outbox并停止云端覆盖。先分别导出本地和云端版本核对，再由使命系统总部裁决；不得强行把`expectedRevision`改成云端值绕过冲突。
 - promote 返回`proposal_promotion_disabled`：确认提案已批准、类型为日省动作、请求显式`shadowMode=false`，再检查服务器`HQ_PROPOSAL_PROMOTION_ENABLED=1`；周/月提案永远不走 TaskBox promotion。
 - 任务中枢返回`TASKBOX_API_TOKEN_missing`：检查`TASKBOX_API_TOKEN`、`TASKBOX_API_TOKEN_FILE`或`~/.codex/secrets/taskbox-api-token`，不把 Token 粘贴进命令历史或文档。
 - 任务中枢返回`box_not_found / mainline_not_found / branch_not_found`：先用`GET /v1/taskbox`核对真实名称或 ID，再重跑；不要猜测归属。

@@ -376,3 +376,56 @@ CREATE TABLE IF NOT EXISTS health_snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_health_snapshots_effective_date
   ON health_snapshots(effective_date DESC, published_at DESC);
+
+CREATE TABLE IF NOT EXISTS mission_records (
+  record_id TEXT PRIMARY KEY,
+  record_type TEXT NOT NULL,
+  mission_id TEXT NOT NULL,
+  version INTEGER,
+  status TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  content_hash TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK (record_type IN ('draft','version')),
+  CHECK (status IN ('draft','published'))
+);
+CREATE INDEX IF NOT EXISTS idx_mission_records_type_updated
+  ON mission_records(record_type, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS mission_record_versions (
+  record_id TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  content_hash TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (record_id, revision),
+  FOREIGN KEY (record_id) REFERENCES mission_records(record_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS mission_candidates (
+  candidate_id TEXT PRIMARY KEY,
+  status TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  content_hash TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK (status IN ('unreviewed','ignored','observing','included_in_draft'))
+);
+CREATE INDEX IF NOT EXISTS idx_mission_candidates_status_updated
+  ON mission_candidates(status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS mission_events (
+  event_id TEXT PRIMARY KEY,
+  operation_id TEXT NOT NULL UNIQUE,
+  record_id TEXT,
+  event_type TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mission_events_record_created
+  ON mission_events(record_id, created_at ASC);

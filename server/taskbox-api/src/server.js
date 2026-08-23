@@ -4,6 +4,7 @@ const path = require('path');
 const express = require('express');
 const Database = require('better-sqlite3');
 const { installHealthSystemRoutes } = require('./health-system');
+const { installMissionSystemRoutes } = require('./mission-system');
 
 const root = path.resolve(__dirname, '..');
 const dbPath = process.env.TASKBOX_DB_PATH || path.join(root, 'data', 'taskbox.sqlite');
@@ -1344,6 +1345,7 @@ app.get('/health', (req, res) => {
 });
 
 installHealthSystemRoutes({ app, db, now, json, parseJson });
+installMissionSystemRoutes({ app, db, now, json, parseJson });
 
 app.get('/v1/taskbox', (req, res) => {
   const boxes = db.prepare('SELECT * FROM boxes ORDER BY sort_order, name').all().map(rowToBox);

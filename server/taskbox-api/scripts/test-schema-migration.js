@@ -36,7 +36,7 @@ try {
     if (!indexes.includes(name)) throw new Error(`missing index ${name}`);
   });
   const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((item) => item.name);
-  ['branches', 'hq_daily_briefs', 'hq_decisions', 'hq_proposals', 'hq_proposal_events', 'hq_period_reviews', 'system_candidates', 'health_observations', 'health_snapshots'].forEach((name) => {
+  ['branches', 'hq_daily_briefs', 'hq_decisions', 'hq_proposals', 'hq_proposal_events', 'hq_period_reviews', 'system_candidates', 'health_observations', 'health_snapshots', 'mission_records', 'mission_record_versions', 'mission_candidates', 'mission_events'].forEach((name) => {
     if (!tables.includes(name)) throw new Error(`missing table ${name}`);
   });
   const candidateIndexes = db.prepare('PRAGMA index_list(system_candidates)').all().map((item) => item.name);

@@ -92,13 +92,13 @@ export function renderMissionPage(app) {
   app.innerHTML = `<main class="page mission-page safe-top"><header class="mission-top"><button id="missionBack" aria-label="返回人生参谋部">←</button><div><span>MISSION OS · V3 PROTOCOL</span><h1>使命系统</h1></div><em>${active ? `V${active.version} 已发布` : '仅有草稿'}</em></header>
   ${publishedPanel(active)}${evidencePanel(evidence)}
   ${candidateInboxPanel(store)}
-  <section class="mission-draft-label"><div><span>UNPUBLISHED WORKSPACE</span><h2>战略草稿</h2></div><p>保存只留在本机；草稿和 AI 建议都不会覆盖上方已发布版本。</p></section>
+  <section class="mission-draft-label"><div><span>UNPUBLISHED WORKSPACE</span><h2>战略草稿</h2></div><p>本地立即保存并后台同步云端；草稿和 AI 建议都不会覆盖上方已发布版本。</p></section>
   <section class="mission-vector"><div class="mission-rail"><i></i><i></i><i></i></div><article><span>长期使命 · ${esc(draft.missionId)}</span><textarea id="missionStatement" rows="3" placeholder="长期想让什么发生？">${esc(draft.statement)}</textarea></article><article><span>当前唯一战役 · ${esc(draft.campaign.campaignId)}</span><input id="missionCampaign" value="${esc(draft.campaign.title)}" placeholder="这个阶段只打哪一场仗"><textarea id="missionWhyNow" rows="2" placeholder="为什么必须是现在？">${esc(draft.campaign.whyNow)}</textarea></article><article class="mission-check"><span>现实如何判定</span><label>成功条件<textarea id="missionSuccess" rows="3" placeholder="每行一个结果">${esc(text(draft.campaign.successConditions))}</textarea></label><label>退出条件<textarea id="missionExit" rows="3" placeholder="什么证据出现时停止">${esc(text(draft.campaign.exitConditions))}</textarea></label><label>复查日期<input id="missionReviewAt" type="date" value="${esc(draft.campaign.reviewAt)}"></label></article></section>
   <section class="mission-block"><header><div><span>PORTFOLIO</span><h2>项目组合</h2></div><p>引用盒子主线，不复制项目事实；新增投入必须写机会成本。</p></header><div class="mission-portfolio">${rows(mainlines, draft)}</div></section>
   <section class="mission-guards"><label><span>现实约束</span><textarea class="input" id="missionConstraints" rows="4">${esc(text(draft.constraints))}</textarea></label><label><span>不可突破</span><textarea class="input" id="missionNonNegotiables" rows="4">${esc(text(draft.nonNegotiables))}</textarea></label><label class="stop"><span>明确不做</span><textarea class="input" id="missionNotDoing" rows="4">${esc(text(draft.notDoing))}</textarea></label></section>
   ${reviewContextPanel(store)}
   ${historyPanel(store)}
-  <aside class="mission-boundary"><strong>V3 边界</strong><p>当前协议与事件保存在本机。V2候选始终不是事实；使命系统只读 TaskBox、时间系统与候选缓存，不创建任务、不写回其他系统、不向 HQ 自动提交提案。</p></aside>
+  <aside class="mission-boundary"><strong>V3 · CLOUD BETA 边界</strong><p>使命记录本地优先并后台同步云端。V2候选始终不是事实；使命系统只读 TaskBox、时间系统与候选缓存，不创建任务、不写回其他系统、不向 HQ 自动提交提案。</p></aside>
   <footer class="mission-actions safe-bottom"><button id="missionSave">保存未发布草稿</button><button class="primary" id="missionPublish">发布战略版本</button></footer></main>`;
   app.querySelector('#missionBack').onclick = () => navigate('#hq');
   mountSystemCandidateInbox(app, 'mission', '.mission-draft-label');

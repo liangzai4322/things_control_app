@@ -279,6 +279,7 @@ export function buildMissionHqSnapshot(input = {}, { mainlines = [], now = new D
       reviewAt: null, successConditionCount: 0, exitConditionCount: 0,
       stopDoingCount: 0, portfolioDriftCount: 0, lastApprovedAt: null,
       hasPendingDraft: Boolean(store.draft.statement || store.draft.campaign.title || store.reviewContext.candidateRefs.length),
+      pendingDiffFields: [],
     }, constraints: [],
   };
   if (!active || !['explicit_user', 'standing_rule'].includes(active.approval?.sourceAuthority) || !active.activatedAt) return empty;
@@ -290,6 +291,15 @@ export function buildMissionHqSnapshot(input = {}, { mainlines = [], now = new D
     : 0;
   const driftCount = Math.max(0, Number(portfolioDriftCount) || 0) + missingMappings;
   const hasPendingDraft = JSON.stringify(normalizeMissionDraft(store.draft)) !== JSON.stringify(snapshot) || store.reviewContext.candidateRefs.length > 0;
+  const pendingDiffFields = hasPendingDraft ? [
+    ['statement', store.draft.statement, snapshot.statement],
+    ['campaign', store.draft.campaign, snapshot.campaign],
+    ['portfolio', store.draft.portfolio, snapshot.portfolio],
+    ['constraints', store.draft.constraints, snapshot.constraints],
+    ['nonNegotiables', store.draft.nonNegotiables, snapshot.nonNegotiables],
+    ['notDoing', store.draft.notDoing, snapshot.notDoing],
+    ['candidateRefs', store.reviewContext.candidateRefs, []],
+  ].filter(([, pending, published]) => JSON.stringify(pending) !== JSON.stringify(published)).map(([field]) => field) : [];
   let status = 'healthy';
   if (snapshot.campaign.reviewAt && snapshot.campaign.reviewAt < today) status = 'stale';
   else if (driftCount > 0) status = 'attention';
@@ -314,6 +324,7 @@ export function buildMissionHqSnapshot(input = {}, { mainlines = [], now = new D
       portfolioDriftCount: driftCount,
       lastApprovedAt: active.approval.approvedAt || active.activatedAt,
       hasPendingDraft,
+      pendingDiffFields,
     },
     constraints: [],
   };

@@ -30,7 +30,7 @@ GitHub Pages (dist)
 - `js/branch-page.js`: 支线编辑器、独立详情、完成流程和支线行动编辑器。
 - `js/completion-card.js`: 完成回执快照、8 款 Canvas 模板、稳定分页、PNG 保存和 Web Share 图片分享。
 - `js/hq-proposals.js`: P4 提案类型、状态、按钮权限和日/周/月校准汇总的纯视图模型。
-- `js/mission-model.js`、`js/mission-v2-adapter.js`: 使命版本、明确审批、V2 候选隔离和 HQ L1 activeVersion 投影。
+- `js/mission-model.js`、`js/mission-v2-adapter.js`: 使命版本、精确授权、V2 候选隔离和 HQ L1 activeVersion 投影；`js/mission-store.js`保留本地优先缓存，并把草稿、正式版本、候选和事件按记录同步到使命云端账本。
 - `js/health-model.js`: 来源化观测、候选授权审计、保守容量和不含原始症状的 HQ L1 投影。
 - `js/time-attention-model.js`: 保持日历、人工计划、TaskBox 引用和健康容量分离；确认日期也不把 V2 候选升级为事实。
 - `js/execution-model.js`: 只读 TaskBox 事实，并把 V2 执行候选转换为本地 shadow HQ proposal draft。
@@ -53,6 +53,8 @@ GitHub Pages (dist)
 4. 本地 CRUD 立即更新 UI 和 localStorage，把单条 `POST`、`PATCH` 或 `DELETE`同时写入持久化 outbox 和记录级串行队列。
 5. 请求成功后清理对应 outbox 项；失败保留本地状态，重载或主动拉取后按原顺序重放。
 6. `contentFingerprint` 只比较业务内容，避免 `updatedAt` 等噪声触发虚假的“Cloud synced”。
+
+使命系统Beta沿用同一原则但保持独立命名空间：本地写入先更新`taskbox_mission_os_v1`并生成`taskbox_mission_sync_v1`待同步载荷，后台调用`POST /v1/mission/sync`。云端用内容哈希消除重复写入，草稿和候选使用`expectedRevision`防止跨设备静默覆盖，正式版本和事件不可变。outbox未结算或发生`409`时不拉取云端覆盖本地；云端同步完成后，HQ仍只通过`js/mission-hq-port.js`读取正式`activeVersion`，待发布草稿只输出差异字段名。
 
 人生参谋部读取`/hq/today`前会等待当前记录级变更队列结算。远端返回后，主动作和维护动作按任务`updatedAt`与最新本地记录合并：本地较新的完成/删除状态优先，版本相同时完成/删除优先，真正更新的远端版本仍可覆盖本地旧状态。HQ 页面同时使用渲染版本号和当前路由校验，避免更早发出的异步请求在切换面板后覆盖新页面。
 
@@ -83,6 +85,10 @@ GitHub Pages (dist)
 | `hq_proposal_events` | 提案创建、修订、批准、拒绝、延期和晋升的不可变审计事件 |
 | `hq_period_reviews` | 按 `week/month + period_key` 幂等保存的周省或月省 |
 | `system_candidates` | 按稳定 `candidate_id` 保存日省派给五个独立系统的未验证候选及保留/忽略状态 |
+| `mission_records` | 一条使命草稿或一个不可变正式版本的当前记录、revision与内容哈希 |
+| `mission_record_versions` | 使命记录每次有效内容变化的不可变revision快照 |
+| `mission_candidates` | 一条使命候选及其授权裁决状态；已裁决状态不会被未裁决同步复活 |
+| `mission_events` | 使命发布和组合变化的不可变、按operation ID幂等审计事件 |
 
 业务字段有独立列便于查询和索引，同时保留 `raw_json` 兼容尚未拆列的前端字段。数据库定义位于 `server/taskbox-api/schema.sql`，启动和导入脚本会为旧库补列。
 
@@ -120,6 +126,8 @@ GitHub Pages (dist)
 - `POST /v1/system-candidates/batch`
 - `GET /v1/system-candidates?systemId=mission|health|time|execution|feedback&status=pending|kept|dismissed`
 - `PATCH /v1/system-candidates/:id`（只接受 `kept` 或 `dismissed`）
+- `POST /v1/mission/sync`（使命草稿、正式版本、候选和事件的原子记录级同步）
+- `GET /v1/mission/state`（重建使命store并返回各记录当前revision）
 - `GET /v1/daily-snapshot?date=YYYY-MM-DD`
 
 任务的 `pinLevel` 只决定显示顺序；`commitmentRole`、`commitmentDate`和`commitmentSource`记录日省/参谋部承诺语义，二者不混为同一字段。扩展字段继续保存在任务 `raw_json` 中，保持旧客户端兼容。
@@ -134,7 +142,7 @@ P3 子系统契约层位于`js/hq-systems.js`，以代码内轻量`system_regist
 
 P4 控制平面把复盘输出统一保存为 proposal。`sourceAuthority=explicit_user / standing_rule`初始为`approved`（持续授权必须有`standingRuleId`），`ai_derived`初始为`proposed`；同一`idempotencyKey`内容未变时返回原 decision，内容变化只增加 revision 和审计事件。拒绝提案保留在原表，由回收池读取；`restore`按最近一次拒绝事件的`previousStatus`恢复，不删除审计。日动作选择任务盒后在同一交互内 approve/promote；周/月保持战略对象。前端与API/schema均已于2026-08-10完成生产发布，服务器回滚点为`/opt/taskbox-api/backups/p4-review-proposals-20260809T170701Z`。
 
-五系统 V3 于 2026-08-11 完成本地统一集成。2026-08-12 发布候选进一步恢复“系统独立、接口耦合HQ”的边界：使命、健康、时间、执行、反馈各自拥有独立页面、模型/状态与HQ端口，`js/five-system-hq-ports.js`只聚合标准快照；`js/hq-page.js`不得直接读取五系统store/model。HQ 首屏固定入口带只负责发现与跳转，仍保留参谋部/盒子两级全局导航。mission/health/time/feedback 为 L1 只读；execution 是独立L2系统，TaskBox只是其唯一任务、完成状态与完成证据事实引擎。五个系统从 V2 读取候选但保持各自域过滤和 `validated_fact=0`：使命要求明确用户裁决及二次发布批准；健康 unknown/range 只保存上下文，裁决留审计；时间确认活动日仍不是事实；执行只写本地 shadow proposal draft；反馈多文件导入原子幂等，active 对象降级 proposed，所有高权限转换默认拒绝。TaskBox 写入仍只能走 HQ proposal → 明确批准 → 幂等 promote；execution shadow draft 公共消费者和更深自动 L2 接线未实现。
+五系统 V3 于 2026-08-11 完成本地统一集成。2026-08-12 发布候选进一步恢复“系统独立、接口耦合HQ”的边界：使命、健康、时间、执行、反馈各自拥有独立页面、模型/状态与HQ端口，`js/five-system-hq-ports.js`只聚合标准快照；`js/hq-page.js`不得直接读取五系统store/model。HQ 首屏固定入口带只负责发现与跳转，仍保留参谋部/盒子两级全局导航。mission/health/time/feedback 为 L1 只读；execution 是独立L2系统，TaskBox只是其唯一任务、完成状态与完成证据事实引擎。五个系统从 V2 读取候选但保持各自域过滤和 `validated_fact=0`：使命候选必须经`explicit_user`或精确`standing_rule`裁决，纳入草稿不等于发布；健康 unknown/range 只保存上下文，裁决留审计；时间确认活动日仍不是事实；执行只写本地 shadow proposal draft；反馈多文件导入原子幂等，active 对象降级 proposed，所有高权限转换默认拒绝。TaskBox 写入仍只能走 HQ proposal → 明确批准 → 幂等 promote；execution shadow draft 公共消费者和更深自动 L2 接线未实现。
 
 日省消费层在上述独立边界之外增加一条统一候选传输协议：六问先生成 `daily-review-envelope`，再按 `systemId`拆成最多五份候选包，通过`POST /v1/system-candidates/batch`幂等投递。`candidate_id`是跨重试身份，服务端按系统隔离读取；页面只能保留或忽略。`candidate_unvalidated`与`writesTargetSystem=false`是写入前置条件，服务端固定返回`writesTargetSystem=false`，因此“保留”只改变候选收件箱状态，不会改变任何目标系统事实或权限状态。
 

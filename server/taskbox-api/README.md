@@ -48,12 +48,13 @@ npm run import-json -- /opt/taskbox-api/seed
 - `/v1/hq/decisions`: decision queue record-level CRUD.
 - `GET/POST /v1/hq/proposals`, `GET /v1/hq/proposals/:id`, and proposal `approve/reject/defer/promote` actions. Only approved daily proposals can promote to TaskBox; weekly/monthly proposals remain strategic records.
 - `POST /v1/system-candidates/batch`, `GET /v1/system-candidates?systemId=...`, and `PATCH /v1/system-candidates/:id`: idempotent daily-review candidate inboxes isolated by system. Candidates can only become `kept` or `dismissed`; this API cannot publish mission versions, health/time facts, TaskBox tasks, experiments, or rules.
+- `POST /v1/mission/sync` and `GET /v1/mission/state`: Mission OS Beta record sync for drafts, immutable published versions, candidates, and audit events. Mutable records require `expectedRevision`; stale writes return `409`. Published versions require valid `explicit_user` or exact Mission HQ `standing_rule` authority and never write TaskBox records.
 - `GET /v1/system-baseline/current`: authenticated, no-store delivery of the private five-system V1 bootstrap package. Configure `TASKBOX_FIVE_SYSTEM_BASELINE_PATH`; the file stays outside Git/Pages and is never exposed without the API token.
 - `GET /v1/daily-snapshot`: evidence snapshot consumed by 日省.
 
 SQLite schema lives in `schema.sql`. `raw_json` is a compatibility fallback; query-critical fields use dedicated columns and indexes.
 
-Task availability and routing fields are `device_context`, `execution_mode`, `visible_after`, `deferred_at`, `defer_note`, and `progress_logs_json`. Run `npm run test:schema` before deployment to verify an existing database can be upgraded in place.
+Task availability and routing fields are `device_context`, `execution_mode`, `visible_after`, `deferred_at`, `defer_note`, and `progress_logs_json`. Run `npm run test:schema` and `npm run test:mission` before deployment to verify an existing database can be upgraded in place and the Mission authority boundary still holds.
 
 P2-created candidate tasks use `hq-candidate:<dedupeKey>` as `syncKey`. Repeated `POST /v1/tasks` calls with the same value return the existing record, while `candidateDedupeKey`, `candidateSourceSystemId`, `candidateSourceRef`, and `roiInputs` remain available through `raw_json` compatibility fields.
 

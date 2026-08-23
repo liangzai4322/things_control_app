@@ -10,6 +10,7 @@
     "test:schema": "node scripts/test-schema-migration.js",
     "test:hq": "node scripts/test-hq-api.js && node scripts/test-hq-proposals.js",
     "test:health": "node scripts/test-health-api.js",
+    "test:mission": "node scripts/test-mission-api.js",
     "test:release": "bash scripts/test-system-candidates-release.sh"
   },
   "dependencies": {
