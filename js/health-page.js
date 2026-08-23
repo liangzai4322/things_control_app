@@ -17,7 +17,6 @@ import {
   upsertHealthObservation,
   writeHealthStore,
 } from './health-store.js';
-import { mountSystemCandidateInbox } from './system-candidate-inbox.js';
 
 const esc = (value = '') => String(value)
   .replaceAll('&', '&amp;')
@@ -190,8 +189,9 @@ export function renderHealthPage(app) {
     </section>
 
     <section class="health-block health-source-block">
-      <header><div><span>V2 CANDIDATE INBOX</span><h2>待确认观测收件箱</h2></div><p>待确认 ${pendingCandidates} · 无时序上下文 ${contextCandidates}</p></header>
-      <p>支持导入 V2 <code>04-claims-observations.jsonl</code> 或 JSON 数组；只接收 health 域。V1历史基线由用户整批发布并可回退；后续新增仍需确认才成为 Observation。</p>
+      <header><div><span>HEALTH FACT INTAKE</span><h2>健康事实待确认</h2></div><p>待确认 ${pendingCandidates} · 无时序上下文 ${contextCandidates}</p></header>
+      <p>这是唯一需要你手动决定的健康准入层：用于外部、历史、日期不明或未验证材料。正式日省中已明确说出的健康事实会自动入库，不在这里重复确认。</p>
+      <p>支持导入 V2 <code>04-claims-observations.jsonl</code> 或 JSON 数组；只接收 health 域。确认后才能成为 Observation；日期不明的内容只能作为上下文。</p>
       <input class="input" id="healthCandidateFile" type="file" accept=".json,.jsonl,application/json">
       <button class="health-save secondary" id="healthImportCandidates">导入候选文件</button>
       <div class="health-source-ledger">${renderCandidateInbox(store.candidates)}</div>
@@ -230,7 +230,6 @@ export function renderHealthPage(app) {
   </main>`;
 
   app.querySelector('#healthBack').onclick = () => navigate('#hq');
-  mountSystemCandidateInbox(app, 'health', '.health-block');
   app.querySelector('#healthSave').onclick = () => {
     const observation = normalizeHealthObservation({
       observationId: `health-observation-${date}-manual`,
