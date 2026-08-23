@@ -29,6 +29,14 @@ This workspace has two jobs:
 - Mission HQ has the user's standing authorization (`mission-hq-specific-actions-2026-08-23`) to approve a mission candidate or publish a mission version without another click only when the action, target object, and expected result are all exact and recorded in the audit trail. Vague or ambiguous suggestions do not qualify, `ai_derived` content cannot authorize itself, Mission HQ cannot write directly to TaskBox, and ownership of the other systems remains unchanged.
 - Mission System HQ does not own TaskBox tasks, HQ decisions, health facts, time facts, or feedback rules. Do not add direct TaskBox writes or bypass the existing L1 read-only HQ projection.
 
+## Time and attention system headquarters authority
+
+- Standing user authorization recorded on 2026-08-23: Codex thread `019fe737-b6f8-7b31-862f-7f5dd707e3de`, acting as Time & Attention System HQ, may independently inspect, change, test, merge, commit, push, and deploy time-system code and documentation without requesting per-change approval. For this thread, this section overrides the generic execution-HQ thread label above.
+- Time-owned files are `js/time-attention-model.js`, `js/time-attention-store.js`, `js/time-attention-page.js`, `js/time-attention-hq-port.js`, time-specific tests, time-only CSS selectors, and time-specific documentation sections.
+- Shared integration files such as `js/app.js`, `js/app-storage.js`, `css/style.css`, `package.json`, build/deploy workflows, HQ ports, and cross-system contracts may receive only the smallest time-required integration edit. Preserve other systems' behavior and run the relevant shared contract tests.
+- Time HQ may resolve local/cloud conflicts and release the newest compatible time contract directly. Preserve the independent stores and standard HQ-port boundary; do not restore an older local file over a newer schema or bypass `js/five-system-hq-ports.js`.
+- Time HQ owns time plans, calendar facts, focus windows, actual-attention evidence, capacity calculations, and time candidates. It does not own TaskBox task/completion facts, mission priorities, health diagnoses, or feedback rules. A derived schedule is not a user commitment; external-calendar writes and TaskBox writes must continue through their existing explicit-user/controlled-write contracts.
+
 ## Export entry points
 
 - Direct Feishu `docs/docx/wiki` export: prefer `C:\Users\86180\.codex\skills\feishu-cli-markdown-export`.
