@@ -77,10 +77,10 @@ API 目录默认 `/opt/taskbox-api`，数据库默认 `/opt/taskbox-api/data/tas
 14. P4 发布后分别创建日/周/月提案：重复 POST 不增加 decision，内容变化只增加 revision；验证 approve/reject/defer/restore 与审计事件。前端拒绝应立即进入折叠回收池，并可通过6秒撤销或回收池恢复；日动作选盒后应一次完成 approve/promote。只有批准的日动作在`HQ_PROPOSAL_PROMOTION_ENABLED=1`且请求`shadowMode=false`时可晋升 TaskBox；周/月 promote 返回`409`，`provisional`月度 approve 返回`409`。
 15. 五系统 V3 Gate 0–3 发布前检查 `#hq/#mission/#health/#time/#execution/#feedback`：HQ 首屏五入口、接入卡跳转、刷新、返回 HQ、1440px/390×844 无溢出和控制台无 warning/error。
 16. 使命云端Beta发布前运行`npm run test:mission`、`npm --prefix server/taskbox-api run test:mission`和`npm --prefix server/taskbox-api run test:schema`；用临时数据库验证首次同步、重复同步、revision冲突、AI发布拒绝和云端store重建。
-16. 使命先保存草稿，确认 HQ 仍只显示 unknown 或原 activeVersion；完成二次明确批准后再确认 L1 更新。健康依次验证无快照、发布最小快照、冲突来源和超过 36 小时，HQ 应为 unknown/对应状态/unknown/stale，且不出现症状或医疗记录原文。
-17. 五系统候选 API 发布后运行 `server/taskbox-api/scripts/verify-system-candidates-production.sh`，必须依次得到认证健康`200`、未认证`401`、CORS`204`、候选路由`200`。随后重放日省候选 outbox 两次：首次只允许`created`，第二次相同候选必须全部`unchanged`；分别读取五个`systemId`，不得跨系统返回候选。
-18. 首次打开五系统时，在HQ“五系统固定入口”选择本机私有`五系统初始化包-v1.json`并发布V1基线。必须显示版本号，以及使命39、健康事实12/上下文72、时间事实22/上下文113、执行历史375/当前任务0、反馈observed 42/proposed 5。再次发布应形成下一版本且不重复健康Observation；点击“回退上一版”必须原子恢复五store和前一版本号。初始化包包含私人日省内容，禁止提交Git、部署Pages或上传到无认证位置。
-19. 生产服务器将同一私有包放在Git外路径并设置`TASKBOX_FIVE_SYSTEM_BASELINE_PATH`。带Token的新浏览器首次打开HQ时应自动显示V1版本，无需文件选择；未认证请求必须401，响应必须`Cache-Control: private, no-store`。没有Token时文件入口继续可用。
+17. 使命先保存草稿，确认 HQ 仍只显示 unknown 或原 activeVersion；完成明确`explicit_user`或精确`standing_rule`批准后再确认 L1 更新。健康依次验证无快照、发布最小快照、冲突来源和超过 36 小时，HQ 应为 unknown/对应状态/unknown/stale，且不出现症状或医疗记录原文。
+18. 五系统候选 API 发布后运行 `server/taskbox-api/scripts/verify-system-candidates-production.sh`，必须依次得到认证健康`200`、未认证`401`、CORS`204`、候选路由`200`。随后重放日省候选 outbox 两次：首次只允许`created`，第二次相同候选必须全部`unchanged`；分别读取五个`systemId`，不得跨系统返回候选。
+19. 首次打开五系统时，在HQ“五系统固定入口”选择本机私有`五系统初始化包-v1.json`并发布V1基线。必须显示版本号，以及使命39、健康事实12/上下文72、时间事实22/上下文113、执行历史375/当前任务0、反馈observed 42/proposed 5。再次发布应形成下一版本且不重复健康Observation；点击“回退上一版”必须原子恢复五store和前一版本号。初始化包包含私人日省内容，禁止提交Git、部署Pages或上传到无认证位置。
+20. 生产服务器将同一私有包放在Git外路径并设置`TASKBOX_FIVE_SYSTEM_BASELINE_PATH`。带Token的新浏览器首次打开HQ时应自动显示V1版本，无需文件选择；未认证请求必须401，响应必须`Cache-Control: private, no-store`。没有Token时文件入口继续可用。
 
 2026-08-07 已完成 P0 全链路：此前通过的完成后不回显、取消完成恢复、跨来源删除/本地缓存收敛、3.5 秒弱网跨路由防覆盖和离线 outbox 重放均保持有效；服务端`primaryTaskId: null`修复已发布生产。服务器发布由临时 GitHub 托管 Runner 完成，因为当前执行环境仍被源站入站规则过滤，而 Runner 到 22/8090/80/443 可达。发布前停止`taskbox-api.service`并备份代码与 SQLite/WAL/SHM，恢复点为`/opt/taskbox-api/backups/p0-null-clear-20260807T060141Z`；服务端 schema 与 HQ 集成测试、systemd active 检查全部通过。线上验收为认证健康 200、未认证 401、生产 Origin 预检 204、清空读回`null`且原 brief 恢复成功。
 
@@ -140,6 +140,7 @@ python "D:\note_new\06-日常输入_输出\.agents\skills\任务中枢\scripts\t
 
 - 前端：把 `main` 回到已验证标签并重新触发 Pages 工作流，不要直接删除线上文件。
 - API：恢复上一版代码后运行兼容的初始化脚本；除非已经验证迁移不可逆，否则不要回滚数据库结构。
+- 使命Beta生产回滚点：`/opt/taskbox-api/backups/system-candidates-20260823T094954Z`。代码回滚默认保留新增使命表；只有确认必须恢复整库时才设置`RESTORE_TASKBOX_DATABASE=1`，避免覆盖部署后的TaskBox事实。
 - 数据：从发布前备份恢复到新文件，先只读验证记录数和关键对象，再切换服务。
 
 2026-07-15 可用恢复点包括 Git 标签 `stable-pre-mainlines-2026-07-15`、本地备份 `backups/box-app-stable-box-types-2026-07-15.zip`，以及服务器发布前备份目录。恢复时以实际存在且校验通过的文件为准。
