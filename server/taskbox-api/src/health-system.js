@@ -1,5 +1,17 @@
 const VALID_SOURCES = new Set(['manual', 'wearable', 'medical_record', 'daily_review']);
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const ENERGY_TEXT_SCORES = [
+  [1, /(?:极差|很差|耗尽|无精打采|几乎无法工作)/],
+  [2, /(?:中等偏低|中等偏差|偏低|较差|疲惫|疲劳|困倦|低能量)/],
+  [5, /(?:非常好|很好|精力充沛|状态极佳|满格)/],
+  [4, /(?:中等偏好|中等偏上|偏好|较好|良好|有精神)/],
+  [3, /(?:中等|一般|尚可|正常)/],
+];
+
+function inferEnergyScore(value) {
+  const text = String(value || '').trim();
+  return ENERGY_TEXT_SCORES.find(([, pattern]) => pattern.test(text))?.[0] ?? null;
+}
 
 function installHealthSystemRoutes({ app, db, now, json, parseJson }) {
   function date(value) {
@@ -13,6 +25,10 @@ function installHealthSystemRoutes({ app, db, now, json, parseJson }) {
     const effectiveDate = date(value.effectiveDate || observationDate);
     const source = VALID_SOURCES.has(value.source) ? value.source : '';
     const confidence = Number(value.confidence);
+    const energyText = String(value.energyText || '').trim();
+    const reportedEnergy = value.energy == null || value.energy === '' ? null : Number(value.energy);
+    const validReportedEnergy = Number.isFinite(reportedEnergy) && reportedEnergy >= 1 && reportedEnergy <= 5 ? reportedEnergy : null;
+    const inferredEnergy = validReportedEnergy == null ? inferEnergyScore(energyText) : null;
     if (!observationId) throw Object.assign(new Error('observation_id_required'), { status: 400 });
     if (!observationDate || !effectiveDate) throw Object.assign(new Error('observation_date_invalid'), { status: 400 });
     if (!source) throw Object.assign(new Error('observation_source_invalid'), { status: 400 });
@@ -34,6 +50,9 @@ function installHealthSystemRoutes({ app, db, now, json, parseJson }) {
       sourceHash: String(value.sourceHash || '').trim() || null,
       authority: String(value.authority || 'explicit_user').trim(),
       confidence,
+      energy: validReportedEnergy ?? inferredEnergy,
+      energyText,
+      energyScoreSource: validReportedEnergy != null ? 'reported' : inferredEnergy != null ? 'qualitative_mapping' : 'unknown',
     };
   }
 
