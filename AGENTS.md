@@ -9,7 +9,7 @@ This workspace has two jobs:
 
 ## Working rules
 
-- This task/thread is the execution-system headquarters and may independently change, verify, and deploy execution-system code. Changes to another system's business rules or owned modules require coordination with its Codex thread before implementation: health `019fe737-b6f8-7b31-862f-7fb93f71d8d4`, time/attention `019fe737-b6f8-7b31-862f-7f5dd707e3de`, feedback `019fe737-b6f8-7b31-862f-7f7f704e9dc0`, mission `019fe737-b6f8-7b31-862f-7f951f209c86`.
+- A task's system authority follows the applicable headquarters section below. Before modifying or operating another system, follow the cross-system coordination directory and contact that system's existing Codex task when the dependency actually arises.
 - The web app has a `package.json`. Use `npm ci`, `npm run build`, and `npm run preview` for production-like verification; `python -m http.server 8000` is only the unbundled source fallback.
 - Production business data comes from `server/taskbox-api/` (SQLite + Express) through record-level API calls. Do not reintroduce Gist JSON as a fallback data source.
 - Frontend changes should preserve local-cache/offline behavior, record-level sync, and idempotent server writes.
@@ -47,8 +47,9 @@ This workspace has two jobs:
 
 ## Cross-system coordination directory
 
-- Standing user instruction recorded on 2026-08-23: before modifying or operating another system's owned code, data, rules, deployment, or task state, contact that system's Codex task to communicate the intended change or ask the required question. Contact only when a concrete cross-system need arises; do not send routine or speculative messages. Read-only inspection and changes wholly inside the current system do not require contact.
-- If one action affects multiple systems, contact every affected owner before making the cross-system change. A reply may supply facts or coordination, but it does not replace the existing explicit-user approval and controlled-write boundaries.
+- Standing user instruction recorded on 2026-08-23: before modifying or operating another system's owned code, data, rules, deployment, or task state, contact that system's existing Codex task, communicate the intended change, and ask the narrow question needed to proceed. Do not silently decide on behalf of another system, and do not treat silence as approval.
+- Contact only when a concrete cross-system need arises; do not send routine, speculative, or pre-emptive messages merely because this directory exists. Read-only inspection, changes wholly inside the current system, and mechanical preservation of an already-approved shared contract do not require contact.
+- If one action affects multiple systems, contact every affected owner before making the cross-system change. A reply may supply facts or coordination, but it does not replace the existing explicit-user approval and controlled-write boundaries. Reuse the tasks below rather than creating replacements.
 - Execution system: `codex://threads/019fe737-b6f7-7121-9a26-574b22fbffed`
 - Health system: `codex://threads/019fe737-b6f8-7b31-862f-7fb93f71d8d4`
 - Time & Attention system: `codex://threads/019fe737-b6f8-7b31-862f-7f5dd707e3de`
