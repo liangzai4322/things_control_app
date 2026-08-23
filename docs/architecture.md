@@ -31,7 +31,7 @@ GitHub Pages (dist)
 - `js/completion-card.js`: 完成回执快照、8 款 Canvas 模板、稳定分页、PNG 保存和 Web Share 图片分享。
 - `js/hq-proposals.js`: P4 提案类型、状态、按钮权限和日/周/月校准汇总的纯视图模型。
 - `js/mission-model.js`、`js/mission-v2-adapter.js`: 使命版本、精确授权、V2 候选隔离和 HQ L1 activeVersion 投影；`js/mission-store.js`保留本地优先缓存，并把草稿、正式版本、候选和事件按记录同步到使命云端账本。
-- `js/health-model.js`: 来源化观测、候选授权审计、保守容量和不含原始症状的 HQ L1 投影。
+- `js/health-model.js`: 来源化观测、候选授权审计、定性精力自动换算、保守容量和不含原始症状的 HQ L1 投影。
 - `js/time-attention-model.js`: 保持日历、人工计划、TaskBox 引用和健康容量分离；确认日期也不把 V2 候选升级为事实。
 - `js/execution-model.js`: 只读 TaskBox 事实，并把 V2 执行候选转换为本地 shadow HQ proposal draft。
 - `js/feedback-model.js`、`js/feedback-import.js`: 反馈状态机、四层 V2 候选和多文件原子导入。
@@ -147,6 +147,8 @@ P5–P6 资源治理层位于`js/hq-resource-governance.js`，只组合 HQ propo
 五系统 V3 于 2026-08-11 完成本地统一集成。2026-08-12 发布候选进一步恢复“系统独立、接口耦合HQ”的边界：使命、健康、时间、执行、反馈各自拥有独立页面、模型/状态与HQ端口，`js/five-system-hq-ports.js`只聚合标准快照；`js/hq-page.js`不得直接读取五系统store/model。HQ 首屏固定入口带只负责发现与跳转，仍保留参谋部/盒子两级全局导航。mission/health/time/feedback 为 L1 只读；execution 是独立L2系统，TaskBox只是其唯一任务、完成状态与完成证据事实引擎。五个系统从 V2 读取候选但保持各自域过滤和 `validated_fact=0`：使命候选必须经`explicit_user`或精确`standing_rule`裁决，纳入草稿不等于发布；健康 unknown/range 只保存上下文，裁决留审计；时间确认活动日仍不是事实；执行只写本地 shadow proposal draft；反馈多文件导入原子幂等，active 对象降级 proposed，所有高权限转换默认拒绝。TaskBox 写入仍只能走 HQ proposal → 明确批准 → 幂等 promote；execution shadow draft 公共消费者和更深自动 L2 接线未实现。
 
 日省消费层在上述独立边界之外增加一条统一候选传输协议：六问先生成 `daily-review-envelope`，再按 `systemId`拆成最多五份候选包，通过`POST /v1/system-candidates/batch`幂等投递。`candidate_id`是跨重试身份，服务端按系统隔离读取；页面只能保留或忽略。`candidate_unvalidated`与`writesTargetSystem=false`是写入前置条件，服务端固定返回`writesTargetSystem=false`，因此“保留”只改变候选收件箱状态，不会改变任何目标系统事实或权限状态。
+
+健康页仅保留“健康事实待确认”作为外部、历史、日期不明或未验证材料的人工准入层；明确用户日省健康事实由健康同步链路幂等入库，日省候选只作传输/审计缓冲，不在健康页重复确认。
 
 该候选传输层已于2026-08-13完成生产发布和outbox重放。服务器持久化范围仅是每日候选收件箱；使命、健康、时间、执行、反馈的内部store以及30日私有初始化基线仍保存在当前浏览器localStorage。候选API跨设备可读不等于五系统完整状态跨设备，后者需要独立的受认证系统store协议。
 
