@@ -8,6 +8,7 @@ import {
   normalizeHealthStore,
   resolveHealthCandidate,
 } from './health-model.js';
+import { requestTaskboxApi } from './db.js';
 
 export function readHealthStore(storage = localStorage) {
   try { return normalizeHealthStore(JSON.parse(storage.getItem(HEALTH_STORAGE_KEY) || '{}')); }
@@ -62,4 +63,43 @@ export function publishHealthSnapshot(store, date, storage = localStorage, publi
   });
   storage.setItem(HEALTH_PROTOCOL_STORAGE_KEY, JSON.stringify(next));
   return next;
+}
+
+export async function syncHealthFromServer(storage = localStorage) {
+  const [observationsPayload, snapshotPayload] = await Promise.all([
+    requestTaskboxApi('/health/observations?limit=365'),
+    requestTaskboxApi('/health/snapshots/latest'),
+  ]);
+  if (Array.isArray(observationsPayload?.observations)) {
+    const current = readHealthStore(storage);
+    writeHealthStore({ ...current, observations: [...current.observations, ...observationsPayload.observations] }, storage);
+  }
+  if (snapshotPayload?.snapshot?.snapshotId) {
+    const protocol = readHealthProtocolStore(storage);
+    const snapshot = snapshotPayload.snapshot;
+    const outbox = protocol.outbox.map((item) => item.snapshotId === snapshot.snapshotId
+      ? { ...item, deliveryStatus: 'delivered' } : item);
+    storage.setItem(HEALTH_PROTOCOL_STORAGE_KEY, JSON.stringify(normalizeHealthProtocolStore({
+      ...protocol,
+      latest: !protocol.latest || String(snapshot.publishedAt) >= String(protocol.latest.publishedAt) ? snapshot : protocol.latest,
+      outbox,
+      updatedAt: snapshot.publishedAt,
+    })));
+  }
+  return { observations: observationsPayload?.observations?.length || 0, snapshot: snapshotPayload?.snapshot || null };
+}
+
+export async function deliverHealthProtocolOutbox(storage = localStorage) {
+  const protocol = readHealthProtocolStore(storage);
+  let delivered = 0;
+  const outbox = [];
+  for (const item of protocol.outbox) {
+    if (item.deliveryStatus === 'delivered') { outbox.push(item); continue; }
+    const result = await requestTaskboxApi('/health/snapshots', { method: 'POST', body: JSON.stringify(item) });
+    if (!result) { outbox.push(item); continue; }
+    outbox.push({ ...item, deliveryStatus: 'delivered' });
+    delivered += 1;
+  }
+  storage.setItem(HEALTH_PROTOCOL_STORAGE_KEY, JSON.stringify(normalizeHealthProtocolStore({ ...protocol, outbox })));
+  return delivered;
 }

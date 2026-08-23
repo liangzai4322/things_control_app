@@ -348,3 +348,31 @@ CREATE TABLE IF NOT EXISTS system_candidates (
 );
 CREATE INDEX IF NOT EXISTS idx_system_candidates_system_status_date
   ON system_candidates(system_id, status, review_date DESC);
+
+CREATE TABLE IF NOT EXISTS health_observations (
+  observation_id TEXT PRIMARY KEY,
+  observation_date TEXT NOT NULL,
+  effective_date TEXT NOT NULL,
+  review_date TEXT,
+  source TEXT NOT NULL,
+  source_ref TEXT,
+  source_hash TEXT,
+  authority TEXT NOT NULL,
+  confidence REAL NOT NULL,
+  raw_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_health_observations_effective_date
+  ON health_observations(effective_date DESC, observation_date DESC);
+
+CREATE TABLE IF NOT EXISTS health_snapshots (
+  snapshot_id TEXT PRIMARY KEY,
+  effective_date TEXT NOT NULL,
+  published_at TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_health_snapshots_effective_date
+  ON health_snapshots(effective_date DESC, published_at DESC);

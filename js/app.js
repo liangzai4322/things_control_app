@@ -280,9 +280,14 @@ function setupKeyboardInsets() {
 async function syncCloudInBackground() {
   try {
     const pointsModule = await import('./points-store.js');
+    const healthModule = await import('./health-store.js');
     const [taskResult] = await Promise.allSettled([
       pullDataFromCloud(),
       pointsModule.prewarmPointsData?.({ forceSource: true }),
+      (async () => {
+        try { await healthModule.syncHealthFromServer?.(); }
+        finally { await healthModule.deliverHealthProtocolOutbox?.(); }
+      })(),
     ]);
     if (taskResult.status === 'fulfilled' && taskResult.value === 'merged') {
       route({ preserveScroll: true });

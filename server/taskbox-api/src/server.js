@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const express = require('express');
 const Database = require('better-sqlite3');
+const { installHealthSystemRoutes } = require('./health-system');
 
 const root = path.resolve(__dirname, '..');
 const dbPath = process.env.TASKBOX_DB_PATH || path.join(root, 'data', 'taskbox.sqlite');
@@ -1341,6 +1342,8 @@ function buildHqSnapshot(reviewDate) {
 app.get('/health', (req, res) => {
   res.json({ ok: true, db: path.basename(dbPath), time: now() });
 });
+
+installHealthSystemRoutes({ app, db, now, json, parseJson });
 
 app.get('/v1/taskbox', (req, res) => {
   const boxes = db.prepare('SELECT * FROM boxes ORDER BY sort_order, name').all().map(rowToBox);

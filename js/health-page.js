@@ -2,12 +2,13 @@ import { navigate, showToast } from './app.js';
 import {
   buildHealthProtocolSnapshot,
   buildHealthTrend,
-  deriveHealthAssessment,
+  deriveHealthDrivingPlan,
   normalizeHealthObservation,
   normalizeIntervention,
 } from './health-model.js';
 import {
   beginHealthIntervention,
+  deliverHealthProtocolOutbox,
   decideHealthCandidate,
   importHealthCandidateRecords,
   publishHealthSnapshot,
@@ -118,7 +119,7 @@ export function renderHealthPage(app) {
   const date = today();
   const manualRecord = store.observations.find((item) => item.date === date && item.source === 'manual')
     || normalizeHealthObservation({ date, source: 'manual' });
-  const assessment = deriveHealthAssessment(store.observations, date);
+  const assessment = deriveHealthDrivingPlan(store.observations, date);
   const baseline = assessment.baseline;
   const capacity = assessment.availableCapacity == null ? '—' : `${Math.round(assessment.availableCapacity * 100)}%`;
   const protocol = readHealthProtocolStore();
@@ -143,7 +144,7 @@ export function renderHealthPage(app) {
   app.innerHTML = `<main class="page health-page safe-top">
     <header class="health-top">
       <button id="healthBack" aria-label="返回参谋部">←</button>
-      <div><span>HEALTH & ENERGY OS · P1</span><h1>今日可用容量</h1></div>
+      <div><span>HEALTH & ENERGY OS · AUTOPILOT</span><h1>今日可用容量</h1></div>
       <em class="${assessment.state}">${stateLabel[assessment.state]}</em>
     </header>
 
@@ -151,6 +152,9 @@ export function renderHealthPage(app) {
       <div class="health-capacity ${assessment.state}"><b>${capacity}</b><span>CAPACITY</span></div>
       <div class="health-verdict"><span>${esc(evidenceStatus)}</span><p>${esc(assessment.reasons.join(' · '))}</p><small>容量用于资源决策，不构成医疗诊断；冲突和缺失不会被推断为正常。</small></div>
       <dl>
+        <div><dt>今日依据</dt><dd>${assessment.basisDate ? `${esc(assessment.basisDate)} · ${esc(sourceLabel[assessment.basisSource] || assessment.basisSource)}` : '昨日基准缺失'}</dd></div>
+        <div><dt>依据时效</dt><dd>${assessment.freshness === 'current' ? '当日有效' : assessment.freshness === 'stale' ? '已过期' : '证据不足'}</dd></div>
+        <div><dt>相对上一日</dt><dd>睡眠 ${assessment.comparison.sleepDelta == null ? '—' : `${assessment.comparison.sleepDelta > 0 ? '+' : ''}${assessment.comparison.sleepDelta}h`} · 精力 ${assessment.comparison.energyDelta == null ? '—' : `${assessment.comparison.energyDelta > 0 ? '+' : ''}${assessment.comparison.energyDelta}`}</dd></div>
         <div><dt>个人基线睡眠</dt><dd>${baseline.averageSleep ?? '—'} h</dd></div>
         <div><dt>个人基线精力</dt><dd>${baseline.averageEnergy ?? '—'} / 5</dd></div>
         <div><dt>基线状态</dt><dd>${baseline.ready ? `${baseline.sampleDays} 天可用` : `${baseline.sampleDays}/${baseline.minimumSampleDays} 天`}</dd></div>
@@ -342,9 +346,14 @@ export function renderHealthPage(app) {
       renderHealthPage(app);
     };
   });
-  app.querySelector('#healthPublish').onclick = () => {
+  app.querySelector('#healthPublish').onclick = async () => {
     publishHealthSnapshot(readHealthStore(), date);
-    showToast('最小健康快照已发布到本地 outbox');
+    try {
+      const delivered = await deliverHealthProtocolOutbox();
+      showToast(delivered ? '最小健康快照已同步；其他系统可只读消费' : '快照已保存到本地 outbox');
+    } catch {
+      showToast('远端暂不可用；快照已保存在本地 outbox');
+    }
     renderHealthPage(app);
   };
 }
