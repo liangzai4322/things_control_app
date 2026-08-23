@@ -56,7 +56,7 @@ function readReviewContext(root) {
 function publishedPanel(active) {
   if (!active) return `<section class="mission-published empty"><div><span>PUBLISHED STRATEGY</span><h2>还没有已批准使命</h2><p>下方内容都只是草稿。只有明确发布后，其他系统才可把它视为战略事实。</p></div></section>`;
   const snapshot = active.snapshot;
-  return `<section class="mission-published"><div class="mission-published-id"><span>ACTIVE · V${active.version}</span><code>${esc(active.versionId)}</code></div><div class="mission-published-copy"><span>当前唯一主战役</span><h2>${esc(snapshot.campaign.title)}</h2><p>${esc(snapshot.campaign.whyNow)}</p></div><dl><div><dt>复查</dt><dd>${esc(snapshot.campaign.reviewAt)}</dd></div><div><dt>成功条件</dt><dd>${snapshot.campaign.successConditions.length} 条</dd></div><div><dt>退出条件</dt><dd>${snapshot.campaign.exitConditions.length} 条</dd></div></dl><small>批准：${esc(active.approval?.approvalId || '历史版本')} · explicit_user</small></section>`;
+  return `<section class="mission-published"><div class="mission-published-id"><span>ACTIVE · V${active.version}</span><code>${esc(active.versionId)}</code></div><div class="mission-published-copy"><span>当前唯一主战役</span><h2>${esc(snapshot.campaign.title)}</h2><p>${esc(snapshot.campaign.whyNow)}</p></div><dl><div><dt>复查</dt><dd>${esc(snapshot.campaign.reviewAt)}</dd></div><div><dt>成功条件</dt><dd>${snapshot.campaign.successConditions.length} 条</dd></div><div><dt>退出条件</dt><dd>${snapshot.campaign.exitConditions.length} 条</dd></div></dl><small>批准：${esc(active.approval?.approvalId || '历史版本')} · ${esc(active.approval?.sourceAuthority || 'unknown')}</small></section>`;
 }
 
 function evidencePanel(evidence) {

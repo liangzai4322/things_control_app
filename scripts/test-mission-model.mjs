@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { MISSION_CANDIDATE_DECISIONS, MISSION_EVENT_TYPES, activeMissionSnapshot, buildMissionHqSnapshot, decideMissionCandidate, deriveMissionEvidence, importMissionCandidates, normalizeMissionStore, publishMissionVersion, updateMissionReviewContext, validateMissionDraft } from '../js/mission-model.js';
+import { MISSION_CANDIDATE_DECISIONS, MISSION_EVENT_TYPES, MISSION_HQ_STANDING_RULE_ID, activeMissionSnapshot, buildMissionHqSnapshot, decideMissionCandidate, deriveMissionEvidence, importMissionCandidates, normalizeMissionStore, publishMissionVersion, updateMissionReviewContext, validateMissionDraft } from '../js/mission-model.js';
 import { adaptMissionV2Candidate, parseMissionV2Text } from '../js/mission-v2-adapter.js';
 
 const mainlines = [{ id: 'a', name: '使命系统' }, { id: 'b', name: '内容业务' }];
@@ -32,6 +32,28 @@ assert.deepEqual(omittedPublication.store, unpublishedStore, 'omitted publicatio
 const illegalPublication = publishMissionVersion(unpublishedStore, mainlines, { sourceAuthority: 'admin' });
 assert.equal(illegalPublication.version, null);
 assert.deepEqual(illegalPublication.store, unpublishedStore, 'illegal publication authority must not mutate the store');
+const incompleteStandingPublication = publishMissionVersion(unpublishedStore, mainlines, {
+  sourceAuthority: 'standing_rule', authorization: { standingRuleId: MISSION_HQ_STANDING_RULE_ID },
+});
+assert.equal(incompleteStandingPublication.version, null);
+const wrongStandingPublication = publishMissionVersion(unpublishedStore, mainlines, {
+  sourceAuthority: 'standing_rule', authorization: {
+    standingRuleId: 'wrong-rule', action: 'publish_mission_version', objectId: 'mission-001', expectedResult: '发布当前使命版本',
+  },
+});
+assert.equal(wrongStandingPublication.version, null);
+
+const standingPublication = publishMissionVersion(unpublishedStore, mainlines, {
+  now: new Date('2026-08-09T07:00:00Z'), sourceAuthority: 'standing_rule', authorization: {
+    standingRuleId: MISSION_HQ_STANDING_RULE_ID, action: 'publish_mission_version', objectId: 'mission-001', expectedResult: '发布当前已校验使命草稿为唯一活动版本',
+  },
+});
+const standingHistory = activeMissionSnapshot(standingPublication.store);
+assert.equal(standingPublication.version, 1);
+assert.equal(standingHistory.approval.sourceAuthority, 'standing_rule');
+assert.equal(standingHistory.approval.standingRuleId, MISSION_HQ_STANDING_RULE_ID);
+assert.equal(standingHistory.evidenceChain.approvedBy, 'standing_rule');
+assert.equal(buildMissionHqSnapshot(standingPublication.store, { mainlines, now: new Date('2026-08-09T07:30:00Z') }).status, 'healthy');
 
 const first = publishMissionVersion({ draft }, mainlines, { now: new Date('2026-08-09T08:00:00Z'), sourceAuthority: 'explicit_user' });
 assert.equal(first.version, 1);
@@ -80,6 +102,29 @@ assert.equal(omittedCandidateDecision.store.events.length, imported.store.events
 const illegalCandidateDecision = decideMissionCandidate(imported.store, 'claim-mission-v2', MISSION_CANDIDATE_DECISIONS.INCLUDED, { sourceAuthority: 'admin' });
 assert.match(illegalCandidateDecision.error, /用户明确/);
 assert.deepEqual(illegalCandidateDecision.store, imported.store, 'illegal candidate authority must not mutate the store');
+for (const authorization of [
+  { standingRuleId: MISSION_HQ_STANDING_RULE_ID },
+  { standingRuleId: 'wrong-rule', action: 'decide_mission_candidate:included_in_draft', objectId: 'claim-mission-v2', expectedResult: '纳入草稿' },
+  { standingRuleId: MISSION_HQ_STANDING_RULE_ID, action: 'decide_mission_candidate:ignored', objectId: 'claim-mission-v2', expectedResult: '纳入草稿' },
+  { standingRuleId: MISSION_HQ_STANDING_RULE_ID, action: 'decide_mission_candidate:included_in_draft', objectId: 'wrong-candidate', expectedResult: '纳入草稿' },
+]) {
+  const result = decideMissionCandidate(imported.store, 'claim-mission-v2', MISSION_CANDIDATE_DECISIONS.INCLUDED, { sourceAuthority: 'standing_rule', authorization });
+  assert.match(result.error, /长期授权/);
+  assert.deepEqual(result.store, imported.store);
+}
+const standingCandidate = decideMissionCandidate(imported.store, 'claim-mission-v2', MISSION_CANDIDATE_DECISIONS.INCLUDED, {
+  now: new Date('2026-08-10T01:59:00Z'), sourceAuthority: 'standing_rule', authorization: {
+    standingRuleId: MISSION_HQ_STANDING_RULE_ID,
+    action: 'decide_mission_candidate:included_in_draft',
+    objectId: 'claim-mission-v2',
+    expectedResult: '将该候选纳入使命草稿证据链但不自动发布',
+  },
+});
+const standingDecision = standingCandidate.store.candidateInbox.find((item) => item.candidateId === 'claim-mission-v2').decision;
+assert.equal(standingCandidate.error, null);
+assert.equal(standingDecision.decidedBy, 'standing_rule');
+assert.equal(standingDecision.standingRuleId, MISSION_HQ_STANDING_RULE_ID);
+assert.equal(standingCandidate.store.activeVersion, 1, 'standing candidate decision must not publish');
 const ignored = decideMissionCandidate(imported.store, 'pattern-mission-v2', MISSION_CANDIDATE_DECISIONS.IGNORED, { now: new Date('2026-08-10T02:00:00Z'), sourceAuthority: 'explicit_user' });
 assert.equal(ignored.store.reviewContext.candidateRefs.length, 0);
 const observing = decideMissionCandidate(ignored.store, 'cal-proposal-mission-v2', MISSION_CANDIDATE_DECISIONS.OBSERVING, { now: new Date('2026-08-10T02:01:00Z'), sourceAuthority: 'explicit_user' });

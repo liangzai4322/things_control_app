@@ -1,5 +1,6 @@
 export const MISSION_STORAGE_KEY = 'taskbox_mission_os_v1';
 export const MISSION_SCHEMA_VERSION = 3;
+export const MISSION_HQ_STANDING_RULE_ID = 'mission-hq-specific-actions-2026-08-23';
 export const MISSION_CANDIDATE_DECISIONS = Object.freeze({
   UNREVIEWED: 'unreviewed', IGNORED: 'ignored', OBSERVING: 'observing', INCLUDED: 'included_in_draft',
 });
@@ -31,6 +32,22 @@ const portfolioItem = (mainlineId, value = {}) => ({
   replacementTarget: clean(value.replacementTarget) || null,
 });
 
+function authorizeMissionAction(sourceAuthority, authorization, action, objectId) {
+  if (sourceAuthority === 'explicit_user') return { sourceAuthority, standingRuleId: null, action, objectId, expectedResult: null };
+  if (sourceAuthority !== 'standing_rule'
+    || authorization?.standingRuleId !== MISSION_HQ_STANDING_RULE_ID
+    || authorization?.action !== action
+    || authorization?.objectId !== objectId
+    || !clean(authorization?.expectedResult)) return null;
+  return {
+    sourceAuthority,
+    standingRuleId: MISSION_HQ_STANDING_RULE_ID,
+    action,
+    objectId,
+    expectedResult: clean(authorization.expectedResult),
+  };
+}
+
 export const emptyMissionDraft = () => ({
   missionId: 'mission-001', statement: '', constraints: [], nonNegotiables: [],
   campaign: { campaignId: 'campaign-001', title: '', whyNow: '', successConditions: [], exitConditions: [], reviewAt: '' },
@@ -52,26 +69,37 @@ export function normalizeMissionDraft(value = {}) {
   };
 }
 
-function normalizeApproval(value = {}, version = 0, activatedAt = null) {
+function normalizeApproval(value = {}, version = 0, activatedAt = null, missionId = 'mission-001') {
   if (!version) return null;
+  const explicit = value.sourceAuthority === 'explicit_user' || value.approvedBy === 'explicit_user';
+  const standing = value.sourceAuthority === 'standing_rule'
+    && value.standingRuleId === MISSION_HQ_STANDING_RULE_ID
+    && value.action === 'publish_mission_version'
+    && value.objectId === missionId
+    && Boolean(clean(value.expectedResult));
   return {
     approvalId: stableId(value.approvalId, `mission-approval-v${version}`),
-    sourceAuthority: value.sourceAuthority === 'explicit_user' || value.approvedBy === 'explicit_user' ? 'explicit_user' : null,
+    sourceAuthority: explicit ? 'explicit_user' : standing ? 'standing_rule' : null,
+    standingRuleId: standing ? MISSION_HQ_STANDING_RULE_ID : null,
     approvedAt: timestamp(value.approvedAt || activatedAt),
     action: 'publish_mission_version',
+    objectId: standing ? missionId : clean(value.objectId) || null,
+    expectedResult: standing ? clean(value.expectedResult) : clean(value.expectedResult) || null,
   };
 }
 
 function normalizeHistoryItem(item = {}) {
   const version = Math.max(0, Number(item.version) || 0);
   const activatedAt = timestamp(item.activatedAt);
+  const snapshot = normalizeMissionDraft(item.snapshot);
+  const approval = normalizeApproval(item.approval || item, version, activatedAt, snapshot.missionId);
   return {
     version,
     versionId: stableId(item.versionId, `${item.snapshot?.missionId || 'mission-001'}:v${version}`),
     activatedAt,
-    approval: normalizeApproval(item.approval || item, version, activatedAt),
-    snapshot: normalizeMissionDraft(item.snapshot),
-    evidenceChain: normalizeEvidenceChain(item.evidenceChain, item.approval || item, activatedAt),
+    approval,
+    snapshot,
+    evidenceChain: normalizeEvidenceChain(item.evidenceChain, approval, activatedAt),
   };
 }
 
@@ -80,12 +108,15 @@ function normalizeJudgmentChanges(value = {}) {
 }
 
 function normalizeEvidenceChain(value = {}, approval = {}, approvedAt = null) {
+  const approvedBy = value.approvedBy === 'explicit_user' || approval.sourceAuthority === 'explicit_user'
+    ? 'explicit_user'
+    : approval.sourceAuthority === 'standing_rule' ? 'standing_rule' : null;
   return {
     triggerDecision: clean(value.triggerDecision) || '用户明确批准当前使命草稿',
     candidateRefs: lines(value.candidateRefs),
     externalEvidenceRefs: lines(value.externalEvidenceRefs),
     judgmentChanges: normalizeJudgmentChanges(value.judgmentChanges),
-    approvedBy: value.approvedBy === 'explicit_user' || approval.sourceAuthority === 'explicit_user' || approval.approvedBy === 'explicit_user' ? 'explicit_user' : null,
+    approvedBy,
     approvedAt: timestamp(value.approvedAt || approvedAt),
   };
 }
@@ -99,12 +130,22 @@ function normalizeReviewContext(value = {}) {
   };
 }
 
-function normalizeCandidateDecision(value = {}) {
+function normalizeCandidateDecision(value = {}, candidateId = '') {
   const allowed = new Set(Object.values(MISSION_CANDIDATE_DECISIONS));
+  const status = allowed.has(value.status) ? value.status : MISSION_CANDIDATE_DECISIONS.UNREVIEWED;
+  const standing = value.decidedBy === 'standing_rule'
+    && value.standingRuleId === MISSION_HQ_STANDING_RULE_ID
+    && value.action === `decide_mission_candidate:${status}`
+    && value.objectId === candidateId
+    && Boolean(clean(value.expectedResult));
   return {
-    status: allowed.has(value.status) ? value.status : MISSION_CANDIDATE_DECISIONS.UNREVIEWED,
+    status,
     decidedAt: timestamp(value.decidedAt),
-    decidedBy: value.decidedBy === 'explicit_user' ? 'explicit_user' : null,
+    decidedBy: value.decidedBy === 'explicit_user' ? 'explicit_user' : standing ? 'standing_rule' : null,
+    standingRuleId: standing ? MISSION_HQ_STANDING_RULE_ID : null,
+    action: standing ? value.action : null,
+    objectId: standing ? candidateId : null,
+    expectedResult: standing ? clean(value.expectedResult) : null,
     publishedVersionId: clean(value.publishedVersionId) || null,
   };
 }
@@ -118,7 +159,7 @@ function normalizeMissionCandidate(value = {}) {
     content: clean(value.content), authority: clean(value.authority) || 'unknown', epistemicState: clean(value.epistemicState) || 'unknown',
     sourceRef: clone(value.sourceRef), evidenceRefs: clone(value.evidenceRefs, []), dateMapping: clone(value.dateMapping, 'unknown'),
     activity: clone(value.activity), confidence: Number.isFinite(Number(value.confidence)) ? Number(value.confidence) : null,
-    importedAt: timestamp(value.importedAt), decision: normalizeCandidateDecision(value.decision),
+    importedAt: timestamp(value.importedAt), decision: normalizeCandidateDecision(value.decision, candidateId),
   };
 }
 
@@ -157,13 +198,18 @@ export function importMissionCandidates(input = {}, candidates = []) {
   return { imported, store: normalizeMissionStore({ ...store, candidateInbox: [...existing.values()] }) };
 }
 
-export function decideMissionCandidate(input = {}, candidateId, status, { now = new Date(), sourceAuthority = null } = {}) {
+export function decideMissionCandidate(input = {}, candidateId, status, { now = new Date(), sourceAuthority = null, authorization = null } = {}) {
   const store = normalizeMissionStore(input);
-  if (sourceAuthority !== 'explicit_user') return { store, error: '候选裁决必须由用户明确执行' };
+  const action = `decide_mission_candidate:${status}`;
+  const approval = authorizeMissionAction(sourceAuthority, authorization, action, candidateId);
+  if (!approval) return { store, error: '候选裁决必须由用户明确执行或符合使命系统长期授权' };
   if (![MISSION_CANDIDATE_DECISIONS.IGNORED, MISSION_CANDIDATE_DECISIONS.OBSERVING, MISSION_CANDIDATE_DECISIONS.INCLUDED].includes(status)) return { store, error: '未知候选裁决' };
   if (!store.candidateInbox.some((item) => item.candidateId === candidateId)) return { store, error: '找不到候选' };
   const decidedAt = new Date(now).toISOString();
-  const candidateInbox = store.candidateInbox.map((item) => item.candidateId === candidateId ? { ...item, decision: { status, decidedAt, decidedBy: 'explicit_user', publishedVersionId: null } } : item);
+  const candidateInbox = store.candidateInbox.map((item) => item.candidateId === candidateId ? { ...item, decision: {
+    status, decidedAt, decidedBy: approval.sourceAuthority, standingRuleId: approval.standingRuleId,
+    action: approval.action, objectId: approval.objectId, expectedResult: approval.expectedResult, publishedVersionId: null,
+  } } : item);
   let candidateRefs = store.reviewContext.candidateRefs.filter((ref) => ref !== candidateId);
   if (status === MISSION_CANDIDATE_DECISIONS.INCLUDED) candidateRefs = [...candidateRefs, candidateId];
   return { error: null, store: normalizeMissionStore({ ...store, candidateInbox, reviewContext: { ...store.reviewContext, candidateRefs } }) };
@@ -203,15 +249,16 @@ function publicationEvents(version, snapshot, previous, activatedAt, approvalId)
   return events;
 }
 
-export function publishMissionVersion(input, mainlines = [], { now = new Date(), sourceAuthority = null } = {}) {
+export function publishMissionVersion(input, mainlines = [], { now = new Date(), sourceAuthority = null, authorization = null } = {}) {
   const store = normalizeMissionStore(input); const check = validateMissionDraft(store.draft, mainlines);
-  if (sourceAuthority !== 'explicit_user') return { store, errors: ['战略发布必须由用户明确批准'], version: null, events: [] };
+  const actionApproval = authorizeMissionAction(sourceAuthority, authorization, 'publish_mission_version', check.draft.missionId);
+  if (!actionApproval) return { store, errors: ['战略发布必须由用户明确批准或符合使命系统长期授权'], version: null, events: [] };
   if (!check.valid) return { store, errors: check.errors, version: null, events: [] };
   const version = Math.max(0, ...store.history.map((item) => item.version)) + 1; const activatedAt = new Date(now).toISOString();
-  const approval = { approvalId: `mission-approval-v${version}`, sourceAuthority, approvedAt: activatedAt, action: 'publish_mission_version' };
+  const approval = { approvalId: `mission-approval-v${version}`, ...actionApproval, approvedAt: activatedAt };
   const previous = activeMissionSnapshot(store)?.snapshot || null;
   const versionId = `${check.draft.missionId}:v${version}`;
-  const evidenceChain = normalizeEvidenceChain({ ...store.reviewContext, approvedBy: 'explicit_user', approvedAt: activatedAt }, approval, activatedAt);
+  const evidenceChain = normalizeEvidenceChain({ ...store.reviewContext, approvedBy: approval.sourceAuthority, approvedAt: activatedAt }, approval, activatedAt);
   const historyItem = { version, versionId, activatedAt, approval, snapshot: check.draft, evidenceChain };
   const events = publicationEvents(version, check.draft, previous, activatedAt, approval.approvalId);
   const candidateRefs = new Set(evidenceChain.candidateRefs);
@@ -234,7 +281,7 @@ export function buildMissionHqSnapshot(input = {}, { mainlines = [], now = new D
       hasPendingDraft: Boolean(store.draft.statement || store.draft.campaign.title || store.reviewContext.candidateRefs.length),
     }, constraints: [],
   };
-  if (!active || active.approval?.sourceAuthority !== 'explicit_user' || !active.activatedAt) return empty;
+  if (!active || !['explicit_user', 'standing_rule'].includes(active.approval?.sourceAuthority) || !active.activatedAt) return empty;
   const snapshot = active.snapshot;
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date(now));
   const knownMainlines = new Set((Array.isArray(mainlines) ? mainlines : []).map((item) => item.id));

@@ -26,7 +26,7 @@ This workspace has two jobs:
 - Standing user authorization recorded on 2026-08-23: Codex acting as Mission System HQ may independently inspect, change, test, commit, push, and deploy mission-system code and documentation without requesting per-change approval.
 - Mission-owned files are `js/mission-model.js`, `js/mission-store.js`, `js/mission-page.js`, `js/mission-hq-port.js`, `js/mission-v2-adapter.js`, mission-specific tests, mission-only CSS selectors, and mission-specific documentation sections.
 - Shared integration files such as `js/app.js`, `js/app-storage.js`, `css/style.css`, `package.json`, build/deploy workflows, HQ ports, and cross-system contracts may receive only the smallest mission-required integration edit. Preserve other systems' behavior and run the relevant shared contract tests.
-- This engineering authority does not authorize changing the user's active mission, approving mission candidates, publishing a mission version, or promoting AI suggestions as facts. Those product actions still require `explicit_user` approval through the Mission OS workflow.
+- Mission HQ has the user's standing authorization (`mission-hq-specific-actions-2026-08-23`) to approve a mission candidate or publish a mission version without another click only when the action, target object, and expected result are all exact and recorded in the audit trail. Vague or ambiguous suggestions do not qualify, `ai_derived` content cannot authorize itself, Mission HQ cannot write directly to TaskBox, and ownership of the other systems remains unchanged.
 - Mission System HQ does not own TaskBox tasks, HQ decisions, health facts, time facts, or feedback rules. Do not add direct TaskBox writes or bypass the existing L1 read-only HQ projection.
 
 ## Export entry points
