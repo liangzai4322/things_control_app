@@ -87,7 +87,7 @@ API 目录默认 `/opt/taskbox-api`，数据库默认 `/opt/taskbox-api/data/tas
 
 本地4173端口已被占用时，选择其他未占用端口（例如`npm run preview -- --port 4178`），不要把其他本地站点误认为本项目。
 
-2026-08-23 P5–P6 发布候选已完成全量测试、周期桥接、生产构建和浏览器验收：Build ID`8956dbc8f134`；1440px与390×844均无横向溢出，页面无warning/error。该记录只代表发布候选，生产工作流和线上Build ID应在部署后追加。
+2026-08-23 P5–P6 已完成生产发布：PR #12 合并提交`4237b97`，Pages工作流`32634346744`成功，线上Build ID`8956dbc8f134`；全量测试、周期桥接、线上分块及1440px/390×844验收通过，无横向溢出或warning/error。本轮没有API/schema运行时变更，服务器无需重新部署。
 
 2026-08-07 已完成 P0 全链路：此前通过的完成后不回显、取消完成恢复、跨来源删除/本地缓存收敛、3.5 秒弱网跨路由防覆盖和离线 outbox 重放均保持有效；服务端`primaryTaskId: null`修复已发布生产。服务器发布由临时 GitHub 托管 Runner 完成，因为当前执行环境仍被源站入站规则过滤，而 Runner 到 22/8090/80/443 可达。发布前停止`taskbox-api.service`并备份代码与 SQLite/WAL/SHM，恢复点为`/opt/taskbox-api/backups/p0-null-clear-20260807T060141Z`；服务端 schema 与 HQ 集成测试、systemd active 检查全部通过。线上验收为认证健康 200、未认证 401、生产 Origin 预检 204、清空读回`null`且原 brief 恢复成功。
 
