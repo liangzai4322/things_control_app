@@ -9,6 +9,7 @@ This workspace has two jobs:
 
 ## Working rules
 
+- This task/thread is the execution-system headquarters and may independently change, verify, and deploy execution-system code. Changes to another system's business rules or owned modules require coordination with its Codex thread before implementation: health `019fe737-b6f8-7b31-862f-7fb93f71d8d4`, time/attention `019fe737-b6f8-7b31-862f-7f5dd707e3de`, feedback `019fe737-b6f8-7b31-862f-7f7f704e9dc0`, mission `019fe737-b6f8-7b31-862f-7f951f209c86`.
 - The web app has a `package.json`. Use `npm ci`, `npm run build`, and `npm run preview` for production-like verification; `python -m http.server 8000` is only the unbundled source fallback.
 - Production business data comes from `server/taskbox-api/` (SQLite + Express) through record-level API calls. Do not reintroduce Gist JSON as a fallback data source.
 - Frontend changes should preserve local-cache/offline behavior, record-level sync, and idempotent server writes.
