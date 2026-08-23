@@ -1,0 +1,51 @@
+name: Rotate TaskBox API token
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: taskbox-api-production
+  cancel-in-progress: false
+
+jobs:
+  rotate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update server environment and restart API
+        env:
+          SSHPASS: ${{ secrets.TASKBOX_SERVER_PASSWORD }}
+          HOST: ${{ secrets.TASKBOX_SERVER_HOST }}
+          USER: ${{ secrets.TASKBOX_SERVER_USER }}
+          NEW_TOKEN: ${{ secrets.TASKBOX_API_TOKEN }}
+        run: |
+          sshpass -e ssh -o StrictHostKeyChecking=accept-new "$USER@$HOST" "NEW_TOKEN='$NEW_TOKEN' bash -s" <<'REMOTE'
+            set -euo pipefail
+            env_file=/etc/taskbox-api.env
+            test -f "$env_file"
+            backup="${env_file}.bak.$(date -u +%Y%m%dT%H%M%SZ)"
+            cp -p "$env_file" "$backup"
+            tmp="${env_file}.tmp.$$"
+            awk -v token="$NEW_TOKEN" '
+              BEGIN { replaced=0 }
+              /^TASKBOX_API_TOKEN=/ { print "TASKBOX_API_TOKEN=" token; replaced=1; next }
+              { print }
+              END { if (!replaced) print "TASKBOX_API_TOKEN=" token }
+            ' "$env_file" > "$tmp"
+            chmod 600 "$tmp"
+            mv "$tmp" "$env_file"
+            systemctl restart taskbox-api.service
+            systemctl is-active --quiet taskbox-api.service
+            for i in $(seq 1 40); do
+              if curl --silent --show-error --fail \
+                --header "Authorization: Bearer $NEW_TOKEN" \
+                http://127.0.0.1:${TASKBOX_API_PORT:-3107}/health >/dev/null; then
+                exit 0
+              fi
+              sleep 0.25
+            done
+            echo 'authenticated health check did not become ready' >&2
+            exit 1
+          REMOTE
