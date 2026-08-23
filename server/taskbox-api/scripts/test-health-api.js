@@ -50,9 +50,12 @@ async function waitForServer() {
     const observation = {
       observationId: 'daily-review-health:2026-08-23', reviewDate: '2026-08-23',
       observationDate: '2026-08-23', effectiveDate: '2026-08-24', source: 'daily_review',
-      authority: 'explicit_user', confidence: 0.8, sleepHours: 7, energy: 4,
+      authority: 'explicit_user', confidence: 0.8, sleepHours: 7, energyText: '中等偏好',
     };
     const first = await request('/v1/health/observations/batch', 'POST', { observations: [observation] });
+    if (first.observations[0].energy !== 4 || first.observations[0].energyScoreSource !== 'qualitative_mapping') {
+      throw new Error('qualitative energy must be scored by the health API');
+    }
     const second = await request('/v1/health/observations/batch', 'POST', { observations: [{ ...observation, energy: 3 }] });
     if (first.created !== 1 || second.updated !== 1) throw new Error('health observation upsert not idempotent');
     const list = await request('/v1/health/observations?limit=10');

@@ -17,6 +17,18 @@ const average = (values) => values.length
   : null;
 const unique = (values) => [...new Set(values.filter(Boolean))];
 const CANDIDATE_STATUSES = new Set(['pending', 'confirmed', 'context_only', 'dismissed']);
+const ENERGY_TEXT_SCORES = Object.freeze([
+  [1, /(?:极差|很差|耗尽|无精打采|几乎无法工作)/],
+  [2, /(?:中等偏低|中等偏差|偏低|较差|疲惫|疲劳|困倦|低能量)/],
+  [5, /(?:非常好|很好|精力充沛|状态极佳|满格)/],
+  [4, /(?:中等偏好|中等偏上|偏好|较好|良好|有精神)/],
+  [3, /(?:中等|一般|尚可|正常)/],
+]);
+
+export function inferEnergyScore(value = '') {
+  const text = clean(value);
+  return ENERGY_TEXT_SCORES.find(([, pattern]) => pattern.test(text))?.[0] ?? null;
+}
 
 function stableStringify(value) {
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
@@ -45,6 +57,9 @@ function nextDayAtNoon(date) {
 export function normalizeHealthObservation(value = {}) {
   const date = datePattern.test(value.observationDate || value.date || '') ? (value.observationDate || value.date) : '';
   const source = VALID_SOURCES.has(value.source) ? value.source : 'manual';
+  const energyText = clean(value.energyText);
+  const reportedEnergy = numberOrNull(value.energy, 1, 5);
+  const inferredEnergy = reportedEnergy == null ? inferEnergyScore(energyText) : null;
   return {
     observationId: clean(value.observationId) || `health-observation-${date || 'undated'}-${source}`,
     date,
@@ -52,7 +67,9 @@ export function normalizeHealthObservation(value = {}) {
     effectiveDate: datePattern.test(value.effectiveDate || '') ? value.effectiveDate : date,
     reviewDate: datePattern.test(value.reviewDate || '') ? value.reviewDate : null,
     sleepHours: numberOrNull(value.sleepHours, 0, 24),
-    energy: numberOrNull(value.energy, 1, 5),
+    energy: reportedEnergy ?? inferredEnergy,
+    energyText,
+    energyScoreSource: reportedEnergy != null ? 'reported' : inferredEnergy != null ? 'qualitative_mapping' : 'unknown',
     training: clean(value.training),
     nutrition: clean(value.nutrition),
     symptoms: clean(value.symptoms),
