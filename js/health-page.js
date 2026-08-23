@@ -60,7 +60,7 @@ function renderSourceLedger(records) {
   if (!recent.length) return '<div class="health-empty">还没有来源化观测。</div>';
   return recent.map((item) => `<article>
     <div><b>${esc(sourceLabel[item.source] || item.source)}</b><span>${esc(item.date)}</span></div>
-    <p>睡眠 ${item.sleepHours ?? '—'}h · 精力 ${item.energy ?? '—'}/5 · 置信度 ${Math.round(item.confidence * 100)}%</p>
+    <p>睡眠 ${item.sleepHours ?? '—'}h · 精力 ${item.energy ?? '—'}/5${item.energyScoreSource === 'qualitative_mapping' ? `（由“${esc(item.energyText)}”自动换算）` : ''} · 置信度 ${Math.round(item.confidence * 100)}%</p>
     <small>${esc(item.notes || item.symptoms || '无补充说明')}</small>
   </article>`).join('');
 }

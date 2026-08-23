@@ -11,6 +11,7 @@ import {
   deriveHealthDrivingPlan,
   deriveHealthState,
   importHealthCandidates,
+  inferEnergyScore,
   normalizeHealthStore,
   resolveHealthCandidate,
 } from '../js/health-model.js';
@@ -20,6 +21,18 @@ assert.equal(deriveHealthState({}).state, 'unknown');
 assert.equal(deriveHealthState({ sleepHours: 7.5, energy: 4 }).state, 'green');
 assert.deepEqual(deriveHealthState({ sleepHours: 5, energy: 2 }).availableCapacity, 0.6);
 assert.equal(deriveHealthState({ sleepHours: 8, energy: 5, riskLevel: 'professional' }).state, 'red');
+assert.equal(inferEnergyScore('中等偏好'), 4);
+assert.equal(inferEnergyScore('中等偏低'), 2);
+assert.equal(inferEnergyScore('可出门工作，但作息仍在调整'), null);
+
+const inferredEnergy = normalizeHealthStore({ observations: [{
+  observationDate: '2026-08-22', effectiveDate: '2026-08-23', source: 'daily_review',
+  sleepHours: 7, energyText: '中等偏好',
+}] }).observations[0];
+assert.equal(inferredEnergy.energy, 4);
+assert.equal(inferredEnergy.energyText, '中等偏好');
+assert.equal(inferredEnergy.energyScoreSource, 'qualitative_mapping');
+assert.equal(deriveHealthDrivingPlan([inferredEnergy], '2026-08-23').state, 'green');
 
 const baseline = calculateHealthBaseline([
   { date: '2026-08-08', sleepHours: 6, energy: 3 },
