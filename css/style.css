@@ -860,11 +860,26 @@ h4 {
 
 .detail-topbar {
   margin-bottom: -2px;
+  flex-wrap: wrap;
 }
 
 .detail-actions {
   margin-left: auto;
   align-items: center;
+}
+
+.detail-box-switcher {
+  flex: 0 0 100%;
+  min-width: 0;
+  margin-top: 4px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.detail-box-switcher::-webkit-scrollbar {
+  display: none;
 }
 
 .detail-switchers {
@@ -8081,6 +8096,25 @@ body.hq-mode .app-container {
   justify-content: flex-end;
   gap: 4px;
   flex: 0 0 auto;
+}
+
+.all-box-nav {
+  width: max-content;
+  min-width: 100%;
+  justify-content: flex-start;
+  padding: 2px 0 4px;
+}
+
+.all-box-nav .core-box-link {
+  grid-auto-flow: column;
+  gap: 4px;
+  max-width: 9em;
+  padding-inline: 9px;
+  white-space: nowrap;
+}
+
+.all-box-nav .core-box-link span {
+  font-size: 12px;
 }
 
 .core-box-link {

@@ -6,7 +6,7 @@ import { formatDueLabel as formatDueDateLabel, formatScheduledLabel, fromDateTim
 import { getRecurrenceLabel } from './recurrence.js';
 import { bindRecurrenceEditor, renderRecurrenceEditor } from './recurrence-ui.js';
 import { openBoxTypeChangeSheet } from './box-type-sheet.js';
-import { isIdeaBox, renderCoreBoxNav } from './core-box-nav.js';
+import { isIdeaBox, renderAllBoxNav } from './core-box-nav.js';
 import { bindMainlineTaskFields, renderMainlineTaskFields } from './mainline-fields.js';
 import { bindDeviceContextField, formatVisibleAfter, getDefaultDeferredUntil, getDeviceContextLabel, isTaskContextMismatch, isTaskReleased, renderDeviceContextField } from './task-visibility.js';
 import { bindExecutionModeField, getExecutionModeLabel, renderExecutionModeField } from './task-execution.js';
@@ -730,11 +730,11 @@ export function renderBoxDetail(app, boxId, { focusTaskId = null, commandOrigin 
       <header class="topbar safe-top detail-topbar">
         <button class="icon-btn icon-btn-ghost" id="backBtn">←</button>
         <div class="row gap8 detail-actions">
-          ${renderCoreBoxNav({ currentBoxId: box.id })}
           <button class="icon-btn icon-btn-ghost" id="detailPullBtn" aria-label="拉取最新盒子数据">↻</button>
           ${boxType === BOX_TYPE_POOL ? '<button class="icon-btn icon-btn-ghost" id="wheelBtn" aria-label="随机抽取">🎡</button>' : ''}
           <button class="icon-btn icon-btn-ghost" id="settingsBtn" aria-label="设置">⚙</button>
         </div>
+        <div class="detail-box-switcher">${renderAllBoxNav({ currentBoxId: box.id })}</div>
       </header>
 
       <section class="detail-hero panel ${box.color}">
