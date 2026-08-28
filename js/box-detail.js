@@ -1161,6 +1161,7 @@ function openBoxItemEditor({ taskId, boxId }, onDone) {
 function openPoolItemEditor({ taskId, boxId }, onDone) {
   const boxes = getBoxes().filter((box) => inferBoxType(box) === BOX_TYPE_POOL);
   const task = taskId ? getTaskById(taskId) : null;
+  let savingItem = false;
   const { root, close } = openSheet(`
     <div class="sheet-handle"></div>
     <div class="sheet-content typed-editor pool-editor">
@@ -1193,8 +1194,11 @@ function openPoolItemEditor({ taskId, boxId }, onDone) {
   });
   root.querySelector('#cancelPoolBtn').addEventListener('click', close);
   const save = () => {
+    if (savingItem) return;
     const content = root.querySelector('#poolContent').value.trim();
     if (!content) return showToast('先填写选项名称');
+    savingItem = true;
+    root.querySelector('#savePoolBtn').disabled = true;
     const payload = {
       content,
       boxId: root.querySelector('#poolBox').value,
@@ -1230,6 +1234,7 @@ function normalizeExternalUrl(value) {
 function openCollectionItemEditor({ taskId, boxId }, onDone) {
   const boxes = getBoxes().filter((box) => inferBoxType(box) === BOX_TYPE_COLLECTION);
   const task = taskId ? getTaskById(taskId) : null;
+  let savingItem = false;
   const { root, close } = openSheet(`
     <div class="sheet-handle"></div>
     <div class="sheet-content typed-editor collection-editor">
@@ -1247,8 +1252,11 @@ function openCollectionItemEditor({ taskId, boxId }, onDone) {
   `, { height: '78vh' });
   root.querySelector('#cancelCollectionBtn').addEventListener('click', close);
   const save = () => {
+    if (savingItem) return;
     const content = root.querySelector('#collectionContent').value.trim();
     if (!content) return showToast('先填写条目标题');
+    savingItem = true;
+    root.querySelector('#saveCollectionBtn').disabled = true;
     const payload = {
       content,
       boxId: root.querySelector('#collectionBox').value,
