@@ -47,8 +47,10 @@ import {
   rollbackFiveSystemBaseline,
 } from './five-system-bootstrap.js';
 import {
+  findProposalDuplicates,
   proposalActionModel,
   proposalPeriodLabel,
+  proposalRoutingMeta,
   proposalStatusMeta,
   proposalTypeMeta,
   summarizeProposalCalibration,
@@ -456,10 +458,13 @@ function renderProposal(proposal) {
   const evidenceLabel = actions.provisionalMonthly
     ? '证据暂定，批准已锁定'
     : proposal.evidenceStatus === 'sufficient' ? '证据充分' : '证据待复核';
+  const routing = proposalRoutingMeta(proposal, getBoxes());
+  const duplicates = proposal.proposalType === 'daily_action_proposal'
+    ? findProposalDuplicates(proposal, getTasks()) : [];
   return `
     <article class="hq-proposal-card status-${escapeHtml(status.tone)}">
       <header>
-        <div><span>${escapeHtml(type.cadence)} · ${escapeHtml(type.label)}</span><strong>${escapeHtml(proposal.title)}</strong></div>
+        <div><span><input type="checkbox" data-proposal-select="${escapeHtml(proposal.decisionId)}" aria-label="选择 ${escapeHtml(proposal.title)}"> ${escapeHtml(type.cadence)} · ${escapeHtml(type.label)}</span><strong>${escapeHtml(proposal.title)}</strong></div>
         <em>${escapeHtml(status.label)}</em>
       </header>
       <div class="hq-proposal-meta">
@@ -468,6 +473,11 @@ function renderProposal(proposal) {
         <span>${escapeHtml(evidenceLabel)}</span>
       </div>
       <p>${escapeHtml(actions.writebackLabel)} · 来源 ${escapeHtml(proposal.sourceAuthority || 'unknown')}</p>
+      ${proposal.proposalType === 'daily_action_proposal' ? `<div class="hq-proposal-route">
+        <span><b>目标盒子</b>${escapeHtml(routing.boxName)}</span>
+        <span><b>入盒原因</b>${escapeHtml(routing.boxReason)}</span>
+        ${duplicates.length ? `<span class="duplicate"><b>疑似重复</b>${escapeHtml(duplicates.slice(0, 2).map(({ task, score }) => `${task.content} (${Math.round(score * 100)}%)`).join('；'))}</span>` : '<span><b>查重</b>未发现相同或高度相似任务</span>'}
+      </div>` : ''}
       <div class="hq-proposal-actions">
         ${actions.canApprove ? `<button class="primary" data-proposal-action="approve" data-proposal-id="${escapeHtml(proposal.decisionId)}">${proposal.proposalType === 'daily_action_proposal' ? '同意并入盒' : '同意'}</button>` : ''}
         ${actions.canPromote ? `<button class="primary" data-proposal-action="promote" data-proposal-id="${escapeHtml(proposal.decisionId)}">选择盒子并写入</button>` : ''}
@@ -516,6 +526,27 @@ function chooseProposalBox(proposal) {
       finish(button.dataset.proposalBox);
       close();
     }));
+  });
+}
+
+function resolveProposalDuplicate(proposal) {
+  const duplicates = findProposalDuplicates(proposal, getTasks());
+  if (!duplicates.length) return Promise.resolve({ existingTaskId: null, confirmedDistinct: true });
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value = null) => { if (!settled) { settled = true; resolve(value); } };
+    const { root, close } = openSheet(`
+      <div class="hq-proposal-picker-sheet">
+        <div class="sheet-header"><div><p class="eyebrow">DEDUPLICATION GATE</p><h2>这些可能是同一个任务</h2></div><button class="icon-btn" data-close-duplicate>×</button></div>
+        <p class="sheet-lead">${escapeHtml(proposal.title)}</p>
+        <div class="hq-proposal-box-picker">
+          ${duplicates.slice(0, 5).map(({ task, score }) => `<button data-reuse-task="${escapeHtml(task.id)}"><strong>${escapeHtml(task.content)}</strong><small>${Math.round(score * 100)}% 相似 · 复用现有任务</small></button>`).join('')}
+          <button data-confirm-distinct><strong>都不是同一任务</strong><small>确认不同后才新建</small></button>
+        </div>
+      </div>`, { height: '70vh', onClose: () => finish(null) });
+    root.querySelector('[data-close-duplicate]').addEventListener('click', close);
+    root.querySelectorAll('[data-reuse-task]').forEach((button) => button.addEventListener('click', () => { finish({ existingTaskId: button.dataset.reuseTask, confirmedDistinct: false }); close(); }));
+    root.querySelector('[data-confirm-distinct]').addEventListener('click', () => { finish({ existingTaskId: null, confirmedDistinct: true }); close(); });
   });
 }
 
@@ -759,6 +790,12 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
           <article class="${proposalCalibration.evidenceBlocked ? 'blocked' : ''}"><strong>${proposalCalibration.evidenceBlocked}</strong><span>证据护栏</span></article>
         </div>
         <p class="hq-proposal-rule">日省动作：批准后才进入盒子；周省实验与月省押注：批准后仍是战略对象。相同周期只增加 revision，不制造重复提案。</p>
+        <div class="hq-proposal-batch" role="toolbar" aria-label="批量审批">
+          <button type="button" data-proposal-select-all>全选待处理</button>
+          <span data-proposal-selected-count>已选 0 项</span>
+          <button type="button" class="primary" data-proposal-batch-action="approve">批量同意</button>
+          <button type="button" data-proposal-batch-action="reject">批量拒绝</button>
+        </div>
         <div class="hq-proposal-grid">
           ${proposals.length ? proposals.map(renderProposal).join('') : '<div class="hq-empty-panel"><strong>没有待处理提案</strong><span>完成日省、周省或月省后，提案会按授权来源进入这里。</span></div>'}
         </div>
@@ -1200,6 +1237,54 @@ function bindPageEvents(app, snapshot, candidates = [], systems = []) {
       if (proposal) openProposalInspector(proposal);
     });
   });
+  const selectedProposalIds = () => [...app.querySelectorAll('[data-proposal-select]:checked')]
+    .map((input) => input.dataset.proposalSelect).filter(Boolean);
+  const updateSelectedCount = () => {
+    const target = app.querySelector('[data-proposal-selected-count]');
+    if (target) target.textContent = `已选 ${selectedProposalIds().length} 项`;
+  };
+  app.querySelectorAll('[data-proposal-select]').forEach((input) => input.addEventListener('change', updateSelectedCount));
+  app.querySelector('[data-proposal-select-all]')?.addEventListener('click', () => {
+    const inputs = [...app.querySelectorAll('[data-proposal-select]')];
+    const shouldSelect = inputs.some((input) => !input.checked);
+    inputs.forEach((input) => { input.checked = shouldSelect; });
+    updateSelectedCount();
+  });
+  app.querySelectorAll('[data-proposal-batch-action]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const action = button.dataset.proposalBatchAction;
+      const proposals = selectedProposalIds().map((id) => (snapshot.proposals || []).find((item) => item.decisionId === id)).filter(Boolean);
+      if (!proposals.length) return showToast('请先选择要处理的提案');
+      button.disabled = true;
+      const results = [];
+      for (const proposal of proposals) {
+        try {
+          if (action === 'approve' && proposal.proposalType === 'daily_action_proposal') {
+            const routing = proposalRoutingMeta(proposal, getBoxes());
+            const duplicates = findProposalDuplicates(proposal, getTasks());
+            if (!routing.routable) throw new Error('目标盒子或入盒原因缺失');
+            if (duplicates.length && !proposal.existingTaskId) throw new Error('存在疑似重复任务，需单独裁决');
+            await requestTaskboxApi(`/hq/proposals/${encodeURIComponent(proposal.decisionId)}/approve`, {
+              method: 'POST', body: JSON.stringify({ actor: 'hq_user_batch', boxId: routing.boxId, note: `批量审批：${routing.boxReason}` }),
+            });
+            await requestTaskboxApi(`/hq/proposals/${encodeURIComponent(proposal.decisionId)}/promote`, {
+              method: 'POST', body: JSON.stringify({ actor: 'hq_user_batch', shadowMode: false }),
+            });
+          } else {
+            await requestTaskboxApi(`/hq/proposals/${encodeURIComponent(proposal.decisionId)}/${action}`, {
+              method: 'POST', body: JSON.stringify({ actor: 'hq_user_batch', reasonCode: action === 'reject' ? 'batch_user_rejected' : undefined, note: action === 'reject' ? '用户批量拒绝' : '用户批量批准' }),
+            });
+          }
+          results.push({ ok: true, title: proposal.title });
+        } catch (error) {
+          results.push({ ok: false, title: proposal.title, error: String(error?.message || error) });
+        }
+      }
+      const failed = results.filter((item) => !item.ok);
+      showToast(failed.length ? `已处理 ${results.length - failed.length} 项，${failed.length} 项需单独确认` : `已批量处理 ${results.length} 项`);
+      await renderHqPage(app, { refreshRemote: true });
+    });
+  });
   app.querySelectorAll('[data-proposal-action]').forEach((button) => {
     button.addEventListener('click', async () => {
       const action = button.dataset.proposalAction;
@@ -1208,7 +1293,10 @@ function bindPageEvents(app, snapshot, candidates = [], systems = []) {
       const proposal = (snapshot.proposals || []).find((item) => item.decisionId === proposalId);
       if (!proposal) return;
       let boxId = null;
+      let duplicateDecision = { existingTaskId: null, confirmedDistinct: true };
       if ((action === 'approve' && proposal.proposalType === 'daily_action_proposal') || action === 'promote') {
+        duplicateDecision = await resolveProposalDuplicate(proposal);
+        if (!duplicateDecision) return;
         boxId = await chooseProposalBox(proposal);
         if (!boxId) return;
       }
@@ -1220,9 +1308,15 @@ function bindPageEvents(app, snapshot, candidates = [], systems = []) {
         payload.note = '人生参谋部延期 7 天';
       }
       if (boxId) payload.boxId = boxId;
+      if (duplicateDecision.existingTaskId) payload.existingTaskId = duplicateDecision.existingTaskId;
       if (action === 'promote') payload.shadowMode = false;
       button.disabled = true;
       try {
+        if (action === 'promote' && duplicateDecision.existingTaskId) {
+          await requestTaskboxApi(`/hq/proposals/${encodeURIComponent(proposalId)}/approve`, {
+            method: 'POST', body: JSON.stringify({ ...payload, actor: 'hq_user_dedupe' }),
+          });
+        }
         await requestTaskboxApi(`/hq/proposals/${encodeURIComponent(proposalId)}/${action}`, {
           method: 'POST', body: JSON.stringify(payload),
         });

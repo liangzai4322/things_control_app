@@ -608,6 +608,8 @@ function transitionProposal(decisionId, eventType, input = {}) {
   let nextStatus = eventType;
   let deferUntil = current.deferUntil || null;
   let taskSpec = current.taskSpec || {};
+  let existingTaskId = current.existingTaskId || null;
+  let rejectionFeedback = current.rejectionFeedback || null;
   if (eventType === 'approve') {
     nextStatus = 'approved';
     if (current.proposalType === 'monthly_bet_proposal' && current.evidenceStatus === 'provisional') {
@@ -615,9 +617,24 @@ function transitionProposal(decisionId, eventType, input = {}) {
     }
     deferUntil = null;
     if (input.boxId) taskSpec = { ...taskSpec, boxId: String(input.boxId) };
+    if (input.existingTaskId) {
+      const taskId = String(input.existingTaskId).trim();
+      if (!db.prepare('SELECT 1 FROM tasks WHERE id=? AND is_deleted=0').get(taskId)) {
+        throw proposalError('existing_task_not_found', 409, { taskId });
+      }
+      existingTaskId = taskId;
+    }
   } else if (eventType === 'reject') {
     nextStatus = 'rejected';
     deferUntil = null;
+    rejectionFeedback = {
+      reasonCode: String(input.reasonCode || 'unspecified').trim() || 'unspecified',
+      reason: note,
+      scopeKey: String(input.scopeKey || '').trim() || null,
+      fingerprint: String(input.fingerprint || '').trim() || null,
+      decidedBy: actor,
+      decidedAt: now(),
+    };
   } else if (eventType === 'defer') {
     deferUntil = validDateKey(input.deferUntil);
     if (!deferUntil) throw proposalError('valid_defer_until_required');
@@ -638,11 +655,13 @@ function transitionProposal(decisionId, eventType, input = {}) {
     status: nextStatus,
     deferUntil,
     taskSpec,
+    existingTaskId,
+    rejectionFeedback,
     decisionNote: note,
     decidedAt: now(),
     updatedAt: now(),
   });
-  recordProposalEvent(proposal, eventType, actor, note, { previousStatus: current.status, deferUntil });
+  recordProposalEvent(proposal, eventType, actor, note, { previousStatus: current.status, deferUntil, rejectionFeedback });
   return proposal;
 }
 
