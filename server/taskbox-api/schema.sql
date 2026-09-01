@@ -308,6 +308,23 @@ CREATE TABLE IF NOT EXISTS hq_proposal_events (
   FOREIGN KEY (proposal_id) REFERENCES hq_proposals(decision_id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS hq_review_rules (
+  rule_id TEXT PRIMARY KEY,
+  version INTEGER NOT NULL DEFAULT 1,
+  source TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  revocable INTEGER NOT NULL DEFAULT 1,
+  reason_code TEXT NOT NULL,
+  scope_key TEXT NOT NULL,
+  fingerprint TEXT,
+  match_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  raw_json TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_hq_review_rules_enabled_scope ON hq_review_rules(enabled, scope_key);
+
 CREATE INDEX IF NOT EXISTS idx_hq_proposal_events_proposal_created
   ON hq_proposal_events(proposal_id, created_at ASC);
 

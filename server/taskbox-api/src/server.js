@@ -1509,6 +1509,43 @@ function sendProposalError(res, error) {
   throw error;
 }
 
+function rowToReviewRule(row) {
+  if (!row) return null;
+  const raw = parseJson(row.raw_json, {});
+  return { ...raw, ruleId: row.rule_id, version: Number(row.version), source: row.source,
+    enabled: Boolean(row.enabled), revocable: Boolean(row.revocable), reasonCode: row.reason_code,
+    scopeKey: row.scope_key, fingerprint: row.fingerprint || null, match: parseJson(row.match_json, {}),
+    createdAt: row.created_at, updatedAt: row.updated_at };
+}
+
+app.get('/v1/hq/review-rules', (req, res) => {
+  const activeOnly = String(req.query.status || 'active') === 'active';
+  const rows = db.prepare(`SELECT * FROM hq_review_rules ${activeOnly ? 'WHERE enabled=1' : ''} ORDER BY updated_at DESC`).all();
+  return res.json({ items: rows.map(rowToReviewRule) });
+});
+
+app.post('/v1/hq/review-rules', (req, res) => {
+  const body = req.body || {};
+  const ruleId = String(body.ruleId || '').trim();
+  const source = String(body.source || '').trim();
+  const reasonCode = String(body.reasonCode || '').trim();
+  const scopeKey = String(body.scopeKey || '').trim();
+  if (!ruleId || !['explicit_user', 'standing_rule'].includes(source) || !reasonCode || !scopeKey) {
+    return res.status(400).json({ error: 'invalid_review_rule' });
+  }
+  const existing = db.prepare('SELECT * FROM hq_review_rules WHERE rule_id=?').get(ruleId);
+  const timestamp = now();
+  const rule = { ...body, ruleId, version: Number(body.version || (existing ? Number(existing.version) + 1 : 1)),
+    source, enabled: body.enabled !== false, revocable: body.revocable !== false, reasonCode, scopeKey,
+    fingerprint: String(body.fingerprint || '').trim() || null, match: body.match && typeof body.match === 'object' ? body.match : {},
+    createdAt: existing?.created_at || timestamp, updatedAt: timestamp };
+  db.prepare(`INSERT INTO hq_review_rules(rule_id,version,source,enabled,revocable,reason_code,scope_key,fingerprint,match_json,created_at,updated_at,raw_json)
+    VALUES(@ruleId,@version,@source,@enabled,@revocable,@reasonCode,@scopeKey,@fingerprint,@matchJson,@createdAt,@updatedAt,@rawJson)
+    ON CONFLICT(rule_id) DO UPDATE SET version=excluded.version,source=excluded.source,enabled=excluded.enabled,revocable=excluded.revocable,reason_code=excluded.reason_code,scope_key=excluded.scope_key,fingerprint=excluded.fingerprint,match_json=excluded.match_json,updated_at=excluded.updated_at,raw_json=excluded.raw_json`)
+    .run({ ...rule, enabled: rule.enabled ? 1 : 0, revocable: rule.revocable ? 1 : 0, matchJson: json(rule.match), rawJson: json(rule) });
+  return res.status(existing ? 200 : 201).json(rowToReviewRule(db.prepare('SELECT * FROM hq_review_rules WHERE rule_id=?').get(ruleId)));
+});
+
 app.get('/v1/hq/proposals', (req, res) => {
   const statuses = String(req.query.status || '')
     .split(',').map((item) => item.trim()).filter((item) => HQ_PROPOSAL_STATUSES.has(item));
