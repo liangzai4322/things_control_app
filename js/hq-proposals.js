@@ -28,6 +28,45 @@ export function proposalPeriodLabel(proposal = {}) {
   return '周期未标记';
 }
 
+export function proposalRoutingMeta(proposal = {}, boxes = []) {
+  const boxId = String(proposal.taskSpec?.boxId || '').trim();
+  const box = boxes.find((item) => item.id === boxId && item.boxType === 'task') || null;
+  const boxReason = String(proposal.content?.boxReason || proposal.taskSpec?.boxReason || '').trim();
+  return {
+    boxId: box?.id || '',
+    boxName: box?.name || (boxId ? '目标盒不可用' : '待选择盒子'),
+    boxReason: boxReason || '尚未说明入盒原因',
+    routable: Boolean(box && boxReason),
+  };
+}
+
+function normalizedTaskText(value) {
+  return String(value || '').toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '');
+}
+
+function bigrams(value) {
+  const text = normalizedTaskText(value);
+  if (text.length < 2) return new Set(text ? [text] : []);
+  return new Set(Array.from({ length: text.length - 1 }, (_, index) => text.slice(index, index + 2)));
+}
+
+export function findProposalDuplicates(proposal = {}, tasks = [], threshold = 0.72) {
+  const target = proposal.taskSpec?.content || proposal.title || '';
+  const normalizedTarget = normalizedTaskText(target);
+  if (!normalizedTarget) return [];
+  const targetPairs = bigrams(target);
+  return tasks.filter((task) => !task.isDeleted).map((task) => {
+    const text = task.content || '';
+    const normalized = normalizedTaskText(text);
+    if (!normalized) return null;
+    if (normalized === normalizedTarget) return { task, score: 1, exact: true };
+    const pairs = bigrams(text);
+    const overlap = [...targetPairs].filter((pair) => pairs.has(pair)).length;
+    const score = targetPairs.size + pairs.size ? (2 * overlap) / (targetPairs.size + pairs.size) : 0;
+    return score >= threshold ? { task, score, exact: false } : null;
+  }).filter(Boolean).sort((a, b) => b.score - a.score);
+}
+
 export function proposalActionModel(proposal = {}) {
   const isDaily = proposal.proposalType === 'daily_action_proposal';
   const provisionalMonthly = proposal.proposalType === 'monthly_bet_proposal'

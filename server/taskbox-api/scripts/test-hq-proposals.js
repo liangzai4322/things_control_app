@@ -171,9 +171,13 @@ child.stderr.on('data', (chunk) => { serverError += chunk.toString('utf8'); });
     }
 
     const rejected = await request(`/v1/hq/proposals/${monthly.decisionId}/reject`, 'POST', {
-      actor: 'user', note: '证据不足',
+      actor: 'user', note: '证据不足', reasonCode: 'insufficient_evidence', scopeKey: 'monthly_bet', fingerprint: 'monthly-bet-v1',
     });
     if (rejected.status !== 'rejected') throw new Error('proposal rejection failed');
+    if (rejected.rejectionFeedback?.reasonCode !== 'insufficient_evidence'
+      || rejected.rejectionFeedback?.scopeKey !== 'monthly_bet') {
+      throw new Error('structured rejection feedback was not persisted');
+    }
     const restored = await request(`/v1/hq/proposals/${monthly.decisionId}/restore`, 'POST', { actor: 'user' });
     if (restored.status !== 'proposed') throw new Error('rejected proposal did not restore its previous status');
     const rejectedAgain = await request(`/v1/hq/proposals/${monthly.decisionId}/reject`, 'POST', { actor: 'user' });

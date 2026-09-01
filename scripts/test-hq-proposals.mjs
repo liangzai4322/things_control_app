@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import {
+  findProposalDuplicates,
   proposalActionModel,
   proposalPeriodLabel,
   proposalStatusMeta,
   proposalTypeMeta,
+  proposalRoutingMeta,
   summarizeProposalCalibration,
 } from '../js/hq-proposals.js';
 
@@ -41,5 +43,19 @@ assert.equal(summary.evidenceBlocked, 1);
 assert.equal(summary.completionRate, 75);
 assert.equal(summary.total, 4);
 assert.equal(summarizeProposalCalibration({ review: { completionRate: null } }).completionRate, null);
+
+const routing = proposalRoutingMeta({ taskSpec: { boxId: 'box-1' }, content: { boxReason: '直接推进本周唯一赌注' } }, [
+  { id: 'box-1', name: '重要盒', boxType: 'task' },
+]);
+assert.deepEqual(routing, { boxId: 'box-1', boxName: '重要盒', boxReason: '直接推进本周唯一赌注', routable: true });
+assert.equal(proposalRoutingMeta({ taskSpec: { boxId: 'pool-1' } }, [{ id: 'pool-1', name: '池', boxType: 'pool' }]).routable, false);
+
+const duplicates = findProposalDuplicates({ title: '完成人生参谋部批量审批' }, [
+  { id: 'task-1', content: '完成人生参谋部批量审批', isDeleted: false },
+  { id: 'task-2', content: '购买牛奶', isDeleted: false },
+]);
+assert.equal(duplicates.length, 1);
+assert.equal(duplicates[0].task.id, 'task-1');
+assert.equal(duplicates[0].exact, true);
 
 console.log('hq proposal view-model tests passed');
