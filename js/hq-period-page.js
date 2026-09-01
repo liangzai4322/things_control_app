@@ -1,7 +1,10 @@
 import { navigate } from './app.js';
-import { requestTaskboxApi } from './db.js';
+import { getBoxes, getMainlines, getTasks, getApiSyncState, requestTaskboxApi } from './db.js';
 import { normalizePeriodSnapshot } from './hq-model.js';
 import { localDateKey } from './task-utils.js';
+import { readFiveSystemHqPorts } from './five-system-hq-ports.js';
+import { buildHqSystemViews } from './hq-systems.js';
+import { summarizePeriodCollaboration } from './hq-collaboration.js';
 
 const PERIOD_CACHE_KEY = 'taskbox_hq_period_cache_v1';
 
@@ -214,9 +217,15 @@ function renderPeriod(app, input, type, remote) {
   const snapshot = normalizePeriodSnapshot(input, type);
   const review = snapshot.review;
   const isWeek = type === 'week';
+  const tasks = getTasks();
+  const syncState = getApiSyncState();
+  const systemSnapshots = readFiveSystemHqPorts({ tasks, boxes: getBoxes(), mainlines: getMainlines(), brief: {}, reviewDate: localDateKey(new Date()), syncState });
+  const systems = buildHqSystemViews({ snapshot: { projects: snapshot.derived?.projectRisks || [] }, syncState, tasks, systemSnapshots, remote });
+  const collaboration = summarizePeriodCollaboration({ systems: systems.filter((item) => ['mission', 'health', 'time', 'execution', 'feedback'].includes(item.systemId)), periodType: type });
   app.innerHTML = `<main class="page hq-period-page ${type}">
     ${renderPeriodHeader(snapshot, type, remote)}
     ${renderMetrics(snapshot, type)}
+    <section class="hq-period-collaboration ${collaboration.ready ? 'ready' : 'needs-input'}"><div><span>SYSTEM READINESS</span><strong>${collaboration.ready ? '五系统输入已就绪' : `${collaboration.unavailableCount} 个系统缺少有效投影`}</strong></div><p>${collaboration.ready ? '本周期只消费结构化摘要，不触发子系统重算。' : `缺少：${collaboration.missingSystems.join('、')}。保持未知，不跨周期猜测。`}</p></section>
     <section class="hq-period-body">
       ${renderVerdict(review, type)}
       ${isWeek ? `<div class="hq-period-focus-grid">${renderExperiment(review.experiment)}${renderBottleneck(review.bottleneck)}</div>${renderScoreboard(review.scoreboard)}` : `${renderGoals(review.goals)}<div class="hq-period-two-col">${renderDecisions(review.strategicDecisions)}${renderPortfolio(review.portfolio)}</div>`}
