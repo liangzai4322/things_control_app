@@ -39,6 +39,7 @@ import { buildHqActionCandidates, dismissHqCandidate } from './hq-candidates.js'
 import { buildHqSystemViews, summarizeHqSystemViews } from './hq-systems.js';
 import { readFiveSystemHqPorts } from './five-system-hq-ports.js';
 import { buildHqResourceGovernance } from './hq-resource-governance.js';
+import { buildCollaborationInbox, systemCollaborationState } from './hq-collaboration.js';
 import {
   parseFiveSystemBootstrapFile,
   publishFiveSystemBaseline,
@@ -72,6 +73,12 @@ const HEALTH_LABELS = {
   blocked: '阻塞',
   needs_action: '缺下一步',
 };
+
+function shiftReviewDate(dateKey, days = 1) {
+  const date = new Date(`${dateKey}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
 function escapeHtml(value) {
   return String(value ?? '')
     .replaceAll('&', '&amp;')
@@ -394,7 +401,8 @@ function renderDecision(decision) {
   `;
 }
 
-function renderSystem(system) {
+function renderSystem(system, candidateCounts = {}) {
+  const collaboration = systemCollaborationState(system, candidateCounts[system.systemId]);
   return `
     <button class="hq-system-card access-${escapeHtml(system.accessLevel.toLowerCase())} health-${escapeHtml(system.health)}" data-system-id="${escapeHtml(system.systemId)}" aria-label="查看${escapeHtml(system.name)}接入详情">
       <span class="hq-system-code">${escapeHtml(system.code)}</span>
@@ -403,9 +411,27 @@ function renderSystem(system) {
         <small>${escapeHtml(system.responsibility)}</small>
         <p>${escapeHtml(system.factSummary)}</p>
       </div>
-      <i><b></b>${escapeHtml(system.healthLabel)}${system.candidateSignalCount ? ` · ${system.candidateSignalCount} 个行动信号` : ''}</i>
+      <i class="collaboration-${escapeHtml(collaboration.tone)}"><b></b>${escapeHtml(collaboration.label)}</i>
     </button>
   `;
+}
+
+function renderCollaborationInbox(items = []) {
+  return `<section class="hq-section hq-collaboration-inbox" id="hqCollaborationInbox">
+    <div class="hq-section-head"><div><span>00 / COORDINATION INBOX</span><h2>协作收件箱</h2></div><p>${items.length ? `${items.length} 项需要你处理` : '各系统当前无需补充输入'}</p></div>
+    ${items.length ? `<div class="hq-collaboration-list">${items.map((item) => `<article class="severity-${escapeHtml(item.severity)}"><span>${escapeHtml(item.systemId.toUpperCase())}</span><div><strong>${escapeHtml(item.title)}</strong><p>${escapeHtml(item.reason || '')}</p><small>需要你提供：${escapeHtml(item.need)}</small></div></article>`).join('')}</div>` : '<div class="hq-empty-panel compact"><strong>没有需要你补充的内容</strong><span>候选、未知可选字段和短暂同步波动不会打扰你。</span></div>'}
+  </section>`;
+}
+
+function renderTomorrowBehaviorPreview(nextBrief, reviewDate) {
+  if (!nextBrief) return '';
+  const stop = nextBrief.stopDoing || [];
+  const keep = nextBrief.continueDoing || [];
+  if (!stop.length && !keep.length) return '';
+  return `<section class="hq-tomorrow-preview">
+    <header><div><span>NEXT BRIEF · ${escapeHtml(nextBrief.reviewDate || '')}</span><h2>今晚复盘生成的明日规则</h2></div><p>来源：${escapeHtml(nextBrief.plannedFromReviewDate || reviewDate)} 日省；不改写今日事实</p></header>
+    <div><article class="stop"><strong>明日停止做</strong><ul>${renderBehaviorList(stop, 'stop')}</ul></article><article class="continue"><strong>明日继续保持</strong><ul>${renderBehaviorList(keep, 'continue')}</ul></article></div>
+  </section>`;
 }
 
 function renderHqSystemEntryBand(systems = []) {
@@ -692,6 +718,8 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
     reviewDate: snapshot.reviewDate, syncState,
   });
   const systems = buildHqSystemViews({ snapshot, syncState, tasks, systemSnapshots, remote });
+  const candidateCounts = snapshot.systemCandidateCounts || {};
+  const collaborationItems = buildCollaborationInbox({ systems, candidateCounts, syncState, brief, tasks });
   const systemSummary = summarizeHqSystemViews(systems);
   const periods = readHqPeriodCache();
   const governance = buildHqResourceGovernance({ proposals: snapshot.proposals, projects, periods });
@@ -725,6 +753,7 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
 
       ${renderHqDimensionNav('day')}
       ${renderReviewLoop(snapshot.review, snapshot.reviewDate)}
+      ${renderCollaborationInbox(collaborationItems)}
 
       <section class="hq-grid hq-action-zone">
         <div class="hq-zone-label"><span>01</span><p>今日行动驾驶舱</p><small>只承诺 1 个主动作 + 2 个维护动作</small></div>
@@ -774,6 +803,7 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
           ${projects.length ? projects.map((project) => renderProject(project, resourceByProject.get(project.id))).join('') : '<div class="hq-empty-panel"><strong>还没有活跃项目</strong><span>在盒子中建立主线后，这里会自动形成项目健康视图。</span></div>'}
         </div>
       </section>
+      ${renderTomorrowBehaviorPreview(snapshot.nextBrief, snapshot.reviewDate)}
 
       ${renderSystemEfficiency(governance.efficiency)}
 
@@ -822,7 +852,7 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
             <p>${systemSummary.l1} 个 L1 只读 · ${systemSummary.l2} 个 L2 受控${systemSummary.unknown ? ` · ${systemSummary.unknown} 个状态未知` : ''}</p>
           </div>
           <div class="hq-system-legend" aria-label="接入等级说明"><span>L0 入口</span><span>L1 只读</span><span>L2 受控写回</span></div>
-          <div class="hq-system-grid">${systems.map(renderSystem).join('')}</div>
+          <div class="hq-system-grid">${systems.map((system) => renderSystem(system, candidateCounts)).join('')}</div>
         </div>
       </section>
     </main>
@@ -1416,14 +1446,19 @@ export async function renderHqPage(app, { refreshRemote = true, dimension = 'day
     await replayPendingApiMutations();
     if (renderVersion !== hqRenderVersion) return;
     if (getPendingApiMutationCount()) return;
-    const [remote] = await Promise.all([
+    const nextDate = shiftReviewDate(reviewDate, 1);
+    const systemIds = ['mission', 'health', 'time', 'execution', 'feedback'];
+    const [remote, nextBrief, ...candidateResults] = await Promise.all([
       requestTaskboxApi(`/hq/today?date=${encodeURIComponent(reviewDate)}`),
-      refreshHqPeriodCache(reviewDate),
+      requestTaskboxApi(`/hq/daily-briefs/${encodeURIComponent(nextDate)}`).catch(() => null),
+      ...systemIds.map((systemId) => requestTaskboxApi(`/system-candidates?systemId=${encodeURIComponent(systemId)}&status=pending&limit=100`).catch(() => null)),
     ]);
+    refreshHqPeriodCache(reviewDate).catch(() => null);
     const currentHash = window.location.hash || '#hq';
     const isHqRoute = currentHash === '#hq' || currentHash.startsWith('#hq/');
     if (!remote || renderVersion !== hqRenderVersion || !isHqRoute) return;
-    const reconciled = reconcileHqSnapshotCommitments(remote, getTasks());
+    const systemCandidateCounts = Object.fromEntries(systemIds.map((systemId, index) => [systemId, Number(candidateResults[index]?.count) || 0]));
+    const reconciled = { ...reconcileHqSnapshotCommitments(remote, getTasks()), nextBrief, systemCandidateCounts };
     writeCache({ brief: reconciled.brief, decisions: reconciled.decisions || [] });
     renderSnapshot(app, reconciled, { remote: true });
   } catch {
