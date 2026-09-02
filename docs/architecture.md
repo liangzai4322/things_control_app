@@ -60,6 +60,8 @@ GitHub Pages (dist)
 
 所有新增记录必须在客户端生成稳定 ID。服务端 `POST` 对同 ID 采用幂等更新，周期任务通过 `recurrenceKey` 额外防止重复实例。
 
+执行系统生产写入使用独立 `/v1/execution/task-operations` 合同，不复用浏览器/HQ Token，也不调用通用 `/v1/tasks` 写路径。TaskBox 仍是唯一任务事实源。写入按操作白名单和 scope 校验 `explicit_user / standing_rule / approved_hq_proposal`，通过稳定幂等键、任务单调 `revision`、`If-Match`、逐项审计和即时停用文件防止重复、越权与覆盖冲突；`ai_derived`候选、硬删除、使命/主线战略裁决和数据库管理始终拒绝。完整合同见`docs/execution-system-taskbox-api.md`。
+
 完成回执存在任务 `raw_json.completionReceipt` 中，不建立重复任务表。首次完成时固定标题、备注、完成时间、盒子、主线、支线、积分和随机 `templateId`；8 款模板均由本地 Canvas 绘制，不依赖外部字体或图片。长备注分页沿用同一个 `templateId`，用户可主动换款并保存到原快照；旧版回执缺少该字段时，按任务 ID 与完成时间确定性补款，避免每次打开跳变。之后编辑任务不会静默改写历史回执，只有用户选择“按最新任务内容重新生成”才更新内容快照，并保留当前模板。
 
 ## 数据表

@@ -5,11 +5,15 @@ const express = require('express');
 const Database = require('better-sqlite3');
 const { installHealthSystemRoutes } = require('./health-system');
 const { installMissionSystemRoutes } = require('./mission-system');
+const { installExecutionSystemRoutes } = require('./execution-system');
 
 const root = path.resolve(__dirname, '..');
 const dbPath = process.env.TASKBOX_DB_PATH || path.join(root, 'data', 'taskbox.sqlite');
 const port = Number(process.env.TASKBOX_API_PORT || 3107);
 const apiToken = String(process.env.TASKBOX_API_TOKEN || '').trim();
+const executionApiEnabled = String(process.env.EXECUTION_SYSTEM_API_ENABLED || '') === '1';
+const executionTokenFile = String(process.env.EXECUTION_SYSTEM_API_TOKEN_FILE || '').trim();
+const executionDisableFile = String(process.env.EXECUTION_SYSTEM_API_DISABLE_FILE || '/etc/taskbox-execution-system.disabled').trim();
 const allowedOrigins = String(process.env.TASKBOX_ALLOWED_ORIGINS || 'https://liangzai4322.github.io,http://localhost:8000,http://127.0.0.1:8000')
   .split(',')
   .map((item) => item.trim())
@@ -29,6 +33,7 @@ const boxColumns = new Set(db.prepare("PRAGMA table_info('boxes')").all().map((c
 });
 const taskColumns = new Set(db.prepare("PRAGMA table_info('tasks')").all().map((column) => column.name));
 [
+  ['revision', 'INTEGER NOT NULL DEFAULT 1'],
   ['scheduled_at', 'TEXT'],
   ['is_recurring_template', 'INTEGER DEFAULT 0'],
   ['recurrence_template_id', 'TEXT'],
@@ -68,6 +73,11 @@ const parseJson = (value, fallback) => {
 const json = (value) => JSON.stringify(value ?? null);
 const bool = (value) => (value ? 1 : 0);
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
+const secretMatches = (left, right) => {
+  const a = Buffer.from(String(left || ''));
+  const b = Buffer.from(String(right || ''));
+  return a.length === b.length && a.length > 0 && crypto.timingSafeEqual(a, b);
+};
 const boxTypes = new Set(['task', 'pool', 'collection']);
 const inferBoxType = (box = {}) => {
   if (boxTypes.has(box.boxType)) return box.boxType;
@@ -93,15 +103,32 @@ app.use((req, res, next) => {
     res.setHeader('Vary', 'Origin');
   }
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Taskbox-Token');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Taskbox-Token,If-Match,X-Idempotency-Key');
   if (req.method === 'OPTIONS') return res.status(204).end();
   return next();
 });
 app.use((req, res, next) => {
+  if (req.path.startsWith('/v1/execution')) {
+    if (!executionApiEnabled || (executionDisableFile && fs.existsSync(executionDisableFile))) {
+      return res.status(503).json({ error: 'execution_api_disabled' });
+    }
+    let executionToken = String(process.env.EXECUTION_SYSTEM_API_TOKEN || '').trim();
+    if (!executionToken && executionTokenFile) {
+      try { executionToken = fs.readFileSync(executionTokenFile, 'utf8').trim(); } catch {}
+    }
+    if (!executionToken) return res.status(503).json({ error: 'execution_api_not_configured' });
+    const auth = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    if (!secretMatches(auth, executionToken)) return res.status(401).json({ error: 'execution_unauthorized' });
+    req.executionIdentity = {
+      system: 'execution-system',
+      scopes: new Set(String(process.env.EXECUTION_SYSTEM_API_SCOPES || '').split(',').map((item) => item.trim()).filter(Boolean)),
+    };
+    return next();
+  }
   if (!apiToken) return next();
   const auth = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
   const headerToken = String(req.headers['x-taskbox-token'] || '').trim();
-  if (auth === apiToken || headerToken === apiToken) return next();
+  if (secretMatches(auth, apiToken) || secretMatches(headerToken, apiToken)) return next();
   return res.status(401).json({ error: 'unauthorized' });
 });
 
@@ -172,6 +199,7 @@ function rowToTask(row) {
   return {
     ...parseJson(row.raw_json, {}),
     id: row.id,
+    revision: Number(row.revision || 1),
     boxId: row.box_id,
     content: row.content,
     isCompleted: Boolean(row.is_completed),
@@ -385,6 +413,7 @@ function rowToProposal(row) {
 function rowToProposalEvent(row) {
   return {
     id: row.id,
+    revision: Number(row.revision || 1),
     proposalId: row.proposal_id,
     revision: Number(row.revision) || 1,
     eventType: row.event_type,
@@ -1365,6 +1394,9 @@ app.get('/health', (req, res) => {
 
 installHealthSystemRoutes({ app, db, now, json, parseJson });
 installMissionSystemRoutes({ app, db, now, json, parseJson });
+installExecutionSystemRoutes({
+  app, db, now, json, parseJson, uid, rowToTask, taskParams, normalizeTaskCompletionTransition,
+});
 
 app.get('/v1/taskbox', (req, res) => {
   const boxes = db.prepare('SELECT * FROM boxes ORDER BY sort_order, name').all().map(rowToBox);
@@ -2090,7 +2122,7 @@ function normalizeTaskCompletionTransition(currentTask, patch, timestamp = now()
 
 app.post('/v1/tasks', (req, res) => {
   const timestamp = now();
-  const initial = { ...req.body, id: req.body.id || uid(), createdAt: req.body.createdAt || timestamp, updatedAt: timestamp };
+  const initial = { ...req.body, id: req.body.id || uid(), revision: 1, createdAt: req.body.createdAt || timestamp, updatedAt: timestamp };
   const task = normalizeTaskCompletionTransition(null, initial, timestamp);
   if (task.boxId && !db.prepare('SELECT 1 FROM boxes WHERE id=?').get(task.boxId)) {
     return res.status(409).json({ error: 'box_not_found', boxId: task.boxId });
@@ -2105,11 +2137,11 @@ app.post('/v1/tasks', (req, res) => {
       : db.prepare('SELECT * FROM tasks WHERE id=?').get(task.id));
   if (existing) return res.json(rowToTask(existing));
   db.prepare(`
-    INSERT INTO tasks (id, box_id, content, is_completed, sort_order, priority, weight, points_value, progress,
+    INSERT INTO tasks (id, revision, box_id, content, is_completed, sort_order, priority, weight, points_value, progress,
       is_recurring_template, recurrence_template_id, recurrence_key, recurrence_json, next_run_at, occurrence_status,
       mainline_id, branch_id, milestone_id, device_context, execution_mode, visible_after, deferred_at, defer_note, progress_logs_json,
       scheduled_at, due_date, deleted, deleted_at, note, sync_key, completed_at, created_at, updated_at, raw_json)
-    VALUES (@id, @box_id, @content, @is_completed, @sort_order, @priority, @weight, @points_value, @progress,
+    VALUES (@id, @revision, @box_id, @content, @is_completed, @sort_order, @priority, @weight, @points_value, @progress,
       @is_recurring_template, @recurrence_template_id, @recurrence_key, @recurrence_json, @next_run_at, @occurrence_status,
       @mainline_id, @branch_id, @milestone_id, @device_context, @execution_mode, @visible_after, @deferred_at, @defer_note, @progress_logs_json,
       @scheduled_at, @due_date, @deleted, @deleted_at, @note, @sync_key, @completed_at, @created_at, @updated_at, @raw_json)
@@ -2123,7 +2155,7 @@ app.patch('/v1/tasks/:id', (req, res) => {
   const timestamp = now();
   const currentTask = rowToTask(current);
   const taskPatch = normalizeTaskCompletionTransition(currentTask, { ...req.body, id: req.params.id }, timestamp);
-  const next = mergeRaw(current.raw_json, { ...taskPatch, updatedAt: timestamp });
+  const next = mergeRaw(current.raw_json, { ...taskPatch, revision: Number(current.revision || 1) + 1, updatedAt: timestamp });
   if (next.boxId && !db.prepare('SELECT 1 FROM boxes WHERE id=?').get(next.boxId)) {
     return res.status(409).json({ error: 'box_not_found', boxId: next.boxId });
   }
@@ -2131,7 +2163,7 @@ app.patch('/v1/tasks/:id', (req, res) => {
     return res.status(409).json({ error: 'branch_not_found', branchId: next.branchId });
   }
   db.prepare(`
-    UPDATE tasks SET box_id=@box_id, content=@content, is_completed=@is_completed, sort_order=@sort_order,
+    UPDATE tasks SET revision=@revision, box_id=@box_id, content=@content, is_completed=@is_completed, sort_order=@sort_order,
       priority=@priority, weight=@weight, points_value=@points_value, progress=@progress,
       is_recurring_template=@is_recurring_template, recurrence_template_id=@recurrence_template_id,
       recurrence_key=@recurrence_key, recurrence_json=@recurrence_json, next_run_at=@next_run_at,
@@ -2148,15 +2180,16 @@ app.patch('/v1/tasks/:id', (req, res) => {
 app.delete('/v1/tasks/:id', (req, res) => {
   const current = db.prepare('SELECT * FROM tasks WHERE id=?').get(req.params.id);
   if (!current) return res.status(404).json({ error: 'task_not_found' });
-  const next = mergeRaw(current.raw_json, { deleted: true, deletedAt: now(), updatedAt: now() });
-  db.prepare('UPDATE tasks SET deleted=1, deleted_at=?, updated_at=?, raw_json=? WHERE id=?')
-    .run(next.deletedAt, next.updatedAt, json(next), req.params.id);
+  const next = mergeRaw(current.raw_json, { deleted: true, deletedAt: now(), revision: Number(current.revision || 1) + 1, updatedAt: now() });
+  db.prepare('UPDATE tasks SET revision=?, deleted=1, deleted_at=?, updated_at=?, raw_json=? WHERE id=?')
+    .run(next.revision, next.deletedAt, next.updatedAt, json(next), req.params.id);
   res.json(next);
 });
 
 function taskParams(task) {
   return {
     id: task.id,
+    revision: Number(task.revision || 1),
     box_id: task.boxId || task.box_id || null,
     content: task.content || '',
     is_completed: bool(task.isCompleted),

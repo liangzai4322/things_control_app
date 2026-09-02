@@ -14,6 +14,7 @@ This workspace has two jobs:
 - Production business data comes from `server/taskbox-api/` (SQLite + Express) through record-level API calls. Do not reintroduce Gist JSON as a fallback data source.
 - Frontend changes should preserve local-cache/offline behavior, record-level sync, and idempotent server writes.
 - Preserve the main/sub-panel contract: Life HQ owns decisions, project health, and daily/weekly/monthly direction; boxes own task execution and evidence. Cross-panel navigation uses the persistent workspace switch and task deep links, not duplicated records.
+- Execution-system production writes use only the dedicated `/v1/execution/*` contract in `docs/execution-system-taskbox-api.md`. TaskBox remains the sole task fact store. Never let execution-system fall back to generic `/v1/tasks`, reuse browser/HQ credentials, accept AI candidates as authority, hard-delete tasks, force revision conflicts, or mutate mission/mainline strategy.
 - HQ task deep links use `#box/:boxId/:taskId/hq-primary|hq-maintenance`; box-only task links may omit the fourth segment. Keep task focus, command context, and return navigation working on desktop and mobile.
 - Put disposable browser/auth/debug artifacts in `tmp/`.
 - Put durable batch outputs in `outputs/<batch-name>/`.

@@ -18,6 +18,7 @@ const boxColumns = new Set(db.prepare("PRAGMA table_info('boxes')").all().map((c
 });
 const taskColumns = new Set(db.prepare("PRAGMA table_info('tasks')").all().map((column) => column.name));
 [
+  ['revision', 'INTEGER NOT NULL DEFAULT 1'],
   ['scheduled_at', 'TEXT'],
   ['is_recurring_template', 'INTEGER DEFAULT 0'],
   ['recurrence_template_id', 'TEXT'],

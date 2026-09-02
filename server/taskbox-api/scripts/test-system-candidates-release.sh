@@ -18,6 +18,8 @@ cp -a "$ROOT/package.json" "$ROOT/package-lock.json" "$ROOT/schema.sql" "$ROOT/s
 printf 'TASKBOX_DB_PATH=%s\n' "$APP_DIR/data/taskbox.sqlite" > "$ENV_FILE"
 printf 'TASKBOX_API_PORT=3107\n' >> "$ENV_FILE"
 printf 'TASKBOX_API_TOKEN=release-test-token\n' >> "$ENV_FILE"
+printf 'EXECUTION_SYSTEM_API_TOKEN_FILE=%s\n' "$TMP/execution-token" >> "$ENV_FILE"
+printf 'EXECUTION_SYSTEM_API_DISABLE_FILE=%s\n' "$TMP/execution-disabled" >> "$ENV_FILE"
 printf 'active\n' > "$STATE_FILE"
 printf 'fixture\n' > "$APP_DIR/data/taskbox.sqlite"
 
@@ -44,9 +46,18 @@ if [[ -f "$CURL_ATTEMPTS_FILE" ]]; then attempts="$(cat "$CURL_ATTEMPTS_FILE")";
 attempts=$((attempts + 1))
 printf '%s\n' "$attempts" > "$CURL_ATTEMPTS_FILE"
 printf '%s\n' "$*" >> "$CURL_CALL_LOG"
-[[ "$*" == *"Authorization: Bearer release-test-token"* ]]
-[[ "$*" == *"http://127.0.0.1:3107/health"* ]]
-(( attempts >= 3 ))
+if [[ "$*" == *"http://127.0.0.1:3107/health"* ]]; then
+  if [[ "$*" == *"Authorization: Bearer release-test-token"* ]]; then
+    (( attempts >= 3 ))
+    exit
+  fi
+  exit 1
+fi
+if [[ "$*" == *"/v1/execution/capabilities"* ]]; then
+  [[ "$*" != *"Authorization: Bearer release-test-token"* ]]
+  exit
+fi
+exit 2
 EOF
 chmod +x "$BIN_DIR/systemctl" "$BIN_DIR/npm" "$BIN_DIR/curl"
 
@@ -66,14 +77,18 @@ grep -q 'deployment_ok' "$TMP/deploy.log"
 grep -q 'ci --omit=dev' "$TMP/npm.log"
 grep -q 'run init-db' "$TMP/npm.log"
 grep -q 'run test:schema' "$TMP/npm.log"
-grep -qx 3 "$CURL_ATTEMPTS_FILE"
+grep -q 'run test:execution' "$TMP/npm.log"
 grep -q 'Authorization: Bearer release-test-token' "$CURL_CALL_LOG"
 grep -q 'http://127.0.0.1:3107/health' "$CURL_CALL_LOG"
+grep -q '/v1/execution/capabilities' "$CURL_CALL_LOG"
+grep -q '^EXECUTION_SYSTEM_API_ENABLED=1$' "$ENV_FILE"
+test -s "$TMP/execution-token"
 
 printf 'changed\n' > "$APP_DIR/schema.sql"
 "$ROOT/scripts/rollback-system-candidates-release.sh" "$BACKUP_ROOT/snapshot" > "$TMP/rollback.log"
 cmp -s "$APP_DIR/schema.sql" "$BACKUP_ROOT/snapshot/code/schema.sql"
 grep -qx active "$STATE_FILE"
 grep -q 'rollback_ok' "$TMP/rollback.log"
+grep -q '^EXECUTION_SYSTEM_API_ENABLED=0$' "$ENV_FILE"
 
 echo "system candidate release script tests passed"

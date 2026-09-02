@@ -19,6 +19,11 @@ TASKBOX_API_PORT=3107
 TASKBOX_API_TOKEN=<server-side-api-token>
 TASKBOX_ALLOWED_ORIGINS=https://liangzai4322.github.io,http://localhost:8000,http://127.0.0.1:8000
 HQ_PROPOSAL_PROMOTION_ENABLED=1
+EXECUTION_SYSTEM_API_ENABLED=1
+EXECUTION_SYSTEM_API_TOKEN_FILE=/etc/taskbox-execution-system-token
+EXECUTION_SYSTEM_API_DISABLE_FILE=/etc/taskbox-execution-system.disabled
+EXECUTION_SYSTEM_API_SCOPES=tasks:read,tasks:create,tasks:update,tasks:schedule,tasks:progress,tasks:evidence,tasks:complete,tasks:delete,tasks:audit
+EXECUTION_SYSTEM_EXPLICIT_GRANT_IDS=standing-execution-taskbox-normal-2026-09-02
 ```
 
 Do not commit this file. Do not put the API token in the GitHub Pages repository.
@@ -51,10 +56,11 @@ npm run import-json -- /opt/taskbox-api/seed
 - `POST /v1/mission/sync` and `GET /v1/mission/state`: Mission OS Beta record sync for drafts, immutable published versions, candidates, and audit events. Mutable records require `expectedRevision`; stale writes return `409`. Published versions require valid `explicit_user` or exact Mission HQ `standing_rule` authority and never write TaskBox records.
 - `GET /v1/system-baseline/current`: authenticated, no-store delivery of the private five-system V1 bootstrap package. Configure `TASKBOX_FIVE_SYSTEM_BASELINE_PATH`; the file stays outside Git/Pages and is never exposed without the API token.
 - `GET /v1/daily-snapshot`: evidence snapshot consumed by 日省.
+- `/v1/execution/*`: execution-system-only task reads, capability discovery, immutable audit and allowlisted production operations. It uses a separate identity, scope checks, explicit authority evidence, idempotency and task revision/ETag conflicts; see `../../docs/execution-system-taskbox-api.md`.
 
 SQLite schema lives in `schema.sql`. `raw_json` is a compatibility fallback; query-critical fields use dedicated columns and indexes.
 
-Task availability and routing fields are `device_context`, `execution_mode`, `visible_after`, `deferred_at`, `defer_note`, and `progress_logs_json`. Run `npm run test:schema` and `npm run test:mission` before deployment to verify an existing database can be upgraded in place and the Mission authority boundary still holds.
+Task availability and routing fields are `device_context`, `execution_mode`, `visible_after`, `deferred_at`, `defer_note`, and `progress_logs_json`. Every task has a monotonic `revision`. Run `npm run test:schema`, `npm run test:mission`, and `npm run test:execution` before deployment.
 
 P2-created candidate tasks use `hq-candidate:<dedupeKey>` as `syncKey`. Repeated `POST /v1/tasks` calls with the same value return the existing record, while `candidateDedupeKey`, `candidateSourceSystemId`, `candidateSourceRef`, and `roiInputs` remain available through `raw_json` compatibility fields.
 

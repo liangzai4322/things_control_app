@@ -80,6 +80,7 @@ API 目录默认 `/opt/taskbox-api`，数据库默认 `/opt/taskbox-api/data/tas
 15. 五系统 V3 Gate 0–3 发布前检查 `#hq/#mission/#health/#time/#execution/#feedback`：HQ 首屏五入口、接入卡跳转、刷新、返回 HQ、1440px/390×844 无溢出和控制台无 warning/error。
 16. 使命云端Beta发布前运行`npm run test:mission`、`npm --prefix server/taskbox-api run test:mission`和`npm --prefix server/taskbox-api run test:schema`；用临时数据库验证首次同步、重复同步、revision冲突、AI发布拒绝和云端store重建。
 17. 使命先保存草稿，确认 HQ 仍只显示 unknown 或原 activeVersion；完成明确`explicit_user`或精确`standing_rule`批准后再确认 L1 更新。健康依次验证无快照、发布最小快照、冲突来源和超过 36 小时，HQ 应为 unknown/对应状态/unknown/stale，且不出现症状或医疗记录原文。
+18. 执行系统 API 发布前运行`npm --prefix server/taskbox-api run test:execution`。发布脚本会生成或复用`/etc/taskbox-execution-system-token`、登记显式授权引用和最小 scopes，并验证 execution Token 可访问 capabilities、通用 TaskBox Token 被拒绝。生产写入再验证创建幂等、`If-Match`冲突、审计与软删除恢复；不得使用通用`/v1/tasks`替代。
 18. 五系统候选 API 发布后运行 `server/taskbox-api/scripts/verify-system-candidates-production.sh`，必须依次得到认证健康`200`、未认证`401`、CORS`204`、候选路由`200`。随后重放日省候选 outbox 两次：首次只允许`created`，第二次相同候选必须全部`unchanged`；分别读取五个`systemId`，不得跨系统返回候选。
 19. 首次打开五系统时，在HQ“五系统固定入口”选择本机私有`五系统初始化包-v1.json`并发布V1基线。必须显示版本号，以及使命39、健康事实12/上下文72、时间事实22/上下文113、执行历史375/当前任务0、反馈observed 42/proposed 5。再次发布应形成下一版本且不重复健康Observation；点击“回退上一版”必须原子恢复五store和前一版本号。初始化包包含私人日省内容，禁止提交Git、部署Pages或上传到无认证位置。
 20. 生产服务器将同一私有包放在Git外路径并设置`TASKBOX_FIVE_SYSTEM_BASELINE_PATH`。带Token的新浏览器首次打开HQ时应自动显示V1版本，无需文件选择；未认证请求必须401，响应必须`Cache-Control: private, no-store`。没有Token时文件入口继续可用。
@@ -141,6 +142,9 @@ python "D:\note_new\06-日常输入_输出\.agents\skills\任务中枢\scripts\t
 - promote 返回`proposal_promotion_disabled`：确认提案已批准、类型为日省动作、请求显式`shadowMode=false`，再检查服务器`HQ_PROPOSAL_PROMOTION_ENABLED=1`；周/月提案永远不走 TaskBox promotion。
 - 任务中枢返回`TASKBOX_API_TOKEN_missing`：检查`TASKBOX_API_TOKEN`、`TASKBOX_API_TOKEN_FILE`或`~/.codex/secrets/taskbox-api-token`，不把 Token 粘贴进命令历史或文档。
 - 任务中枢返回`box_not_found / mainline_not_found / branch_not_found`：先用`GET /v1/taskbox`核对真实名称或 ID，再重跑；不要猜测归属。
+- 执行系统返回`execution_api_disabled`：检查即时停用文件；先完成故障调查，不要删除 Token 或切换到通用 API 绕过。
+- 执行系统返回`task_revision_conflict`：重新读取 Task 与 ETag；同字段已有用户修改时停止并交回裁决，禁止强制覆盖。
+- 执行系统返回`possible_duplicate_task`：复用返回的真实 Task ID 或交 HQ 查重，不得换幂等键重复创建。
 - 任务中枢返回`skipped_duplicate`：目标日期和盒子中已有同内容任务，属于幂等成功，不再创建副本。
 
 ## 回滚

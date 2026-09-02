@@ -81,6 +81,7 @@ CREATE INDEX IF NOT EXISTS idx_milestones_mainline_order ON milestones(mainline_
 
 CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY,
+  revision INTEGER NOT NULL DEFAULT 1,
   box_id TEXT,
   content TEXT NOT NULL,
   is_completed INTEGER DEFAULT 0,
@@ -121,6 +122,45 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE INDEX IF NOT EXISTS idx_tasks_box_id ON tasks(box_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_updated_at ON tasks(updated_at);
 CREATE INDEX IF NOT EXISTS idx_tasks_deleted ON tasks(deleted);
+
+CREATE TABLE IF NOT EXISTS execution_task_operations (
+  idempotency_key TEXT PRIMARY KEY,
+  request_id TEXT NOT NULL,
+  operation_type TEXT NOT NULL,
+  task_id TEXT,
+  authorization_source TEXT NOT NULL,
+  authorization_ref TEXT NOT NULL,
+  request_hash TEXT NOT NULL,
+  expected_revision INTEGER,
+  result_revision INTEGER,
+  http_status INTEGER NOT NULL,
+  result_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  CHECK (authorization_source IN ('explicit_user','standing_rule','approved_hq_proposal'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_execution_task_operations_request
+  ON execution_task_operations(request_id);
+
+CREATE TABLE IF NOT EXISTS execution_task_audit (
+  audit_id TEXT PRIMARY KEY,
+  request_id TEXT NOT NULL,
+  idempotency_key TEXT,
+  operation_type TEXT,
+  task_id TEXT,
+  authorization_source TEXT,
+  authorization_ref TEXT,
+  expected_revision INTEGER,
+  result_revision INTEGER,
+  outcome TEXT NOT NULL,
+  error_code TEXT,
+  request_hash TEXT,
+  changes_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_execution_task_audit_task_created
+  ON execution_task_audit(task_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS usage_logs (
   id TEXT PRIMARY KEY,
