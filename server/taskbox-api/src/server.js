@@ -20,6 +20,9 @@ const assistantGatewayTokenFile = String(process.env.ASSISTANT_GATEWAY_API_TOKEN
 const assistantGatewayDisableFile = String(process.env.ASSISTANT_GATEWAY_API_DISABLE_FILE || '/etc/taskbox-assistant-gateway.disabled').trim();
 const assistantGatewayScopes = new Set(String(process.env.ASSISTANT_GATEWAY_API_SCOPES || '')
   .split(',').map((item) => item.trim()).filter(Boolean));
+const assistantGatewayReadTokenFile = String(process.env.ASSISTANT_GATEWAY_READ_API_TOKEN_FILE || '').trim();
+const assistantGatewayReadScopes = new Set(String(process.env.ASSISTANT_GATEWAY_READ_API_SCOPES || 'proposal-decisions:read')
+  .split(',').map((item) => item.trim()).filter(Boolean));
 const dailyIntakeApiEnabled = String(process.env.DAILY_INTAKE_API_ENABLED || '') === '1';
 const dailyIntakeDisableFile = String(process.env.DAILY_INTAKE_DISABLE_FILE || '/etc/taskbox-daily-intake.disabled').trim();
 const dailyIntakeSystems = ['execution', 'health', 'attention', 'feedback', 'mission', 'governance'];
@@ -191,6 +194,22 @@ app.use((req, res, next) => {
       return res.status(403).json({ error: 'assistant_gateway_scope_denied' });
     }
     req.assistantGatewayIdentity = { system: 'assistant-gateway', scopes: assistantGatewayScopes };
+    return next();
+  }
+  if (req.path === '/v1/assistant-gateway/proposals/pending-user-decision') {
+    if (!assistantGatewayApiEnabled
+      || (assistantGatewayDisableFile && fs.existsSync(assistantGatewayDisableFile))) {
+      return res.status(503).json({ error: 'assistant_gateway_api_disabled' });
+    }
+    const readToken = readSecretFile(assistantGatewayReadTokenFile);
+    if (!readToken) return res.status(503).json({ error: 'assistant_gateway_read_api_not_configured' });
+    if (!secretMatches(bearerToken(req), readToken)) {
+      return res.status(401).json({ error: 'assistant_gateway_read_unauthorized' });
+    }
+    if (!assistantGatewayReadScopes.has('proposal-decisions:read')) {
+      return res.status(403).json({ error: 'assistant_gateway_read_scope_denied' });
+    }
+    req.assistantGatewayIdentity = { system: 'assistant-gateway', scopes: assistantGatewayReadScopes };
     return next();
   }
   if (req.path.startsWith('/v1/execution')) {
@@ -1852,6 +1871,39 @@ app.get('/v1/hq/proposals', (req, res) => {
       status, Number(db.prepare('SELECT COUNT(*) AS count FROM hq_proposals WHERE status=?').get(status)?.count || 0),
     ])),
   });
+});
+
+app.get('/v1/assistant-gateway/proposals/pending-user-decision', (req, res) => {
+  const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 20));
+  const rows = db.prepare(`
+    SELECT * FROM hq_proposals
+    WHERE status='proposed'
+    ORDER BY updated_at DESC
+    LIMIT ?
+  `).all(limit);
+  const proposals = rows.map((row) => {
+    const raw = parseJson(row.raw_json, {});
+    const decisionClass = String(raw.decisionClass || (row.source_authority === 'ai_derived' ? 'user_required' : '')).trim();
+    if (decisionClass !== 'user_required' || row.source_authority === 'standing_rule') return null;
+    const evidence = raw.evidence && typeof raw.evidence === 'object' ? raw.evidence : {};
+    const summary = String(raw.summary || raw.content?.summary || raw.content?.description || row.title || '').trim().slice(0, 500);
+    const allowedReplies = Array.isArray(raw.allowedReplies) ? raw.allowedReplies.filter((item) => ['approve', 'reject', 'defer', 'expand'].includes(item)) : ['approve', 'reject', 'defer', 'expand'];
+    return {
+      proposalId: row.decision_id,
+      revision: Number(row.revision || 1),
+      proposalType: row.proposal_type,
+      status: 'proposed',
+      decisionClass,
+      title: String(row.title || '').slice(0, 200),
+      summary,
+      evidenceStatus: ['confirmed', 'provisional', 'unknown'].includes(raw.evidenceStatus) ? raw.evidenceStatus : (evidence.status || 'unknown'),
+      allowedReplies,
+      updatedAt: row.updated_at,
+      expiresAt: raw.expiresAt || null,
+      replyBinding: { proposalId: row.decision_id, revision: Number(row.revision || 1) },
+    };
+  }).filter(Boolean);
+  return res.json({ contractVersion: '2026-09-04', generatedAt: now(), proposals });
 });
 
 app.get('/v1/hq/proposals/:id', (req, res) => {
