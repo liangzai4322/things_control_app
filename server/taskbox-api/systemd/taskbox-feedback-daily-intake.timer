@@ -2,8 +2,7 @@
 Description=Poll TaskBox feedback daily-intake inbox
 
 [Timer]
-OnBootSec=4min
-OnUnitInactiveSec=15min
+OnCalendar=*:0/15
 RandomizedDelaySec=60
 Persistent=true
 Unit=taskbox-feedback-daily-intake.service

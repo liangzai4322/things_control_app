@@ -2,8 +2,7 @@
 Description=Refresh TaskBox HQ daily-intake receipt cache
 
 [Timer]
-OnBootSec=2min
-OnUnitInactiveSec=15min
+OnCalendar=*:0/15
 RandomizedDelaySec=60
 Persistent=true
 Unit=taskbox-hq-daily-intake.service
