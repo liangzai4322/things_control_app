@@ -86,10 +86,11 @@ API 目录默认 `/opt/taskbox-api`，数据库默认 `/opt/taskbox-api/data/tas
 17. 使命先保存草稿，确认 HQ 仍只显示 unknown 或原 activeVersion；完成明确`explicit_user`或精确`standing_rule`批准后再确认 L1 更新。健康依次验证无快照、发布最小快照、冲突来源和超过 36 小时，HQ 应为 unknown/对应状态/unknown/stale，且不出现症状或医疗记录原文。
 18. 执行系统 API 发布前运行`npm --prefix server/taskbox-api run test:execution`。发布脚本会生成或复用`/etc/taskbox-execution-system-token`、登记显式授权引用和最小 scopes，并验证 execution Token 可访问 capabilities、通用 TaskBox Token 被拒绝。生产写入再验证创建幂等、`If-Match`冲突、审计与软删除恢复；不得使用通用`/v1/tasks`替代。
 19. Assistant Gateway 回复接口发布前运行`npm --prefix server/taskbox-api run test:hq`和`test:schema`。发布脚本生成或复用独立凭据文件并验证：Gateway 身份仅能访问 proposal replies、通用 Token 被拒绝、Gateway Token 不能访问通用 API。生产只做不存在 proposal 的认证探针，不发送真实审批；停用时创建配置中的 disable 文件。
-20. 五系统候选 API 发布后运行 `server/taskbox-api/scripts/verify-system-candidates-production.sh`，必须依次得到认证健康`200`、未认证`401`、CORS`204`、候选路由`200`。随后重放日省候选 outbox 两次：首次只允许`created`，第二次相同候选必须全部`unchanged`；分别读取五个`systemId`，不得跨系统返回候选。
-21. 首次打开五系统时，在HQ“五系统固定入口”选择本机私有`五系统初始化包-v1.json`并发布V1基线。必须显示版本号，以及使命39、健康事实12/上下文72、时间事实22/上下文113、执行历史375/当前任务0、反馈observed 42/proposed 5。再次发布应形成下一版本且不重复健康Observation；点击“回退上一版”必须原子恢复五store和前一版本号。初始化包包含私人日省内容，禁止提交Git、部署Pages或上传到无认证位置。
-22. 生产服务器将同一私有包放在Git外路径并设置`TASKBOX_FIVE_SYSTEM_BASELINE_PATH`。带Token的新浏览器首次打开HQ时应自动显示V1版本，无需文件选择；未认证请求必须401，响应必须`Cache-Control: private, no-store`。没有Token时文件入口继续可用。
-23. P5–P6 发布后，确认唯一赌注只读取已批准月度押注；proposed/deferred/rejected月押注不得显示为正式赌注。项目资源字段与周省治理指标缺失时必须显示未知，不得换算为0。`observationDays < 14`或五项指标不全时只能显示“继续观测”；达到门槛后才显示保留、简化或停止建议，且不得产生任何TaskBox写入。
+20. Assistant Gateway worker 发布前确认 Notification Hub 的 lease-bound reply 路由已上线，运行`npm run test:assistant-gateway`。发布脚本只用 ingress 专用身份对不存在消息执行`404`认证探针，再以独立无登录用户启动`assistant-gateway.service`。Echo阶段只处理严格文本“测试”，回声成功后才ack；其他消息延后一小时，不调用HQ或TaskBox。
+21. 五系统候选 API 发布后运行 `server/taskbox-api/scripts/verify-system-candidates-production.sh`，必须依次得到认证健康`200`、未认证`401`、CORS`204`、候选路由`200`。随后重放日省候选 outbox 两次：首次只允许`created`，第二次相同候选必须全部`unchanged`；分别读取五个`systemId`，不得跨系统返回候选。
+22. 首次打开五系统时，在HQ“五系统固定入口”选择本机私有`五系统初始化包-v1.json`并发布V1基线。必须显示版本号，以及使命39、健康事实12/上下文72、时间事实22/上下文113、执行历史375/当前任务0、反馈observed 42/proposed 5。再次发布应形成下一版本且不重复健康Observation；点击“回退上一版”必须原子恢复五store和前一版本号。初始化包包含私人日省内容，禁止提交Git、部署Pages或上传到无认证位置。
+23. 生产服务器将同一私有包放在Git外路径并设置`TASKBOX_FIVE_SYSTEM_BASELINE_PATH`。带Token的新浏览器首次打开HQ时应自动显示V1版本，无需文件选择；未认证请求必须401，响应必须`Cache-Control: private, no-store`。没有Token时文件入口继续可用。
+24. P5–P6 发布后，确认唯一赌注只读取已批准月度押注；proposed/deferred/rejected月押注不得显示为正式赌注。项目资源字段与周省治理指标缺失时必须显示未知，不得换算为0。`observationDays < 14`或五项指标不全时只能显示“继续观测”；达到门槛后才显示保留、简化或停止建议，且不得产生任何TaskBox写入。
 
 本地4173端口已被占用时，选择其他未占用端口（例如`npm run preview -- --port 4178`），不要把其他本地站点误认为本项目。
 
