@@ -104,8 +104,8 @@ def send_echo(client: JsonClient, message: Mapping[str, Any]) -> None:
     client.post(f"/v1/weixin-inbound/{inbound_id}/reply", {
         "consumerId": "assistant-gateway",
         "leaseToken": str(message["leaseToken"]),
-        "replyKey": f"assistant-gateway:echo:{message['inboundMessageId']}",
-        "text": "已收到，助手通道连接正常。",
+        "replyKey": f"echo:{message['inboundMessageId']}",
+        "text": "已收到，微信助手通路正常",
     })
 
 
@@ -120,7 +120,7 @@ def process_echo(client: JsonClient, message: Mapping[str, Any]) -> None:
     inbound_id = str(message.get("inboundMessageId") or "")
     try:
         text = verify_message(message)
-        if text != "测试":
+        if text != "测试" and not text.startswith("测试-"):
             acknowledge(client, message, "retry", "echo_mode_only")
             emit("message_deferred", inboundMessageId=inbound_id, attemptCount=message.get("attemptCount"), mode="echo")
             return

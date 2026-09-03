@@ -6,7 +6,7 @@ This integration runs on the shared server as `assistant-gateway.service`. Notif
 
 The initial production mode is `ASSISTANT_GATEWAY_MODE=echo`:
 
-- A verified bound-user message whose exact trimmed text is `测试` receives `已收到，助手通道连接正常。` through the lease-bound Notification Hub reply route, then receives a `processed` acknowledgement.
+- A verified bound-user message whose trimmed text is `测试` or starts with `测试-` receives `已收到，微信助手通路正常` through the lease-bound Notification Hub reply route, then receives a `processed` acknowledgement.
 - Every other valid message receives a one-hour `retry` acknowledgement with `echo_mode_only`; echo mode never parses or submits an HQ decision.
 - Unverified identity or a changed text hash is dead-lettered.
 - The reply uses a stable key derived from `inboundMessageId`, so retrying after a network failure cannot send a second echo.

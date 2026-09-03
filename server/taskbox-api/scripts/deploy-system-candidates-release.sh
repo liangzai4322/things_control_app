@@ -85,6 +85,10 @@ DAILY_INTAKE_DISABLE_FILE="${DAILY_INTAKE_DISABLE_FILE:-$DAILY_INTAKE_DISABLE_FI
 
 mkdir -p "$BACKUP_DIR/code" "$BACKUP_DIR/data" "$BACKUP_DIR/config"
 chmod 700 "$BACKUP_DIR" "$BACKUP_DIR/config"
+assistant_gateway_was_active=0
+if systemctl is-active --quiet "$ASSISTANT_GATEWAY_SERVICE" >/dev/null 2>&1; then
+  assistant_gateway_was_active=1
+fi
 systemctl stop "$SERVICE"
 
 cp -a "$APP_DIR/package.json" "$APP_DIR/package-lock.json" "$APP_DIR/schema.sql" "$BACKUP_DIR/code/"
@@ -110,6 +114,9 @@ done
 
 cleanup() {
   systemctl start "$SERVICE" >/dev/null 2>&1 || true
+  if [[ "$assistant_gateway_was_active" == "1" ]]; then
+    systemctl start "$ASSISTANT_GATEWAY_SERVICE" >/dev/null 2>&1 || true
+  fi
 }
 trap cleanup ERR
 
@@ -291,10 +298,6 @@ weixin_reply_probe_code="$(curl --silent --output /dev/null --write-out '%{http_
   --header 'Content-Type: application/json' --data "$WEIXIN_REPLY_PROBE_BODY" \
   'http://127.0.0.1:3219/v1/weixin-inbound/assistant-gateway-deployment-probe/reply')"
 [[ "$weixin_reply_probe_code" == "404" ]] || { echo "Notification Hub reply probe failed: $weixin_reply_probe_code" >&2; exit 1; }
-systemctl daemon-reload
-systemctl enable --now "$ASSISTANT_GATEWAY_SERVICE"
-systemctl is-enabled --quiet "$ASSISTANT_GATEWAY_SERVICE"
-systemctl is-active --quiet "$ASSISTANT_GATEWAY_SERVICE"
 if curl --silent --show-error --fail --output /dev/null \
   --header "Authorization: Bearer $EXECUTION_TOKEN" "$HEALTH_URL" 2>/dev/null; then
   echo "execution token unexpectedly accessed generic TaskBox API" >&2
@@ -381,6 +384,10 @@ if [[ "$DAILY_INTAKE_ENABLE_TIMERS" == "1" ]]; then
   done
   daily_intake_timer_state=enabled
 fi
+systemctl daemon-reload
+systemctl enable --now "$ASSISTANT_GATEWAY_SERVICE"
+systemctl is-enabled --quiet "$ASSISTANT_GATEWAY_SERVICE"
+systemctl is-active --quiet "$ASSISTANT_GATEWAY_SERVICE"
 trap - ERR
 
 echo "deployment_ok"

@@ -67,7 +67,8 @@ class WorkerTests(unittest.TestCase):
             "/v1/weixin-inbound/inbound-1/reply",
             "/v1/weixin-inbound/inbound-1/ack",
         ])
-        self.assertEqual(ApiHandler.calls[0][1]["replyKey"], "assistant-gateway:echo:inbound-1")
+        self.assertEqual(ApiHandler.calls[0][1]["replyKey"], "echo:inbound-1")
+        self.assertEqual(ApiHandler.calls[0][1]["text"], "已收到，微信助手通路正常")
         self.assertEqual(ApiHandler.calls[1][1]["outcome"], "processed")
         self.assertEqual(ApiHandler.calls[0][2], "Bearer secret")
 
@@ -76,6 +77,10 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(len(ApiHandler.calls), 1)
         self.assertEqual(ApiHandler.calls[0][1]["outcome"], "retry")
         self.assertEqual(ApiHandler.calls[0][1]["retryAfterSeconds"], 3600)
+
+    def test_timestamped_test_prefix_is_echoed(self):
+        process_echo(self.client, self.message("测试-20260903-2330"))
+        self.assertEqual(ApiHandler.calls[0][0], "/v1/weixin-inbound/inbound-1/reply")
 
     def test_unverified_or_changed_text_dead_letters(self):
         process_echo(self.client, self.message(authVerification={"transport": "ilink_bearer_poll", "senderBound": False}))
