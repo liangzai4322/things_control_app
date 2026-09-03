@@ -14,6 +14,7 @@ BACKUP_DIR="${TASKBOX_BACKUP_DIR:-${APP_DIR}/backups/execution-system-${STAMP}}"
 EXECUTION_TOKEN_FILE="${EXECUTION_SYSTEM_API_TOKEN_FILE:-/etc/taskbox-execution-system-token}"
 EXECUTION_DISABLE_FILE="${EXECUTION_SYSTEM_API_DISABLE_FILE:-/etc/taskbox-execution-system.disabled}"
 ASSISTANT_GATEWAY_TOKEN_FILE="${ASSISTANT_GATEWAY_API_TOKEN_FILE:-/etc/taskbox-assistant-gateway-token}"
+ASSISTANT_GATEWAY_READ_TOKEN_FILE="${ASSISTANT_GATEWAY_READ_API_TOKEN_FILE:-/etc/taskbox-assistant-gateway-read-token}"
 ASSISTANT_GATEWAY_DISABLE_FILE="${ASSISTANT_GATEWAY_API_DISABLE_FILE:-/etc/taskbox-assistant-gateway.disabled}"
 WEIXIN_INGRESS_TOKEN_FILE="${WEIXIN_INGRESS_TOKEN_FILE:-/etc/notification-ingress/weixin-ingress.token}"
 DAILY_INTAKE_TOKEN_DIR="${DAILY_INTAKE_TOKEN_DIR:-/etc/taskbox-daily-intake}"
@@ -174,6 +175,13 @@ upsert_env ASSISTANT_GATEWAY_API_ENABLED 1
 upsert_env ASSISTANT_GATEWAY_API_TOKEN_FILE "$ASSISTANT_GATEWAY_TOKEN_FILE"
 upsert_env ASSISTANT_GATEWAY_API_DISABLE_FILE "$ASSISTANT_GATEWAY_DISABLE_FILE"
 upsert_env ASSISTANT_GATEWAY_API_SCOPES "proposal-replies:write"
+if [[ ! -s "$ASSISTANT_GATEWAY_READ_TOKEN_FILE" ]]; then
+  umask 077
+  node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex') + '\n')" > "$ASSISTANT_GATEWAY_READ_TOKEN_FILE"
+fi
+chmod 600 "$ASSISTANT_GATEWAY_READ_TOKEN_FILE"
+upsert_env ASSISTANT_GATEWAY_READ_API_TOKEN_FILE "$ASSISTANT_GATEWAY_READ_TOKEN_FILE"
+upsert_env ASSISTANT_GATEWAY_READ_API_SCOPES "proposal-decisions:read"
 upsert_env ASSISTANT_GATEWAY_REPLY_MAX_AGE_SECONDS 86400
 
 # Daily Review identities are deliberately separate from the browser and execution-system tokens.
