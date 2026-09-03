@@ -23,6 +23,11 @@ const tokenDir = fs.mkdtempSync(path.join(os.tmpdir(), 'daily-intake-token-'));
 const tokenFile = path.join(tokenDir, 'execution.token');
 fs.writeFileSync(tokenFile, 'fixture-intake-token\n', { mode: 0o600 });
 const fileConfigured = createDailyIntakeConsumerFromEnv({ DAILY_INTAKE_TOKEN_FILE: tokenFile }, { fetchImpl: async () => new Response(JSON.stringify({ intakes: [] }), { status: 200 }) });
+const credentialDir = fs.mkdtempSync(path.join(os.tmpdir(), 'daily-intake-credential-'));
+fs.writeFileSync(path.join(credentialDir, 'execution.token'), 'credential-token\n', { mode: 0o600 });
+const credentialConfigured = createDailyIntakeConsumerFromEnv({ CREDENTIALS_DIRECTORY: credentialDir }, { fetchImpl: async () => new Response(JSON.stringify({ intakes: [] }), { status: 200 }) });
+assert.equal(credentialConfigured.token, 'credential-token');
+fs.rmSync(credentialDir, { recursive: true, force: true });
 assert.equal(fileConfigured.token, 'fixture-intake-token', 'only the dedicated mounted token file is accepted');
 
 const calls = [];

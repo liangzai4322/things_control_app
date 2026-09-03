@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { HealthDailyIntakeWorker } from '../integrations/health-system/daily-intake-worker.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { HealthDailyIntakeWorker, createHealthDailyIntakeWorkerFromEnv } from '../integrations/health-system/daily-intake-worker.mjs';
 
 function intake(overrides = {}) {
   return {
@@ -15,6 +18,11 @@ function intake(overrides = {}) {
 function response(status, data) {
   return { ok: status >= 200 && status < 300, status, text: async () => JSON.stringify(data) };
 }
+
+const credentialDir = fs.mkdtempSync(path.join(os.tmpdir(), 'health-intake-credential-'));
+fs.writeFileSync(path.join(credentialDir, 'health.token'), 'credential-health-token\n', { mode: 0o600 });
+assert.equal(createHealthDailyIntakeWorkerFromEnv({ CREDENTIALS_DIRECTORY: credentialDir }, { fetchImpl: async () => response(200, {}) }).token, 'credential-health-token');
+fs.rmSync(credentialDir, { recursive: true, force: true });
 
 const requests = [];
 const current = intake();

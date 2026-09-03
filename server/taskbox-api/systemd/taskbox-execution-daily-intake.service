@@ -8,7 +8,6 @@ Type=oneshot
 User=taskbox-execution
 Group=taskbox-execution
 LoadCredential=execution.token:/etc/taskbox-daily-intake/execution.token
-Environment=DAILY_INTAKE_TOKEN_FILE=%d/execution.token
 Environment=DAILY_INTAKE_ENDPOINT=https://liangzai666.com/taskbox-api
 Environment=DAILY_INTAKE_STATE_DIR=/var/lib/taskbox-execution-daily-intake
 RuntimeDirectory=taskbox-execution-daily-intake

@@ -8,7 +8,6 @@ Type=oneshot
 User=taskbox-hq
 Group=taskbox-hq
 LoadCredential=hq.token:/etc/taskbox-daily-intake/hq.token
-Environment=DAILY_INTAKE_HQ_TOKEN_FILE=%d/hq.token
 Environment=DAILY_INTAKE_ENDPOINT=https://liangzai666.com/taskbox-api
 Environment=HQ_DAILY_INTAKE_CACHE_FILE=/var/lib/taskbox-hq-daily-intake/receipts-summary.json
 Environment=HQ_DAILY_INTAKE_LOCK_FILE=/run/taskbox-hq-daily-intake/sync.lock

@@ -203,7 +203,8 @@ export class DailyIntakeConsumer {
 }
 
 export function createDailyIntakeConsumerFromEnv(env = process.env, options = {}) {
-  const tokenFile = env.DAILY_INTAKE_TOKEN_FILE || '/etc/taskbox-daily-intake/execution.token';
+  const tokenFile = env.DAILY_INTAKE_TOKEN_FILE
+    || (env.CREDENTIALS_DIRECTORY ? path.join(env.CREDENTIALS_DIRECTORY, 'execution.token') : '/etc/taskbox-daily-intake/execution.token');
   return new DailyIntakeConsumer({
     endpoint: env.DAILY_INTAKE_ENDPOINT || 'https://liangzai666.com/taskbox-api', token: readPrivateToken('', tokenFile),
     stateDir: env.DAILY_INTAKE_STATE_DIR || path.join(os.homedir(), '.codex', 'state', 'execution-daily-intake'), ...options,

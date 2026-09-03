@@ -8,7 +8,6 @@ Type=oneshot
 User=taskbox-health
 Group=taskbox-health
 LoadCredential=health.token:/etc/taskbox-daily-intake/health.token
-Environment=DAILY_INTAKE_HEALTH_TOKEN_FILE=%d/health.token
 Environment=DAILY_INTAKE_ENDPOINT=https://liangzai666.com/taskbox-api
 RuntimeDirectory=taskbox-health-daily-intake
 StateDirectory=taskbox-health-daily-intake

@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { syncHqReceipts } from './sync-hq-daily-intake-receipts.mjs';
 
+assert.match(fs.readFileSync(new URL('./sync-hq-daily-intake-receipts.mjs', import.meta.url), 'utf8'), /CREDENTIALS_DIRECTORY/);
+
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hq-receipts-'));
 const tokenFile = path.join(root, 'hq.token');
 const cacheFile = path.join(root, 'cache', 'receipts.json');
@@ -28,4 +30,3 @@ const disabled = await syncHqReceipts({ tokenFile, cacheFile, disableFile, lockF
 assert.equal(disabled.skipped, 'disabled');
 assert.equal(calls, 1);
 console.log('hq daily intake runner tests passed');
-

@@ -150,6 +150,7 @@ for system in attention execution feedback health hq mission; do
   test -f "$TMP/systemd/taskbox-$system-daily-intake.timer"
   grep -q '^RuntimeDirectory=' "$TMP/systemd/taskbox-$system-daily-intake.service"
   grep -q '^ReadOnlyPaths=-' "$TMP/systemd/taskbox-$system-daily-intake.service"
+  ! grep -q '%d/' "$TMP/systemd/taskbox-$system-daily-intake.service"
 done
 grep -q 'daily_intake_timers=enabled' "$TMP/deploy.log"
 grep -q 'start taskbox-hq-daily-intake.service' "$SYSTEMCTL_CALL_LOG"

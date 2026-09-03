@@ -72,9 +72,10 @@ export async function syncHqReceipts({
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   try {
+    const credentialFile = process.env.CREDENTIALS_DIRECTORY ? path.join(process.env.CREDENTIALS_DIRECTORY, 'hq.token') : undefined;
     const result = await syncHqReceipts({
       endpoint: process.env.DAILY_INTAKE_ENDPOINT,
-      tokenFile: process.env.DAILY_INTAKE_HQ_TOKEN_FILE,
+      tokenFile: process.env.DAILY_INTAKE_HQ_TOKEN_FILE || credentialFile,
       cacheFile: process.env.HQ_DAILY_INTAKE_CACHE_FILE,
       disableFile: process.env.DAILY_INTAKE_DISABLE_FILE,
       lockFile: process.env.HQ_DAILY_INTAKE_LOCK_FILE,
@@ -85,4 +86,3 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     process.exitCode = 1;
   }
 }
-

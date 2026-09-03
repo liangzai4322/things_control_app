@@ -9,7 +9,6 @@ User=taskbox-attention
 Group=taskbox-attention
 LoadCredential=attention.token:/etc/taskbox-daily-intake/attention.token
 Environment=DAILY_INTAKE_API_ENDPOINT=https://liangzai666.com/taskbox-api
-Environment=DAILY_INTAKE_TOKEN_FILE=%d/attention.token
 RuntimeDirectory=taskbox-attention-daily-intake
 StateDirectory=taskbox-attention-daily-intake
 ExecStart=/usr/bin/flock -n /run/taskbox-attention-daily-intake/runner.lock /usr/bin/node /opt/taskbox-daily-intake/scripts/consume-daily-intake-attention.mjs

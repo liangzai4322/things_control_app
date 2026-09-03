@@ -1,8 +1,10 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { buildFeedbackDailyIntakeReceipt } from '../../js/feedback-daily-intake.js';
 
 const endpoint = String(process.env.FEEDBACK_DAILY_INTAKE_ENDPOINT || 'http://127.0.0.1:3107/v1').replace(/\/$/, '');
-const tokenFile = process.env.FEEDBACK_DAILY_INTAKE_TOKEN_FILE || '/etc/taskbox-daily-intake/feedback.token';
+const tokenFile = process.env.FEEDBACK_DAILY_INTAKE_TOKEN_FILE
+  || (process.env.CREDENTIALS_DIRECTORY ? path.join(process.env.CREDENTIALS_DIRECTORY, 'feedback.token') : '/etc/taskbox-daily-intake/feedback.token');
 const disableFile = process.env.DAILY_INTAKE_DISABLE_FILE || '/etc/taskbox-daily-intake.disabled';
 const lockFile = process.env.FEEDBACK_DAILY_INTAKE_LOCK_FILE || '/run/taskbox-feedback-daily-intake/runner.js.lock';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

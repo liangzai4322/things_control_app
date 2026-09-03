@@ -52,7 +52,7 @@ await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 const env = {
   ...process.env,
   FEEDBACK_DAILY_INTAKE_ENDPOINT: `http://127.0.0.1:${server.address().port}/v1`,
-  FEEDBACK_DAILY_INTAKE_TOKEN_FILE: tokenFile,
+  CREDENTIALS_DIRECTORY: root,
   DAILY_INTAKE_DISABLE_FILE: disableFile,
   FEEDBACK_DAILY_INTAKE_LOCK_FILE: lockFile,
 };

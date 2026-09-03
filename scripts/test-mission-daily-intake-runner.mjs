@@ -7,6 +7,7 @@ import {
   MISSION_DAILY_INTAKE_RUNNER_KEY,
   acquireMissionIntakeLock,
   createMissionDailyIntakeRequest,
+  missionDailyIntakeConfig,
   runMissionDailyIntake,
 } from '../integrations/mission-system/daily-intake-runner.mjs';
 
@@ -19,6 +20,8 @@ const now = () => new Date('2026-09-03T12:00:00.000Z');
 const missionStore = { schemaVersion: 3, activeVersion: null, history: [], draft: {}, events: [], candidateInbox: [], reviewContext: {} };
 
 try {
+  const credentialDir = path.join(temporary, 'credentials'); fs.mkdirSync(credentialDir); fs.writeFileSync(path.join(credentialDir, 'mission.token'), 'credential-mission-token\n', { mode: 0o600 });
+  assert.equal(missionDailyIntakeConfig({ CREDENTIALS_DIRECTORY: credentialDir }).token, 'credential-mission-token');
   const disabled = files('disabled'); fs.mkdirSync(path.dirname(disabled.disabledPath), { recursive: true }); fs.writeFileSync(disabled.disabledPath, 'disabled\n');
   let disabledCalls = 0;
   const disabledResult = await runMissionDailyIntake({ request: async () => { disabledCalls += 1; }, storage: new JsonFileStorage(disabled.storagePath), lockPath: disabled.lockPath, healthPath: disabled.healthPath, disabledFiles: [disabled.disabledPath], now });

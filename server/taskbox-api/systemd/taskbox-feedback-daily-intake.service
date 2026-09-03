@@ -8,7 +8,6 @@ Type=oneshot
 User=taskbox-feedback
 Group=taskbox-feedback
 LoadCredential=feedback.token:/etc/taskbox-daily-intake/feedback.token
-Environment=FEEDBACK_DAILY_INTAKE_TOKEN_FILE=%d/feedback.token
 Environment=FEEDBACK_DAILY_INTAKE_ENDPOINT=https://liangzai666.com/taskbox-api/v1
 RuntimeDirectory=taskbox-feedback-daily-intake
 StateDirectory=taskbox-feedback-daily-intake

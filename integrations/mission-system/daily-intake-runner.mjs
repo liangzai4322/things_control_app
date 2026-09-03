@@ -145,9 +145,10 @@ export async function runMissionDailyIntake({
 
 export function missionDailyIntakeConfig(env = process.env) {
   const stateDir = clean(env.MISSION_DAILY_INTAKE_STATE_DIR) || '/var/lib/taskbox-mission-intake';
+  const credentialFile = env.CREDENTIALS_DIRECTORY ? path.join(env.CREDENTIALS_DIRECTORY, 'mission.token') : '/etc/taskbox-daily-intake/mission.token';
   return {
     endpoint: clean(env.DAILY_INTAKE_ENDPOINT) || 'https://liangzai666.com/taskbox-api/v1',
-    token: readMissionServiceToken({ token: env.DAILY_INTAKE_MISSION_TOKEN, tokenFile: env.DAILY_INTAKE_MISSION_TOKEN_FILE || '/etc/taskbox-daily-intake/mission.token' }),
+    token: readMissionServiceToken({ token: env.DAILY_INTAKE_MISSION_TOKEN, tokenFile: env.DAILY_INTAKE_MISSION_TOKEN_FILE || credentialFile }),
     storagePath: path.join(stateDir, 'state.json'), lockPath: path.join(stateDir, 'consumer.lock'), healthPath: path.join(stateDir, 'health.json'),
     disabledFiles: [clean(env.DAILY_INTAKE_DISABLE_FILE) || '/etc/taskbox-daily-intake.disabled', clean(env.MISSION_DAILY_INTAKE_DISABLE_FILE) || '/etc/taskbox-mission-intake.disabled'],
   };

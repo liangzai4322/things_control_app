@@ -178,7 +178,8 @@ export class HealthDailyIntakeWorker {
 }
 
 export function createHealthDailyIntakeWorkerFromEnv(env = process.env, options = {}) {
-  const tokenFile = env.DAILY_INTAKE_HEALTH_TOKEN_FILE || DEFAULT_TOKEN_FILE;
+  const tokenFile = env.DAILY_INTAKE_HEALTH_TOKEN_FILE
+    || (env.CREDENTIALS_DIRECTORY ? path.join(env.CREDENTIALS_DIRECTORY, 'health.token') : DEFAULT_TOKEN_FILE);
   return new HealthDailyIntakeWorker({
     endpoint: env.DAILY_INTAKE_ENDPOINT || env.TASKBOX_API_ENDPOINT || DEFAULT_ENDPOINT,
     token: clean(env.DAILY_INTAKE_HEALTH_TOKEN) || readFile(tokenFile),

@@ -8,6 +8,8 @@ import {
   runAttentionIntakeCycle,
 } from '../integrations/attention-system/daily-intake-runner.mjs';
 
+assert.match(fs.readFileSync(new URL('./consume-daily-intake-attention.mjs', import.meta.url), 'utf8'), /CREDENTIALS_DIRECTORY/);
+
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'attention-intake-runner-'));
 const stateFile = path.join(root, 'state.json');
 const tokenFile = path.join(root, 'attention.token');

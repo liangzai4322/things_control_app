@@ -8,7 +8,6 @@ Type=oneshot
 User=taskbox-mission
 Group=taskbox-mission
 LoadCredential=mission.token:/etc/taskbox-daily-intake/mission.token
-Environment=DAILY_INTAKE_MISSION_TOKEN_FILE=%d/mission.token
 Environment=DAILY_INTAKE_ENDPOINT=https://liangzai666.com/taskbox-api/v1
 Environment=MISSION_DAILY_INTAKE_STATE_DIR=/var/lib/taskbox-mission-daily-intake
 Environment=MISSION_DAILY_INTAKE_DISABLE_FILE=/etc/taskbox-mission-daily-intake.disabled
