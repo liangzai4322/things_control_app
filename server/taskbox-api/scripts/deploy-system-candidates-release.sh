@@ -272,7 +272,12 @@ if [[ "$DAILY_INTAKE_ENABLE_TIMERS" == "1" ]]; then
   done
   # Exercise every oneshot once while timers are still disabled, so a broken runtime cannot be scheduled.
   for system in hq mission health attention feedback execution; do
-    systemctl start "taskbox-$system-daily-intake.service"
+    unit="taskbox-$system-daily-intake.service"
+    if ! systemctl start "$unit"; then
+      systemctl status --no-pager --lines=40 "$unit" || true
+      journalctl --no-pager --lines=80 --unit "$unit" || true
+      exit 1
+    fi
   done
   for system in hq mission health attention feedback execution; do
     systemctl enable --now "taskbox-$system-daily-intake.timer"
