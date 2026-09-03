@@ -13,6 +13,7 @@ import { addTimeCandidates, confirmTimeCandidateDate, readTimeStore, rejectTimeC
 import { buildHealthHqSnapshot } from './health-model.js';
 import { readHealthProtocolStore } from './health-store.js';
 import { mountSystemCandidateInbox } from './system-candidate-inbox.js';
+import { consumeAttentionDailyReviewIntakes } from './time-attention-daily-intake.js';
 
 const esc = (value = '') => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date());
@@ -176,4 +177,7 @@ export function renderTimeAttentionPage(app) {
     showToast('人工计划与实际投入已保存');
     renderTimeAttentionPage(app);
   };
+  void consumeAttentionDailyReviewIntakes({ reviewDate: date }).catch(() => {
+    // An unavailable intake transport must not block the local time and attention loop.
+  });
 }

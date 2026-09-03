@@ -1701,6 +1701,7 @@ async function apiRequest(path, options = {}) {
   const {
     timeoutMs = Number(globalThis.__TASKBOX_API_REQUEST_TIMEOUT_MS__) || API_REQUEST_TIMEOUT_MS,
     signal: upstreamSignal,
+    affectsSyncState = true,
     ...requestOptions
   } = options;
   const config = getApiConfig();
@@ -1730,17 +1731,17 @@ async function apiRequest(path, options = {}) {
       }
       throw error;
     }
-    markApiSyncSuccess();
+    if (affectsSyncState) markApiSyncSuccess();
     if (response.status === 204) return null;
     return response.json();
   } catch (error) {
     if (controller.signal.aborted && !upstreamSignal?.aborted) {
       const timeoutError = new Error('api_timeout');
       timeoutError.cause = error;
-      markApiSyncFailure();
+      if (affectsSyncState) markApiSyncFailure();
       throw timeoutError;
     }
-    markApiSyncFailure();
+    if (affectsSyncState) markApiSyncFailure();
     throw error;
   } finally {
     clearTimeout(timeout);

@@ -406,6 +406,56 @@ CREATE TABLE IF NOT EXISTS system_candidates (
 CREATE INDEX IF NOT EXISTS idx_system_candidates_system_status_date
   ON system_candidates(system_id, status, review_date DESC);
 
+CREATE TABLE IF NOT EXISTS system_intakes (
+  id TEXT PRIMARY KEY,
+  system_id TEXT NOT NULL,
+  schema_version INTEGER NOT NULL,
+  contract_version TEXT NOT NULL,
+  review_date TEXT NOT NULL,
+  observation_period_json TEXT NOT NULL,
+  source_ref_json TEXT NOT NULL,
+  evidence_refs_json TEXT NOT NULL,
+  freshness_json TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  payload_hash TEXT NOT NULL,
+  data_json TEXT NOT NULL,
+  status TEXT NOT NULL,
+  received_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  raw_json TEXT NOT NULL,
+  UNIQUE(system_id, review_date, revision)
+);
+CREATE INDEX IF NOT EXISTS idx_system_intakes_system_date
+  ON system_intakes(system_id, review_date DESC, revision DESC);
+
+CREATE TABLE IF NOT EXISTS system_intake_receipts (
+  id TEXT PRIMARY KEY,
+  intake_id TEXT NOT NULL UNIQUE,
+  system_id TEXT NOT NULL,
+  review_date TEXT NOT NULL,
+  status TEXT NOT NULL,
+  projection_json TEXT NOT NULL,
+  error_code TEXT,
+  error_message TEXT,
+  retry_at TEXT,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  processed_at TEXT,
+  updated_at TEXT NOT NULL,
+  raw_json TEXT NOT NULL,
+  FOREIGN KEY (intake_id) REFERENCES system_intakes(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_system_intake_receipts_date
+  ON system_intake_receipts(system_id, review_date DESC, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS system_intake_receipt_requests (
+  idempotency_key TEXT PRIMARY KEY,
+  receipt_id TEXT NOT NULL,
+  request_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (receipt_id) REFERENCES system_intake_receipts(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS health_observations (
   observation_id TEXT PRIMARY KEY,
   observation_date TEXT NOT NULL,

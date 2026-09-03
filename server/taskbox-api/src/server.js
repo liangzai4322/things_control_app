@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const express = require('express');
 const Database = require('better-sqlite3');
+const { createTransport } = require('./daily-intake-transport');
 const { installHealthSystemRoutes } = require('./health-system');
 const { installMissionSystemRoutes } = require('./mission-system');
 const { installExecutionSystemRoutes } = require('./execution-system');
@@ -14,6 +15,9 @@ const apiToken = String(process.env.TASKBOX_API_TOKEN || '').trim();
 const executionApiEnabled = String(process.env.EXECUTION_SYSTEM_API_ENABLED || '') === '1';
 const executionTokenFile = String(process.env.EXECUTION_SYSTEM_API_TOKEN_FILE || '').trim();
 const executionDisableFile = String(process.env.EXECUTION_SYSTEM_API_DISABLE_FILE || '/etc/taskbox-execution-system.disabled').trim();
+const dailyIntakeApiEnabled = String(process.env.DAILY_INTAKE_API_ENABLED || '') === '1';
+const dailyIntakeDisableFile = String(process.env.DAILY_INTAKE_DISABLE_FILE || '/etc/taskbox-daily-intake.disabled').trim();
+const dailyIntakeSystems = ['execution', 'health', 'attention', 'feedback', 'mission', 'governance'];
 const allowedOrigins = String(process.env.TASKBOX_ALLOWED_ORIGINS || 'https://liangzai4322.github.io,http://localhost:8000,http://127.0.0.1:8000')
   .split(',')
   .map((item) => item.trim())
@@ -78,6 +82,38 @@ const secretMatches = (left, right) => {
   const b = Buffer.from(String(right || ''));
   return a.length === b.length && a.length > 0 && crypto.timingSafeEqual(a, b);
 };
+const readSecretFile = (filePath) => {
+  try { return filePath ? fs.readFileSync(filePath, 'utf8').trim() : ''; } catch { return ''; }
+};
+const bearerToken = (req) => String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+const dailyIntakeIdentities = () => {
+  const identities = [
+    { name: 'daily-review-sender', token: readSecretFile(String(process.env.DAILY_INTAKE_SENDER_TOKEN_FILE || '').trim()), scopes: ['intakes:write'] },
+    { name: 'hq', token: readSecretFile(String(process.env.DAILY_INTAKE_HQ_TOKEN_FILE || '').trim()), scopes: ['receipts:read'] },
+    ...dailyIntakeSystems.map((systemId) => ({
+      name: systemId,
+      systemId,
+      token: readSecretFile(String(process.env[`DAILY_INTAKE_${systemId.toUpperCase()}_TOKEN_FILE`] || '').trim()),
+      scopes: ['intakes:read', 'receipts:write'],
+    })),
+  ];
+  return identities.filter((identity) => identity.token);
+};
+const resolveDailyIntakeIdentity = (req) => {
+  if (!dailyIntakeApiEnabled || (dailyIntakeDisableFile && fs.existsSync(dailyIntakeDisableFile))) return null;
+  const token = bearerToken(req);
+  return dailyIntakeIdentities().find((identity) => secretMatches(token, identity.token)) || null;
+};
+const authorizeDailyIntake = (req, scope, systemId = null) => {
+  if (!dailyIntakeApiEnabled || (dailyIntakeDisableFile && fs.existsSync(dailyIntakeDisableFile))) {
+    return { ok: false, status: 503, error: 'daily_intake_api_disabled' };
+  }
+  const identity = req.dailyIntakeIdentity;
+  if (!identity) return { ok: false, status: 401, error: 'daily_intake_unauthorized' };
+  if (!identity.scopes.includes(scope)) return { ok: false, status: 403, error: 'daily_intake_scope_denied' };
+  if (systemId && identity.systemId !== systemId) return { ok: false, status: 403, error: 'daily_intake_system_denied' };
+  return { ok: true, identity };
+};
 const boxTypes = new Set(['task', 'pool', 'collection']);
 const inferBoxType = (box = {}) => {
   if (boxTypes.has(box.boxType)) return box.boxType;
@@ -97,6 +133,10 @@ db.transaction(() => {
 
 app.use(express.json({ limit: '2mb' }));
 app.use((req, res, next) => {
+  req.dailyIntakeIdentity = resolveDailyIntakeIdentity(req);
+  next();
+});
+app.use((req, res, next) => {
   const origin = req.headers.origin;
   if (origin && allowedOrigins.includes(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
@@ -108,6 +148,11 @@ app.use((req, res, next) => {
   return next();
 });
 app.use((req, res, next) => {
+  if (req.dailyIntakeIdentity) {
+    if (req.path === '/v1/system-candidates' || req.path === '/v1/system-candidates/batch'
+      || /^\/v1\/system-candidates\/[^/]+\/receipt$/.test(req.path) || req.path === '/v1/hq/system-receipts') return next();
+    return res.status(403).json({ error: 'daily_intake_route_denied' });
+  }
   if (req.path.startsWith('/v1/execution')) {
     if (!executionApiEnabled || (executionDisableFile && fs.existsSync(executionDisableFile))) {
       return res.status(503).json({ error: 'execution_api_disabled' });
@@ -117,7 +162,7 @@ app.use((req, res, next) => {
       try { executionToken = fs.readFileSync(executionTokenFile, 'utf8').trim(); } catch {}
     }
     if (!executionToken) return res.status(503).json({ error: 'execution_api_not_configured' });
-    const auth = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    const auth = bearerToken(req);
     if (!secretMatches(auth, executionToken)) return res.status(401).json({ error: 'execution_unauthorized' });
     req.executionIdentity = {
       system: 'execution-system',
@@ -126,7 +171,7 @@ app.use((req, res, next) => {
     return next();
   }
   if (!apiToken) return next();
-  const auth = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+  const auth = bearerToken(req);
   const headerToken = String(req.headers['x-taskbox-token'] || '').trim();
   if (secretMatches(auth, apiToken) || secretMatches(headerToken, apiToken)) return next();
   return res.status(401).json({ error: 'unauthorized' });
@@ -449,6 +494,10 @@ function stableJson(value) {
   }
   return JSON.stringify(value ?? null);
 }
+
+const dailyIntakeTransport = createTransport({
+  app, db, now, uid, json, parseJson, stableJson, validDateKey, authorizeDailyIntake,
+});
 
 function proposalRevisionHash(input = {}) {
   if (String(input.revisionHash || '').trim()) return String(input.revisionHash).trim();
@@ -1667,6 +1716,7 @@ function rowToSystemCandidate(row) {
 }
 
 app.get('/v1/system-candidates', (req, res) => {
+  if (dailyIntakeTransport.isIntakeRead(req)) return dailyIntakeTransport.list(req, res);
   const systemId = String(req.query.systemId || '').trim();
   const status = String(req.query.status || '').trim();
   if (!SYSTEM_CANDIDATE_SYSTEMS.has(systemId)) return res.status(400).json({ error: 'invalid_system_id' });
@@ -1679,6 +1729,7 @@ app.get('/v1/system-candidates', (req, res) => {
 });
 
 app.post('/v1/system-candidates/batch', (req, res) => {
+  if (dailyIntakeTransport.isIntakeBatch(req)) return dailyIntakeTransport.receive(req, res);
   const candidates = Array.isArray(req.body?.candidates) ? req.body.candidates : [];
   if (candidates.length > 500) return res.status(400).json({ error: 'too_many_candidates' });
   try {

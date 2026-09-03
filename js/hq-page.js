@@ -40,6 +40,7 @@ import { buildHqSystemViews, summarizeHqSystemViews } from './hq-systems.js';
 import { readFiveSystemHqPorts } from './five-system-hq-ports.js';
 import { buildHqResourceGovernance } from './hq-resource-governance.js';
 import { buildCollaborationInbox, systemCollaborationState } from './hq-collaboration.js';
+import { buildSystemReceiptProjection, readSystemReceipts } from './hq-system-receipts.js';
 import {
   parseFiveSystemBootstrapFile,
   publishFiveSystemBaseline,
@@ -423,6 +424,16 @@ function renderCollaborationInbox(items = []) {
   </section>`;
 }
 
+function renderSystemReceiptProjection(projection) {
+  const labels = { know: '需要知道', decide: '需要决定', do: '需要做', doneOrWaiting: '已完成或等待' };
+  const names = { mission: '使命', health: '健康', attention: '注意力', execution: '执行', feedback: '反馈' };
+  return `<section class="hq-section hq-collaboration-inbox" id="hqSystemReceipts">
+    <div class="hq-section-head"><div><span>00B / SYSTEM RECEIPTS</span><h2>系统处理回执</h2></div><p>${escapeHtml(projection.intakeRef)} · v${escapeHtml(projection.contractVersion)}</p></div>
+    <div class="hq-collaboration-list">${Object.entries(projection.groups).map(([group, items]) => `<article class="severity-${group === 'do' ? 'input' : group === 'decide' ? 'review' : 'warning'}"><span>${escapeHtml(labels[group])}</span><div>${items.length ? items.map((item) => `<strong>${escapeHtml(names[item.systemId] || item.systemId)} · ${escapeHtml(item.status)}</strong><p>${escapeHtml(item.freshness)} / ${escapeHtml(item.syncState)}${item.inputGaps.length ? ` · 缺 ${escapeHtml(item.inputGaps.join('、'))}` : ''}</p>`).join('') : '<strong>无</strong><p>本类暂无回执。</p>'}</div></article>`).join('')}</div>
+    <small>回执只表示系统已处理或当前等待；候选不等于批准，outbox 不等于成功，也不会据此创建盒子任务。</small>
+  </section>`;
+}
+
 function renderTomorrowBehaviorPreview(nextBrief, reviewDate) {
   if (!nextBrief) return '';
   const stop = nextBrief.stopDoing || [];
@@ -720,6 +731,10 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
   const systems = buildHqSystemViews({ snapshot, syncState, tasks, systemSnapshots, remote });
   const candidateCounts = snapshot.systemCandidateCounts || {};
   const collaborationItems = buildCollaborationInbox({ systems, candidateCounts, syncState, brief, tasks });
+  const receiptProjection = buildSystemReceiptProjection({
+    systemSnapshots, receipts: snapshot.systemReceipts || [], brief,
+    reviewDate: snapshot.reviewDate, syncState,
+  });
   const systemSummary = summarizeHqSystemViews(systems);
   const periods = readHqPeriodCache();
   const governance = buildHqResourceGovernance({ proposals: snapshot.proposals, projects, periods });
@@ -754,6 +769,7 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
       ${renderHqDimensionNav('day')}
       ${renderReviewLoop(snapshot.review, snapshot.reviewDate)}
       ${renderCollaborationInbox(collaborationItems)}
+      ${renderSystemReceiptProjection(receiptProjection)}
 
       <section class="hq-grid hq-action-zone">
         <div class="hq-zone-label"><span>01</span><p>今日行动驾驶舱</p><small>只承诺 1 个主动作 + 2 个维护动作</small></div>
@@ -1448,9 +1464,10 @@ export async function renderHqPage(app, { refreshRemote = true, dimension = 'day
     if (getPendingApiMutationCount()) return;
     const nextDate = shiftReviewDate(reviewDate, 1);
     const systemIds = ['mission', 'health', 'time', 'execution', 'feedback'];
-    const [remote, nextBrief, ...candidateResults] = await Promise.all([
+    const [remote, nextBrief, receiptResult, ...candidateResults] = await Promise.all([
       requestTaskboxApi(`/hq/today?date=${encodeURIComponent(reviewDate)}`),
       requestTaskboxApi(`/hq/daily-briefs/${encodeURIComponent(nextDate)}`).catch(() => null),
+      readSystemReceipts((path) => requestTaskboxApi(path, { affectsSyncState: false }), reviewDate),
       ...systemIds.map((systemId) => requestTaskboxApi(`/system-candidates?systemId=${encodeURIComponent(systemId)}&status=pending&limit=100`).catch(() => null)),
     ]);
     refreshHqPeriodCache(reviewDate).catch(() => null);
@@ -1458,7 +1475,7 @@ export async function renderHqPage(app, { refreshRemote = true, dimension = 'day
     const isHqRoute = currentHash === '#hq' || currentHash.startsWith('#hq/');
     if (!remote || renderVersion !== hqRenderVersion || !isHqRoute) return;
     const systemCandidateCounts = Object.fromEntries(systemIds.map((systemId, index) => [systemId, Number(candidateResults[index]?.count) || 0]));
-    const reconciled = { ...reconcileHqSnapshotCommitments(remote, getTasks()), nextBrief, systemCandidateCounts };
+    const reconciled = { ...reconcileHqSnapshotCommitments(remote, getTasks()), nextBrief, systemCandidateCounts, systemReceipts: receiptResult.receipts };
     writeCache({ brief: reconciled.brief, decisions: reconciled.decisions || [] });
     renderSnapshot(app, reconciled, { remote: true });
   } catch {

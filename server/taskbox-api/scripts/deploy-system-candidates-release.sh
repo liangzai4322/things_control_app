@@ -9,6 +9,8 @@ STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 BACKUP_DIR="${TASKBOX_BACKUP_DIR:-${APP_DIR}/backups/execution-system-${STAMP}}"
 EXECUTION_TOKEN_FILE="${EXECUTION_SYSTEM_API_TOKEN_FILE:-/etc/taskbox-execution-system-token}"
 EXECUTION_DISABLE_FILE="${EXECUTION_SYSTEM_API_DISABLE_FILE:-/etc/taskbox-execution-system.disabled}"
+DAILY_INTAKE_TOKEN_DIR="${DAILY_INTAKE_TOKEN_DIR:-/etc/taskbox-daily-intake}"
+DAILY_INTAKE_DISABLE_FILE="${DAILY_INTAKE_DISABLE_FILE:-/etc/taskbox-daily-intake.disabled}"
 EXECUTION_GRANT_ID="standing-execution-taskbox-normal-2026-09-02"
 EXECUTION_SCOPES="tasks:read,tasks:create,tasks:update,tasks:schedule,tasks:progress,tasks:evidence,tasks:complete,tasks:delete,tasks:audit"
 
@@ -28,6 +30,8 @@ set +a
 DB_PATH="${TASKBOX_DB_PATH:-${APP_DIR}/data/taskbox.sqlite}"
 EXECUTION_TOKEN_FILE="${EXECUTION_SYSTEM_API_TOKEN_FILE:-$EXECUTION_TOKEN_FILE}"
 EXECUTION_DISABLE_FILE="${EXECUTION_SYSTEM_API_DISABLE_FILE:-$EXECUTION_DISABLE_FILE}"
+DAILY_INTAKE_TOKEN_DIR="${DAILY_INTAKE_TOKEN_DIR:-$DAILY_INTAKE_TOKEN_DIR}"
+DAILY_INTAKE_DISABLE_FILE="${DAILY_INTAKE_DISABLE_FILE:-$DAILY_INTAKE_DISABLE_FILE}"
 
 mkdir -p "$BACKUP_DIR/code" "$BACKUP_DIR/data" "$BACKUP_DIR/config"
 chmod 700 "$BACKUP_DIR" "$BACKUP_DIR/config"
@@ -79,15 +83,41 @@ upsert_env EXECUTION_SYSTEM_API_DISABLE_FILE "$EXECUTION_DISABLE_FILE"
 upsert_env EXECUTION_SYSTEM_API_SCOPES "$EXECUTION_SCOPES"
 upsert_env EXECUTION_SYSTEM_EXPLICIT_GRANT_IDS "$EXECUTION_GRANT_ID"
 
+# Daily Review identities are deliberately separate from the browser and execution-system tokens.
+install -d -m 700 "$DAILY_INTAKE_TOKEN_DIR"
+create_daily_intake_token() {
+  local name="$1" file="$DAILY_INTAKE_TOKEN_DIR/$name.token"
+  if [[ ! -s "$file" ]]; then
+    umask 077
+    node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex') + '\\n')" > "$file"
+  fi
+  chmod 600 "$file"
+  printf '%s' "$file"
+}
+DAILY_SENDER_TOKEN_FILE="$(create_daily_intake_token sender)"
+DAILY_HQ_TOKEN_FILE="$(create_daily_intake_token hq)"
+upsert_env DAILY_INTAKE_API_ENABLED 1
+upsert_env DAILY_INTAKE_DISABLE_FILE "$DAILY_INTAKE_DISABLE_FILE"
+upsert_env DAILY_INTAKE_SENDER_TOKEN_FILE "$DAILY_SENDER_TOKEN_FILE"
+upsert_env DAILY_INTAKE_HQ_TOKEN_FILE "$DAILY_HQ_TOKEN_FILE"
+for system in execution health attention feedback mission; do
+  upper="$(printf '%s' "$system" | tr '[:lower:]' '[:upper:]')"
+  token_file="$(create_daily_intake_token "$system")"
+  upsert_env "DAILY_INTAKE_${upper}_TOKEN_FILE" "$token_file"
+done
+rm -f "$DAILY_INTAKE_DISABLE_FILE"
+
 cd "$APP_DIR"
 npm ci --omit=dev
 npm run init-db
 npm run test:schema
 npm run test:execution
+npm run test:system-intake
 systemctl start "$SERVICE"
 systemctl is-active --quiet "$SERVICE"
 
-HEALTH_URL="http://127.0.0.1:${TASKBOX_API_PORT:-3107}/health"
+API_BASE_URL="http://127.0.0.1:${TASKBOX_API_PORT:-3107}"
+HEALTH_URL="$API_BASE_URL/health"
 health_ready=false
 for _ in {1..40}; do
   if curl --silent --show-error --fail --output /dev/null \
@@ -117,9 +147,31 @@ if curl --silent --show-error --fail --output /dev/null \
   echo "execution token unexpectedly accessed generic TaskBox API" >&2
   exit 1
 fi
+
+DAILY_SENDER_TOKEN="$(tr -d '\r\n' < "$DAILY_SENDER_TOKEN_FILE")"
+DAILY_HQ_TOKEN="$(tr -d '\r\n' < "$DAILY_HQ_TOKEN_FILE")"
+DAILY_EXECUTION_TOKEN="$(tr -d '\r\n' < "$(create_daily_intake_token execution)")"
+DAILY_EXECUTION_INBOX="$API_BASE_URL/v1/system-candidates?intake=1&systemId=execution&limit=1"
+DAILY_HQ_RECEIPTS="$API_BASE_URL/v1/hq/system-receipts?limit=1"
+curl --silent --show-error --fail --output /dev/null \
+  --header "Authorization: Bearer $DAILY_EXECUTION_TOKEN" "$DAILY_EXECUTION_INBOX"
+curl --silent --show-error --fail --output /dev/null \
+  --header "Authorization: Bearer $DAILY_HQ_TOKEN" "$DAILY_HQ_RECEIPTS"
+if [[ "$(curl --silent --output /dev/null --write-out '%{http_code}' --header "Authorization: Bearer $TASKBOX_API_TOKEN" "$DAILY_EXECUTION_INBOX")" != "401" ]]; then
+  echo "generic TaskBox token unexpectedly accessed daily intake API" >&2
+  exit 1
+fi
+if [[ "$(curl --silent --output /dev/null --write-out '%{http_code}' --header "Authorization: Bearer $DAILY_SENDER_TOKEN" "$DAILY_EXECUTION_INBOX")" != "403" ]]; then
+  echo "daily sender unexpectedly read a consumer inbox" >&2
+  exit 1
+fi
 trap - ERR
 
 echo "deployment_ok"
 echo "rollback_snapshot=$BACKUP_DIR"
 echo "execution_token_file=$EXECUTION_TOKEN_FILE"
 echo "execution_disable_file=$EXECUTION_DISABLE_FILE"
+echo "daily_intake_sender_token_file=$DAILY_SENDER_TOKEN_FILE"
+echo "daily_intake_hq_token_file=$DAILY_HQ_TOKEN_FILE"
+echo "daily_intake_token_dir=$DAILY_INTAKE_TOKEN_DIR"
+echo "daily_intake_disable_file=$DAILY_INTAKE_DISABLE_FILE"
