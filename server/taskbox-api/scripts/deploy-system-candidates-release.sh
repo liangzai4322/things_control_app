@@ -86,7 +86,8 @@ upsert_env EXECUTION_SYSTEM_EXPLICIT_GRANT_IDS "$EXECUTION_GRANT_ID"
 # Daily Review identities are deliberately separate from the browser and execution-system tokens.
 install -d -m 700 "$DAILY_INTAKE_TOKEN_DIR"
 create_daily_intake_token() {
-  local name="$1" file="$DAILY_INTAKE_TOKEN_DIR/$name.token"
+  local name="$1"
+  local file="$DAILY_INTAKE_TOKEN_DIR/$name.token"
   if [[ ! -s "$file" ]]; then
     umask 077
     node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex') + '\\n')" > "$file"
