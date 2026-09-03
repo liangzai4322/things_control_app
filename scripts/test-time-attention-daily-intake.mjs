@@ -36,7 +36,7 @@ const intake = {
     dataQuality: { missingFields: ['actual.stopAt'], staleSources: ['calendar.snapshot'] },
     commitments: [{ title: '不得进入回执' }],
   },
-  status: 'pending',
+  status: 'accepted',
   receivedAt: '2026-09-03T20:00:00+08:00',
   updatedAt: '2026-09-03T20:00:00+08:00',
   receipt: null,
@@ -81,7 +81,7 @@ const consumed = await consumeAttentionDailyReviewIntakes({
   },
 });
 assert.equal(consumed.processed.length, 1);
-assert.match(requests[0].path, /^\/system-candidates\?systemId=attention&intake=1&reviewDate=2026-09-03&status=pending&limit=100$/);
+assert.match(requests[0].path, /^\/system-candidates\?systemId=attention&intake=1&reviewDate=2026-09-03&status=accepted&limit=100$/);
 assert.equal(requests[1].path, '/system-candidates/daily-review%3A2026-09-03%3Aattention%3A1/receipt');
 assert.equal(requests[1].options.method, 'POST');
 assert.deepEqual(Object.keys(JSON.parse(requests[1].options.body)).sort(), ['idempotencyKey', 'projection', 'status']);
@@ -144,7 +144,7 @@ assert.deepEqual(unknownFreshnessReceipt.projection.missingFieldRefs, [
 ]);
 
 const pageSource = (await import('node:fs')).readFileSync('js/time-attention-page.js', 'utf8');
-assert.match(pageSource, /consumeAttentionDailyReviewIntakes\(\{ reviewDate: date \}\)/);
+assert.doesNotMatch(pageSource, /consumeAttentionDailyReviewIntakes/, 'browser must not hold or trigger the service consumer');
 const intakeSource = (await import('node:fs')).readFileSync('js/time-attention-daily-intake.js', 'utf8');
 assert.doesNotMatch(intakeSource, /writeTimeStore|upsertTimePlan|addTask|updateTask|calendar.*(?:PATCH|POST)/i);
 
