@@ -165,6 +165,8 @@ python "D:\note_new\06-日常输入_输出\.agents\skills\任务中枢\scripts\t
 
 2026-08-23 健康页收件箱收敛：明确用户日省健康事实应检查 `/v1/health/observations` 是否按 `observationId` 幂等入库；健康页的“健康事实待确认”只处理外部、历史、日期不明或未验证材料。日省候选传输故障不影响健康主体独立运行。
 
+2026-09-03 Assistant Gateway 提案回复接口已生产发布：PR #18 合并提交`b4c9549`，API workflow `33753867348`与Pages workflow `33753833765`成功。生产验证为认证健康`200`、未认证和通用Token访问回复路由`401`、CORS`204`；发布流程使用独立最小scope身份对不存在提案执行`404`认证探针，没有制造真实审批或TaskBox写入。回滚点为`/opt/taskbox-api/backups/execution-system-20260903T121234Z`，即时停用文件为`/etc/taskbox-assistant-gateway.disabled`。
+
 ### HQ 协作收件箱验收
 
 1. 当次日 brief 存在停止做/继续保持时，今日页在今日行为区之后显示“今晚复盘生成的明日规则”，并标明来源日期；今日 brief 不被改写。
