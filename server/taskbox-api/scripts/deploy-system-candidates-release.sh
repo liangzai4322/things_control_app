@@ -260,13 +260,15 @@ daily_intake_timer_state=disabled
 if [[ "$DAILY_INTAKE_ENABLE_TIMERS" == "1" ]]; then
   for system in attention execution feedback health mission; do
     token="$(tr -d '\r\n' < "$DAILY_INTAKE_TOKEN_DIR/$system.token")"
-    inbox="$API_BASE_URL/v1/system-candidates?intake=1&systemId=$system&status=accepted&limit=1"
-    queue_count="$(curl --silent --show-error --fail --header "Authorization: Bearer $token" "$inbox" \
-      | node -e "let input='';process.stdin.on('data',d=>input+=d).on('end',()=>{const body=JSON.parse(input);process.stdout.write(String(Number(body.count)||0));});")"
-    if [[ "$queue_count" != "0" ]]; then
-      echo "daily intake enable gate is not empty for $system" >&2
-      exit 1
-    fi
+    for status in accepted retrying; do
+      inbox="$API_BASE_URL/v1/system-candidates?intake=1&systemId=$system&status=$status&limit=1"
+      queue_count="$(curl --silent --show-error --fail --header "Authorization: Bearer $token" "$inbox" \
+        | node -e "let input='';process.stdin.on('data',d=>input+=d).on('end',()=>{const body=JSON.parse(input);process.stdout.write(String(Number(body.count)||0));});")"
+      if [[ "$queue_count" != "0" ]]; then
+        echo "daily intake enable gate has $status work for $system" >&2
+        exit 1
+      fi
+    done
   done
   for system in hq mission health attention feedback execution; do
     systemctl enable --now "taskbox-$system-daily-intake.timer"
