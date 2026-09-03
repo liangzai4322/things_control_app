@@ -26,6 +26,14 @@ function readPrivateToken(token, tokenFile) {
   try { return fs.readFileSync(expandHome(tokenFile), 'utf8').trim(); } catch { return ''; }
 }
 
+export function dailyIntakeReviewDate(value = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(value);
+  const fields = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${fields.year}-${fields.month}-${fields.day}`;
+}
+
 export class DailyIntakeError extends Error {
   constructor(code, { status = 0, payload = {}, cause } = {}) {
     super(code, cause ? { cause } : undefined);

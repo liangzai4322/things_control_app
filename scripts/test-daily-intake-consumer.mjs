@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { DAILY_INTAKE_FAILURE_EVENT_KEY, DailyIntakeConsumer, DailyIntakeError, createDailyIntakeConsumerFromEnv, validateDailyIntake } from '../integrations/execution-system/daily-intake-consumer.mjs';
+import { DAILY_INTAKE_FAILURE_EVENT_KEY, DailyIntakeConsumer, DailyIntakeError, createDailyIntakeConsumerFromEnv, dailyIntakeReviewDate, validateDailyIntake } from '../integrations/execution-system/daily-intake-consumer.mjs';
 
 const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'daily-intake-consumer-'));
 let clock = new Date('2026-09-03T12:00:00.000Z');
@@ -13,6 +13,8 @@ const intake = {
   freshness: { status: 'fresh', generatedAt: '2026-09-03T11:30:00.000Z' }, revision: 2, idempotencyKey: 'execution:2026-09-03:2:abc',
   data: { candidates: [{ epistemicState: 'candidate_unvalidated', writesTargetSystem: false }], explicitDispatches: [{ authorizationSource: 'explicit_user' }] },
 };
+
+assert.equal(dailyIntakeReviewDate(new Date('2026-09-02T16:30:00.000Z')), '2026-09-03');
 
 assert.equal(validateDailyIntake(intake, { now: now() }).revision, 2);
 assert.throws(() => validateDailyIntake({ ...intake, contractVersion: 'unknown' }, { now: now() }), /daily_intake_contract_invalid/);

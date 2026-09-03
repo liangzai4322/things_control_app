@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { DAILY_INTAKE_FAILURE_EVENT_KEY, createDailyIntakeConsumerFromEnv } from '../integrations/execution-system/daily-intake-consumer.mjs';
+import { DAILY_INTAKE_FAILURE_EVENT_KEY, createDailyIntakeConsumerFromEnv, dailyIntakeReviewDate } from '../integrations/execution-system/daily-intake-consumer.mjs';
 
 function notifyFailure(code) {
   const client = '/Users/ylw/.codex/skills/notification-hub/scripts/notification_client.py';
@@ -8,7 +8,7 @@ function notifyFailure(code) {
 }
 
 try {
-  const summary = await createDailyIntakeConsumerFromEnv().run({ reviewDate: process.env.DAILY_INTAKE_REVIEW_DATE, limit: Number(process.env.DAILY_INTAKE_LIMIT || 20) });
+  const summary = await createDailyIntakeConsumerFromEnv().run({ reviewDate: process.env.DAILY_INTAKE_REVIEW_DATE || dailyIntakeReviewDate(), limit: Number(process.env.DAILY_INTAKE_LIMIT || 20) });
   console.log(JSON.stringify({ ok: !summary.authBlocked && !summary.deadLetters, ...summary }));
   if (summary.paused) process.exitCode = 0;
   if (summary.authBlocked || summary.deadLetters) {
