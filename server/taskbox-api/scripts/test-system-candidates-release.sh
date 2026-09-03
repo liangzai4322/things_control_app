@@ -148,6 +148,8 @@ for system in attention execution feedback health hq mission; do
   test "$mode" = "600"
   test -f "$TMP/systemd/taskbox-$system-daily-intake.service"
   test -f "$TMP/systemd/taskbox-$system-daily-intake.timer"
+  grep -q '^OnUnitInactiveSec=15min$' "$TMP/systemd/taskbox-$system-daily-intake.timer"
+  ! grep -q '^OnUnitActiveSec=' "$TMP/systemd/taskbox-$system-daily-intake.timer"
   grep -q '^RuntimeDirectory=' "$TMP/systemd/taskbox-$system-daily-intake.service"
   grep -q '^ReadOnlyPaths=-' "$TMP/systemd/taskbox-$system-daily-intake.service"
   ! grep -q '%d/' "$TMP/systemd/taskbox-$system-daily-intake.service"

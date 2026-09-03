@@ -3,7 +3,7 @@ Description=Poll TaskBox mission daily-intake inbox
 
 [Timer]
 OnBootSec=5min
-OnUnitActiveSec=15min
+OnUnitInactiveSec=15min
 RandomizedDelaySec=60
 Persistent=true
 Unit=taskbox-mission-daily-intake.service
