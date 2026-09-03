@@ -84,9 +84,9 @@ EXECUTION_TASKBOX_WRITE_ENABLED=1
 
 ## 当前实施与部署状态
 
-- 生产提交树为 `9dd28b20165d9c2e84fe3546003bc2567b12eae9`，API workflow `33734866340` 成功。
+- 生产提交为 `945a5bdc4fb935d371bbd14ef8a92567119e3e7a`，API workflow `33737216451` 成功。
 - 生产已验证 API 正反认证、普通 Token 隔离、跨系统 scope、空队列门槛、六个消费者 no-work smoke 和 timer active；本通道未创建或修改 TaskBox 任务。
-- 六个消费者 timer 已启用；当前回滚快照为 `/opt/taskbox-api/backups/execution-system-20260903T084327Z`，全局即时停用文件为 `/etc/taskbox-daily-intake.disabled`。
+- 六个消费者 timer 已启用，并使用 `OnCalendar=*:0/15` 保证 NEXT 非空；当前回滚快照为 `/opt/taskbox-api/backups/execution-system-20260903T090905Z`，全局即时停用文件为 `/etc/taskbox-daily-intake.disabled`。
 - Token 仅存在于服务器 root-only 文件和 systemd 运行时凭据副本，不写入仓库、浏览器、业务 payload 或日志。
 - 执行系统仍须在实际启用写入前调用 capabilities 核对合同版本和 scope；这是一致性检查，不是 dry-run。合同或 scope 不匹配、服务停用或认证失败时 fail closed。线上实际能力发现尚未由本工作树使用专用 Token 执行，因为本机不保存该生产凭据。
 
