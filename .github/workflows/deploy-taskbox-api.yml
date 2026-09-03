@@ -32,13 +32,14 @@ jobs:
           USER: ${{ secrets.TASKBOX_SERVER_USER }}
         run: |
           bundle="$(mktemp -d)"
-          mkdir -p "$bundle/taskbox-api" "$bundle/daily-intake/integrations" "$bundle/daily-intake/scripts"
+          mkdir -p "$bundle/taskbox-api" "$bundle/daily-intake/integrations" "$bundle/daily-intake/scripts" "$bundle/assistant-gateway"
           cp -a server/taskbox-api/package.json server/taskbox-api/package-lock.json server/taskbox-api/schema.sql server/taskbox-api/src server/taskbox-api/scripts "$bundle/taskbox-api/"
           cp -a server/taskbox-api/systemd "$bundle/daily-intake/"
           for system in attention-system execution-system feedback-system health-system mission-system; do
             cp -a "integrations/$system" "$bundle/daily-intake/integrations/"
           done
           cp -a integrations/attention-system/systemd/. "$bundle/daily-intake/systemd/"
+          cp -a integrations/assistant-gateway/. "$bundle/assistant-gateway/"
           cp scripts/consume-daily-intake-attention.mjs scripts/consume-daily-intake-execution.mjs scripts/consume-daily-intake-health.mjs scripts/consume-daily-intake-mission.mjs scripts/sync-hq-daily-intake-receipts.mjs "$bundle/daily-intake/scripts/"
           cp -a js "$bundle/daily-intake/"
           printf '{"private":true,"type":"module"}\n' > "$bundle/daily-intake/package.json"

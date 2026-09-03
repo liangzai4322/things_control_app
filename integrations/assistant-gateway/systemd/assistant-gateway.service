@@ -1,0 +1,35 @@
+[Unit]
+Description=Assistant Gateway verified Weixin reply worker
+After=network-online.target notification-hub.service taskbox-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=taskbox-assistant-gateway
+Group=taskbox-assistant-gateway
+WorkingDirectory=/opt/taskbox-assistant-gateway
+ExecStart=/usr/bin/python3 /opt/taskbox-assistant-gateway/worker.py
+Environment=ASSISTANT_GATEWAY_MODE=echo
+Environment=NOTIFICATION_HUB_BASE_URL=http://127.0.0.1:3219
+Environment=TASKBOX_HQ_BASE_URL=http://127.0.0.1:3107
+Environment=ASSISTANT_GATEWAY_WORKER_DISABLE_FILE=/etc/taskbox-assistant-gateway-worker.disabled
+LoadCredential=weixin-ingress.token:/etc/notification-ingress/weixin-ingress.token
+LoadCredential=hq-reply.token:/etc/taskbox-assistant-gateway-token
+Restart=on-failure
+RestartSec=30s
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

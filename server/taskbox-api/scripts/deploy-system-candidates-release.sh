@@ -3,8 +3,10 @@ set -euo pipefail
 
 APP_DIR="${TASKBOX_APP_DIR:-/opt/taskbox-api}"
 DAILY_INTAKE_APP_DIR="${DAILY_INTAKE_APP_DIR:-/opt/taskbox-daily-intake}"
+ASSISTANT_GATEWAY_APP_DIR="${ASSISTANT_GATEWAY_APP_DIR:-/opt/taskbox-assistant-gateway}"
 SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
 SERVICE="${TASKBOX_SERVICE:-taskbox-api.service}"
+ASSISTANT_GATEWAY_SERVICE="${ASSISTANT_GATEWAY_SERVICE:-assistant-gateway.service}"
 ENV_FILE="${TASKBOX_ENV_FILE:-/etc/taskbox-api.env}"
 RELEASE_DIR="${1:-}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -13,6 +15,7 @@ EXECUTION_TOKEN_FILE="${EXECUTION_SYSTEM_API_TOKEN_FILE:-/etc/taskbox-execution-
 EXECUTION_DISABLE_FILE="${EXECUTION_SYSTEM_API_DISABLE_FILE:-/etc/taskbox-execution-system.disabled}"
 ASSISTANT_GATEWAY_TOKEN_FILE="${ASSISTANT_GATEWAY_API_TOKEN_FILE:-/etc/taskbox-assistant-gateway-token}"
 ASSISTANT_GATEWAY_DISABLE_FILE="${ASSISTANT_GATEWAY_API_DISABLE_FILE:-/etc/taskbox-assistant-gateway.disabled}"
+WEIXIN_INGRESS_TOKEN_FILE="${WEIXIN_INGRESS_TOKEN_FILE:-/etc/notification-ingress/weixin-ingress.token}"
 DAILY_INTAKE_TOKEN_DIR="${DAILY_INTAKE_TOKEN_DIR:-/etc/taskbox-daily-intake}"
 DAILY_INTAKE_DISABLE_FILE="${DAILY_INTAKE_DISABLE_FILE:-/etc/taskbox-daily-intake.disabled}"
 DAILY_INTAKE_ENABLE_TIMERS="${DAILY_INTAKE_ENABLE_TIMERS:-0}"
@@ -24,6 +27,7 @@ else
   API_RELEASE_DIR="$RELEASE_DIR/taskbox-api"
 fi
 DAILY_RELEASE_DIR="${RELEASE_DIR}/daily-intake"
+ASSISTANT_GATEWAY_RELEASE_DIR="${RELEASE_DIR}/assistant-gateway"
 
 if [[ -z "$RELEASE_DIR" || ! -f "$API_RELEASE_DIR/schema.sql" || ! -f "$API_RELEASE_DIR/src/server.js" ]]; then
   echo "usage: $0 /absolute/path/to/taskbox-api-release" >&2
@@ -55,6 +59,12 @@ if [[ "$API_RELEASE_DIR" != "$RELEASE_DIR" ]]; then
       exit 2
     fi
   done
+  for file in worker.py systemd/assistant-gateway.service tests/test_worker.py; do
+    if [[ ! -f "$ASSISTANT_GATEWAY_RELEASE_DIR/$file" ]]; then
+      echo "assistant gateway release missing $file" >&2
+      exit 2
+    fi
+  done
 fi
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "missing $ENV_FILE" >&2
@@ -75,12 +85,22 @@ DAILY_INTAKE_DISABLE_FILE="${DAILY_INTAKE_DISABLE_FILE:-$DAILY_INTAKE_DISABLE_FI
 
 mkdir -p "$BACKUP_DIR/code" "$BACKUP_DIR/data" "$BACKUP_DIR/config"
 chmod 700 "$BACKUP_DIR" "$BACKUP_DIR/config"
+assistant_gateway_was_active=0
+if systemctl is-active --quiet "$ASSISTANT_GATEWAY_SERVICE" >/dev/null 2>&1; then
+  assistant_gateway_was_active=1
+fi
 systemctl stop "$SERVICE"
 
 cp -a "$APP_DIR/package.json" "$APP_DIR/package-lock.json" "$APP_DIR/schema.sql" "$BACKUP_DIR/code/"
 cp -a "$APP_DIR/src" "$APP_DIR/scripts" "$BACKUP_DIR/code/"
 if [[ -d "$DAILY_INTAKE_APP_DIR" ]]; then
   cp -a "$DAILY_INTAKE_APP_DIR" "$BACKUP_DIR/code/daily-intake"
+fi
+if [[ -d "$ASSISTANT_GATEWAY_APP_DIR" ]]; then
+  cp -a "$ASSISTANT_GATEWAY_APP_DIR" "$BACKUP_DIR/code/assistant-gateway"
+fi
+if [[ -f "$SYSTEMD_DIR/$ASSISTANT_GATEWAY_SERVICE" ]]; then
+  cp -a "$SYSTEMD_DIR/$ASSISTANT_GATEWAY_SERVICE" "$BACKUP_DIR/config/"
 fi
 for unit in taskbox-{attention,execution,feedback,health,hq,mission}-daily-intake.{service,timer}; do
   if [[ -f "$SYSTEMD_DIR/$unit" ]]; then cp -a "$SYSTEMD_DIR/$unit" "$BACKUP_DIR/config/"; fi
@@ -94,8 +114,13 @@ done
 
 cleanup() {
   systemctl start "$SERVICE" >/dev/null 2>&1 || true
+  if [[ "$assistant_gateway_was_active" == "1" ]]; then
+    systemctl start "$ASSISTANT_GATEWAY_SERVICE" >/dev/null 2>&1 || true
+  fi
 }
 trap cleanup ERR
+
+systemctl stop "$ASSISTANT_GATEWAY_SERVICE" >/dev/null 2>&1 || true
 
 install -m 0644 "$API_RELEASE_DIR/package.json" "$APP_DIR/package.json"
 install -m 0644 "$API_RELEASE_DIR/package-lock.json" "$APP_DIR/package-lock.json"
@@ -200,6 +225,21 @@ if [[ -d "$DAILY_RELEASE_DIR/systemd" ]]; then
   done
 fi
 
+if [[ -f "$ASSISTANT_GATEWAY_RELEASE_DIR/worker.py" ]]; then
+  python3 -m unittest discover -s "$ASSISTANT_GATEWAY_RELEASE_DIR/tests" -q
+  if ! getent group taskbox-assistant-gateway >/dev/null 2>&1; then
+    groupadd --system taskbox-assistant-gateway
+  fi
+  if ! id -u taskbox-assistant-gateway >/dev/null 2>&1; then
+    useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin \
+      --gid taskbox-assistant-gateway taskbox-assistant-gateway
+  fi
+  rm -rf "$ASSISTANT_GATEWAY_APP_DIR"
+  install -d -m 0755 "$ASSISTANT_GATEWAY_APP_DIR"
+  install -m 0755 "$ASSISTANT_GATEWAY_RELEASE_DIR/worker.py" "$ASSISTANT_GATEWAY_APP_DIR/worker.py"
+  install -m 0644 "$ASSISTANT_GATEWAY_RELEASE_DIR/systemd/assistant-gateway.service" "$SYSTEMD_DIR/$ASSISTANT_GATEWAY_SERVICE"
+fi
+
 cd "$APP_DIR"
 npm ci --omit=dev
 npm run init-db
@@ -236,6 +276,28 @@ if curl --silent --show-error --fail --output /dev/null \
   echo "generic TaskBox token unexpectedly accessed execution API" >&2
   exit 1
 fi
+
+if [[ ! -s "$WEIXIN_INGRESS_TOKEN_FILE" ]]; then
+  echo "missing Notification Hub ingress credential source" >&2
+  exit 1
+fi
+if [[ "${TASKBOX_SKIP_CREDENTIAL_OWNER_CHECK:-0}" != "1" ]]; then
+  if [[ "$(stat -c '%U:%G:%a' "$WEIXIN_INGRESS_TOKEN_FILE")" != "root:root:600" ]]; then
+    echo "invalid Notification Hub ingress credential permissions" >&2
+    exit 1
+  fi
+  if [[ "$(stat -c '%U:%G:%a' "$ASSISTANT_GATEWAY_TOKEN_FILE")" != "root:root:600" ]]; then
+    echo "invalid HQ reply credential permissions" >&2
+    exit 1
+  fi
+fi
+WEIXIN_INGRESS_TOKEN="$(tr -d '\r\n' < "$WEIXIN_INGRESS_TOKEN_FILE")"
+WEIXIN_REPLY_PROBE_BODY='{"consumerId":"assistant-gateway","leaseToken":"deployment-probe","replyKey":"assistant-gateway:deployment-probe","text":"deployment probe"}'
+weixin_reply_probe_code="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  --request POST --header "Authorization: Bearer $WEIXIN_INGRESS_TOKEN" \
+  --header 'Content-Type: application/json' --data "$WEIXIN_REPLY_PROBE_BODY" \
+  'http://127.0.0.1:3219/v1/weixin-inbound/assistant-gateway-deployment-probe/reply')"
+[[ "$weixin_reply_probe_code" == "404" ]] || { echo "Notification Hub reply probe failed: $weixin_reply_probe_code" >&2; exit 1; }
 if curl --silent --show-error --fail --output /dev/null \
   --header "Authorization: Bearer $EXECUTION_TOKEN" "$HEALTH_URL" 2>/dev/null; then
   echo "execution token unexpectedly accessed generic TaskBox API" >&2
@@ -322,6 +384,10 @@ if [[ "$DAILY_INTAKE_ENABLE_TIMERS" == "1" ]]; then
   done
   daily_intake_timer_state=enabled
 fi
+systemctl daemon-reload
+systemctl enable --now "$ASSISTANT_GATEWAY_SERVICE"
+systemctl is-enabled --quiet "$ASSISTANT_GATEWAY_SERVICE"
+systemctl is-active --quiet "$ASSISTANT_GATEWAY_SERVICE"
 trap - ERR
 
 echo "deployment_ok"
@@ -330,6 +396,8 @@ echo "execution_token_file=$EXECUTION_TOKEN_FILE"
 echo "execution_disable_file=$EXECUTION_DISABLE_FILE"
 echo "assistant_gateway_token_file=$ASSISTANT_GATEWAY_TOKEN_FILE"
 echo "assistant_gateway_disable_file=$ASSISTANT_GATEWAY_DISABLE_FILE"
+echo "assistant_gateway_worker=active"
+echo "assistant_gateway_worker_mode=echo"
 echo "daily_intake_sender_token_file=$DAILY_SENDER_TOKEN_FILE"
 echo "daily_intake_hq_token_file=$DAILY_HQ_TOKEN_FILE"
 echo "daily_intake_token_dir=$DAILY_INTAKE_TOKEN_DIR"

@@ -5,6 +5,7 @@ APP_DIR="${TASKBOX_APP_DIR:-/opt/taskbox-api}"
 DAILY_INTAKE_APP_DIR="${DAILY_INTAKE_APP_DIR:-/opt/taskbox-daily-intake}"
 SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
 SERVICE="${TASKBOX_SERVICE:-taskbox-api.service}"
+ASSISTANT_GATEWAY_SERVICE="${ASSISTANT_GATEWAY_SERVICE:-assistant-gateway.service}"
 ENV_FILE="${TASKBOX_ENV_FILE:-/etc/taskbox-api.env}"
 BACKUP_DIR="${1:-}"
 
@@ -40,6 +41,7 @@ disable_external_write_apis() {
 }
 
 systemctl stop "$SERVICE"
+systemctl disable --now "$ASSISTANT_GATEWAY_SERVICE" >/dev/null 2>&1 || true
 disable_external_write_apis
 install -m 0644 "$BACKUP_DIR/code/package.json" "$APP_DIR/package.json"
 install -m 0644 "$BACKUP_DIR/code/package-lock.json" "$APP_DIR/package-lock.json"
@@ -53,6 +55,14 @@ if [[ -d "$BACKUP_DIR/code/daily-intake" ]]; then
   install -d -m 0755 "$DAILY_INTAKE_APP_DIR"
   cp -a "$BACKUP_DIR/code/daily-intake/." "$DAILY_INTAKE_APP_DIR/"
   chown -R root:root "$DAILY_INTAKE_APP_DIR"
+fi
+if [[ -d "$BACKUP_DIR/code/assistant-gateway" ]]; then
+  rm -rf "${ASSISTANT_GATEWAY_APP_DIR:-/opt/taskbox-assistant-gateway}"
+  install -d -m 0755 "${ASSISTANT_GATEWAY_APP_DIR:-/opt/taskbox-assistant-gateway}"
+  cp -a "$BACKUP_DIR/code/assistant-gateway/." "${ASSISTANT_GATEWAY_APP_DIR:-/opt/taskbox-assistant-gateway}/"
+fi
+if [[ -f "$BACKUP_DIR/config/$ASSISTANT_GATEWAY_SERVICE" ]]; then
+  install -m 0644 "$BACKUP_DIR/config/$ASSISTANT_GATEWAY_SERVICE" "$SYSTEMD_DIR/$ASSISTANT_GATEWAY_SERVICE"
 fi
 for unit in taskbox-{attention,execution,feedback,health,hq,mission}-daily-intake.{service,timer}; do
   if [[ -f "$BACKUP_DIR/config/$unit" ]]; then install -m 0644 "$BACKUP_DIR/config/$unit" "$SYSTEMD_DIR/$unit"; fi

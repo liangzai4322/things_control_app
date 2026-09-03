@@ -18,6 +18,7 @@ mkdir -p "$APP_DIR/data" "$API_RELEASE_DIR" "$BACKUP_ROOT" "$BIN_DIR"
 cp -a "$ROOT/package.json" "$ROOT/package-lock.json" "$ROOT/schema.sql" "$ROOT/src" "$ROOT/scripts" "$APP_DIR/"
 cp -a "$ROOT/package.json" "$ROOT/package-lock.json" "$ROOT/schema.sql" "$ROOT/src" "$ROOT/scripts" "$API_RELEASE_DIR/"
 mkdir -p "$RELEASE_DIR/daily-intake/systemd" "$RELEASE_DIR/daily-intake/integrations" "$RELEASE_DIR/daily-intake/scripts"
+mkdir -p "$RELEASE_DIR/assistant-gateway"
 cp -a "$ROOT/systemd/." "$RELEASE_DIR/daily-intake/systemd/"
 cp -a "$PROJECT_ROOT/integrations/attention-system/systemd/." "$RELEASE_DIR/daily-intake/systemd/"
 for system in attention-system execution-system feedback-system health-system mission-system; do
@@ -26,6 +27,7 @@ done
 cp "$PROJECT_ROOT"/scripts/consume-daily-intake-{attention,execution,health,mission}.mjs "$PROJECT_ROOT/scripts/sync-hq-daily-intake-receipts.mjs" "$RELEASE_DIR/daily-intake/scripts/"
 cp -a "$PROJECT_ROOT/js" "$RELEASE_DIR/daily-intake/"
 printf '{"private":true,"type":"module"}\n' > "$RELEASE_DIR/daily-intake/package.json"
+cp -a "$PROJECT_ROOT/integrations/assistant-gateway/." "$RELEASE_DIR/assistant-gateway/"
 printf 'TASKBOX_DB_PATH=%s\n' "$APP_DIR/data/taskbox.sqlite" > "$ENV_FILE"
 printf 'TASKBOX_API_PORT=3107\n' >> "$ENV_FILE"
 printf 'TASKBOX_API_TOKEN=release-test-token\n' >> "$ENV_FILE"
@@ -41,6 +43,9 @@ printf 'hq-test-token\n' > "$TMP/daily-intake/hq.token"
 for system in execution health attention feedback mission; do printf '%s-test-token\n' "$system" > "$TMP/daily-intake/$system.token"; done
 printf 'active\n' > "$STATE_FILE"
 printf 'fixture\n' > "$APP_DIR/data/taskbox.sqlite"
+mkdir -p "$TMP/notification-ingress"
+printf 'ingress-test-token\n' > "$TMP/notification-ingress/weixin-ingress.token"
+chmod 600 "$TMP/notification-ingress/weixin-ingress.token"
 
 cat > "$BIN_DIR/systemctl" <<'EOF'
 #!/usr/bin/env bash
@@ -83,6 +88,7 @@ if [[ "$*" == *"/v1/hq/proposals/assistant-gateway-auth-probe/replies"* ]]; then
   if [[ "$*" == *"Authorization: Bearer release-test-token"* ]]; then printf '401'; else printf '404'; fi
   exit
 fi
+if [[ "$*" == *"/v1/weixin-inbound/assistant-gateway-deployment-probe/reply"* ]]; then printf '404'; exit; fi
 if [[ "$*" == *"/v1/system-candidates?"* ]]; then
   if [[ "$*" == *"Authorization: Bearer release-test-token"* ]]; then printf '401'; exit; fi
   if [[ "$*" == *"Authorization: Bearer sender-test-token"* ]]; then printf '403'; exit; fi
@@ -131,6 +137,10 @@ export TASKBOX_BACKUP_DIR="$BACKUP_ROOT/snapshot"
 export DAILY_INTAKE_APP_DIR="$TMP/daily-app"
 export SYSTEMD_DIR="$TMP/systemd"
 export DAILY_INTAKE_ENABLE_TIMERS=1
+export ASSISTANT_GATEWAY_APP_DIR="$TMP/assistant-gateway-app"
+export ASSISTANT_GATEWAY_SERVICE="assistant-gateway.service"
+export WEIXIN_INGRESS_TOKEN_FILE="$TMP/notification-ingress/weixin-ingress.token"
+export TASKBOX_SKIP_CREDENTIAL_OWNER_CHECK=1
 
 "$ROOT/scripts/deploy-system-candidates-release.sh" "$RELEASE_DIR" > "$TMP/deploy.log"
 grep -qx active "$STATE_FILE"
@@ -165,6 +175,8 @@ for system in attention execution feedback health hq mission; do
   ! grep -q '%d/' "$TMP/systemd/taskbox-$system-daily-intake.service"
 done
 grep -q 'daily_intake_timers=enabled' "$TMP/deploy.log"
+grep -q 'assistant_gateway_worker=active' "$TMP/deploy.log"
+test -f "$TMP/systemd/assistant-gateway.service"
 grep -q 'start taskbox-hq-daily-intake.service' "$SYSTEMCTL_CALL_LOG"
 grep -q 'enable taskbox-hq-daily-intake.timer' "$TMP/systemctl.log"
 
