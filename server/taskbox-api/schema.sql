@@ -368,6 +368,50 @@ CREATE INDEX IF NOT EXISTS idx_hq_review_rules_enabled_scope ON hq_review_rules(
 CREATE INDEX IF NOT EXISTS idx_hq_proposal_events_proposal_created
   ON hq_proposal_events(proposal_id, created_at ASC);
 
+CREATE TABLE IF NOT EXISTS hq_proposal_replies (
+  reply_id TEXT PRIMARY KEY,
+  inbound_message_id TEXT NOT NULL UNIQUE,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  request_hash TEXT NOT NULL,
+  proposal_id TEXT NOT NULL,
+  expected_revision INTEGER NOT NULL,
+  decision TEXT NOT NULL,
+  text_hash TEXT NOT NULL,
+  source TEXT NOT NULL,
+  reply_ref TEXT NOT NULL,
+  verified_user_ref TEXT NOT NULL,
+  signature_ref TEXT NOT NULL,
+  received_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'received',
+  http_status INTEGER,
+  response_json TEXT,
+  error_code TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK (decision IN ('approve', 'reject', 'defer', 'expand')),
+  CHECK (status IN ('received', 'applied', 'clarification_recorded', 'rejected')),
+  FOREIGN KEY (proposal_id) REFERENCES hq_proposals(decision_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_hq_proposal_replies_proposal_created
+  ON hq_proposal_replies(proposal_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS hq_proposal_reply_audit (
+  id TEXT PRIMARY KEY,
+  reply_id TEXT NOT NULL,
+  proposal_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  detail_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  UNIQUE(reply_id, event_type),
+  FOREIGN KEY (reply_id) REFERENCES hq_proposal_replies(reply_id) ON DELETE CASCADE,
+  FOREIGN KEY (proposal_id) REFERENCES hq_proposals(decision_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_hq_proposal_reply_audit_proposal_created
+  ON hq_proposal_reply_audit(proposal_id, created_at ASC);
+
 CREATE TABLE IF NOT EXISTS hq_period_reviews (
   period_type TEXT NOT NULL,
   period_key TEXT NOT NULL,

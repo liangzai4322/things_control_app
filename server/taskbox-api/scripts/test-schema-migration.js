@@ -36,7 +36,7 @@ try {
     if (!indexes.includes(name)) throw new Error(`missing index ${name}`);
   });
   const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((item) => item.name);
-  ['branches', 'hq_daily_briefs', 'hq_decisions', 'hq_proposals', 'hq_proposal_events', 'hq_period_reviews', 'system_candidates', 'health_observations', 'health_snapshots', 'mission_records', 'mission_record_versions', 'mission_candidates', 'mission_events', 'execution_task_operations', 'execution_task_audit'].forEach((name) => {
+  ['branches', 'hq_daily_briefs', 'hq_decisions', 'hq_proposals', 'hq_proposal_events', 'hq_proposal_replies', 'hq_proposal_reply_audit', 'hq_period_reviews', 'system_candidates', 'health_observations', 'health_snapshots', 'mission_records', 'mission_record_versions', 'mission_candidates', 'mission_events', 'execution_task_operations', 'execution_task_audit'].forEach((name) => {
     if (!tables.includes(name)) throw new Error(`missing table ${name}`);
   });
   const candidateIndexes = db.prepare('PRAGMA index_list(system_candidates)').all().map((item) => item.name);
@@ -45,6 +45,8 @@ try {
   ['idx_hq_proposals_status_updated', 'idx_hq_proposals_type_updated'].forEach((name) => {
     if (!proposalIndexes.includes(name)) throw new Error(`missing proposal index ${name}`);
   });
+  const replyIndexes = db.prepare('PRAGMA index_list(hq_proposal_replies)').all().map((item) => item.name);
+  if (!replyIndexes.includes('idx_hq_proposal_replies_proposal_created')) throw new Error('missing proposal reply index');
   db.close();
   console.log('server schema migration tests passed');
 } finally {
