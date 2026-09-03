@@ -76,18 +76,18 @@ EXECUTION_TASKBOX_WRITE_ENABLED=1
 
 每个包处理后提交 `POST /v1/system-candidates/:intakeId/receipt`；请求体严格为 `status`（`received|processing|processed|retrying|failed|ignored`）、稳定 `idempotencyKey` 和 `projection`，失败时才追加 `errorCode/errorMessage/retryAt`。回执投影仅含真实 `taskId` 引用、outcome、progress/blocker/evidenceRefs、needsUserAction 和审计引用；不回传任务正文、Token 或任务库快照。`explicitDispatches` 也只记为 `explicit_dispatch_read_only`：真正 TaskBox 写入必须另走已授权的 execution 专用写入合同。
 
-生产运行入口为 `node scripts/consume-daily-intake-execution.mjs`。受控 runner 只从 `DAILY_INTAKE_TOKEN_FILE` 读取专属身份；默认挂载为 `/etc/taskbox-daily-intake/execution.token`（目录 `0700`、文件 `0600`）。端点由 `DAILY_INTAKE_ENDPOINT` 指定，默认 `https://liangzai666.com/taskbox-api`。它禁止回退到 `TASKBOX_API_TOKEN`、浏览器 Token、原始环境变量 Token 或 execution TaskBox 写 Token；缺失即 fail closed。专属身份只应拥有 execution `system-candidates` 读取与 receipt 写入 scope，绝不能拥有任务 CRUD、HQ 批准或其他系统 intake scope。
+生产运行入口为 `node scripts/consume-daily-intake-execution.mjs`。受控 runner 只读取 execution 专属的 systemd `LoadCredential`；源文件位于 root-only 的 `/etc/taskbox-daily-intake/execution.token`（目录 `0700`、文件 `0600`），进程从 `CREDENTIALS_DIRECTORY` 读取隔离副本。端点由 `DAILY_INTAKE_ENDPOINT` 指定，默认 `https://liangzai666.com/taskbox-api`。它禁止回退到 `TASKBOX_API_TOKEN`、浏览器 Token、原始环境变量 Token 或 execution TaskBox 写 Token；缺失即 fail closed。专属身份只拥有 execution `system-candidates` 读取与 receipt 写入 scope，不能访问任务 CRUD、HQ 批准或其他系统 intake。
 
-消费者仅查询 `status=accepted` 与 `status=retrying`，跳过 `processed/ignored`；每次消费必须由正式日省 batch 提供精确 `DAILY_INTAKE_REVIEW_DATE=YYYY-MM-DD`，缺失或非法即 fail closed，绝不扫描所有历史 accepted 记录。每轮持有单消费者 lease，读取后将**仅 receipt**（不含候选正文）原子写入私有 `receipt-outbox`，再串行投递。网络/5xx/429 按最多五次指数退避重试；401/403 进入 `authBlocked` 且停止重试；409 进入 dead-letter，绝不覆盖。重启后优先重放 due receipt；同 intake/revision 的 receipt body 不同会 fail closed。运行摘要不含候选正文或凭据；`npm run healthcheck:daily-intake-execution` 以专属身份分别作 accepted/retrying 最小读取和 outbox 状态检查。
+消费者仅查询 `status=accepted` 与 `status=retrying`，跳过 `processed/ignored`。定时运行默认按 `Asia/Shanghai` 生成当天 `reviewDate`，人工恢复时可用 `DAILY_INTAKE_REVIEW_DATE=YYYY-MM-DD` 精确覆盖。每轮持有单消费者 lease，读取后将**仅 receipt**（不含候选正文）原子写入私有 `receipt-outbox`，再串行投递。网络/5xx/429 按最多五次指数退避重试；401/403 进入 `authBlocked` 且停止重试；409 进入 dead-letter，绝不覆盖。重启后优先重放 due receipt；同 intake/revision 的 receipt body 不同会 fail closed。运行摘要不含候选正文或凭据。
 
-正式触发只能由“正式日省 batch 已 accepted”后的单次事件携带 `reviewDate` 启动；不得接到日省 Lite 高频扫描。共享 TaskBox API 当前没有 accepted webhook，首版只能由执行系统受控 runner 低频轮询，且不得由本系统直接改服务器或停用文件。若以后增加低频补偿，必须先由共享底座确认非终态筛选、lease 和 receipt 重放语义。检测到全局停用文件产生的 `503 daily_intake_api_disabled` 时，消费者按“有意暂停”成功退出、不重试也不通知。最终失败通知使用 Notification Hub B 级稳定事件键 `daily-intake:execution-consumer-readiness-failed:2026-09-03`。本模块尚未部署或注册自动化。
+生产使用 15 分钟 systemd timer 低频轮询，不接到日省 Lite 高频扫描，也不获得任何 TaskBox 写权限。检测到全局停用文件产生的 `503 daily_intake_api_disabled` 时，消费者按“有意暂停”成功退出、不重试也不通知。最终失败通知使用 Notification Hub B 级稳定事件键 `daily-intake:execution-consumer-readiness-failed:2026-09-03`。
 
 ## 当前实施与部署状态
 
-- 执行系统客户端、合同校验和专项测试已在本工作树实施。
-- TaskBox 日省共享底座已由盒子 APP 独立部署到生产：提交 `4c64b5e`，API workflow `33729195141`、Pages workflow `33729180885`，Build ID `64e751c46d52`；回滚快照为 `/opt/taskbox-api/backups/execution-system-20260903T073934Z`，即时停用文件为 `/etc/taskbox-daily-intake.disabled`。盒子 APP 已验证认证正反例、幂等/冲突/回执状态、HQ 最小投影及零 TaskBox 任务副作用。
-- 2026-09-03 本机只读核验未发现受控挂载目录 `/etc/taskbox-daily-intake/` 或 `execution.token`；因此没有运行线上空队列/权限探针，也没有部署或注册轮询。Token 必须由受控 runner 的秘密管理器挂载，不能写入本工作树、环境明文或浏览器。
-- 本工作树没有配置或读取真实 Token，没有修改 TaskBox 数据，也没有通过旧接口做兼容性写入。
+- 生产提交树为 `9dd28b20165d9c2e84fe3546003bc2567b12eae9`，API workflow `33734866340` 成功。
+- 生产已验证 API 正反认证、普通 Token 隔离、跨系统 scope、空队列门槛、六个消费者 no-work smoke 和 timer active；本通道未创建或修改 TaskBox 任务。
+- 六个消费者 timer 已启用；当前回滚快照为 `/opt/taskbox-api/backups/execution-system-20260903T084327Z`，全局即时停用文件为 `/etc/taskbox-daily-intake.disabled`。
+- Token 仅存在于服务器 root-only 文件和 systemd 运行时凭据副本，不写入仓库、浏览器、业务 payload 或日志。
 - 执行系统仍须在实际启用写入前调用 capabilities 核对合同版本和 scope；这是一致性检查，不是 dry-run。合同或 scope 不匹配、服务停用或认证失败时 fail closed。线上实际能力发现尚未由本工作树使用专用 Token 执行，因为本机不保存该生产凭据。
 
 生产停用由盒子 APP 服务端控制：创建 `/etc/taskbox-execution-system.disabled` 后专用 API 返回 `503 execution_api_disabled`；移除该文件可恢复服务。执行系统侧同时可将 `EXECUTION_TASKBOX_WRITE_ENABLED` 设为非 `1`，立即拒绝本地客户端写入。

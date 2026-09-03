@@ -47,3 +47,9 @@ Daily-intake consumers must include `intake=1`; otherwise they may see legacy ca
 ## Local verification
 
 `npm run test:daily-intake-e2e` boots an isolated temporary API/database and verifies the dedicated sender, consumer, and HQ scopes; authenticated intake writes for execution, health, attention, feedback, and mission; partial-batch behavior; identical retry behavior; unknown-contract acknowledgement; record reads; receipt persistence; the HQ-safe projection; and that no TaskBox task was created. Browser consumers are covered with pure request adapters in their individual `test:*intake` scripts; the E2E test validates the transport boundary rather than a browser runtime.
+
+## Production status (2026-09-03)
+
+Workflow `33734866340` deployed the final runtime and passed authenticated `200`, unauthenticated `401`, generic-token isolation `401`, cross-system scope isolation, empty `accepted`/`retrying` gates, and one real no-work smoke run for every consumer. The six `taskbox-{hq,mission,health,attention,feedback,execution}-daily-intake.timer` units are enabled at a 15-minute interval. Each service runs under its own system user, receives only its own `LoadCredential`, reads the mounted copy from systemd's `CREDENTIALS_DIRECTORY`, and writes only its private state directory. The source token directory remains root-only.
+
+The current rollback snapshot is `/opt/taskbox-api/backups/execution-system-20260903T084327Z`. Creating `/etc/taskbox-daily-intake.disabled` fail-closes the transport and makes consumers exit as intentionally paused; disabling the six timers stops scheduling without removing data. The release workflow accepts `enable_daily_intake_timers=false` for a deploy-and-verify-only pass and enables timers only after all gates pass when the input is `true`.
