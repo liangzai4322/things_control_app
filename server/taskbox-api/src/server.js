@@ -1692,7 +1692,7 @@ function sendProposalError(res, error) {
 
 const ASSISTANT_GATEWAY_REPLY_CONTRACT = '2026-09-03';
 const ASSISTANT_GATEWAY_REPLY_DECISIONS = new Set(['approve', 'reject', 'defer', 'expand']);
-const ASSISTANT_GATEWAY_REPLY_SOURCES = new Set(['personal_wechat', 'notification_hub_weixin']);
+const ASSISTANT_GATEWAY_REPLY_SOURCES = new Set(['notification_hub_weixin']);
 
 function boundedReplyText(value, maxLength, field, required = false) {
   const text = String(value || '').trim();
