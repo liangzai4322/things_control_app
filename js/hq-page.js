@@ -40,7 +40,7 @@ import { buildHqSystemViews, summarizeHqSystemViews } from './hq-systems.js';
 import { readFiveSystemHqPorts } from './five-system-hq-ports.js';
 import { buildHqResourceGovernance } from './hq-resource-governance.js';
 import { buildCollaborationInbox, systemCollaborationState } from './hq-collaboration.js';
-import { buildSystemReceiptProjection, readSystemReceipts } from './hq-system-receipts.js';
+import { buildSystemReceiptProjection } from './hq-system-receipts.js';
 import {
   parseFiveSystemBootstrapFile,
   publishFiveSystemBaseline,
@@ -1464,10 +1464,9 @@ export async function renderHqPage(app, { refreshRemote = true, dimension = 'day
     if (getPendingApiMutationCount()) return;
     const nextDate = shiftReviewDate(reviewDate, 1);
     const systemIds = ['mission', 'health', 'time', 'execution', 'feedback'];
-    const [remote, nextBrief, receiptResult, ...candidateResults] = await Promise.all([
+    const [remote, nextBrief, ...candidateResults] = await Promise.all([
       requestTaskboxApi(`/hq/today?date=${encodeURIComponent(reviewDate)}`),
       requestTaskboxApi(`/hq/daily-briefs/${encodeURIComponent(nextDate)}`).catch(() => null),
-      readSystemReceipts((path) => requestTaskboxApi(path, { affectsSyncState: false }), reviewDate),
       ...systemIds.map((systemId) => requestTaskboxApi(`/system-candidates?systemId=${encodeURIComponent(systemId)}&status=pending&limit=100`).catch(() => null)),
     ]);
     refreshHqPeriodCache(reviewDate).catch(() => null);
@@ -1475,7 +1474,7 @@ export async function renderHqPage(app, { refreshRemote = true, dimension = 'day
     const isHqRoute = currentHash === '#hq' || currentHash.startsWith('#hq/');
     if (!remote || renderVersion !== hqRenderVersion || !isHqRoute) return;
     const systemCandidateCounts = Object.fromEntries(systemIds.map((systemId, index) => [systemId, Number(candidateResults[index]?.count) || 0]));
-    const reconciled = { ...reconcileHqSnapshotCommitments(remote, getTasks()), nextBrief, systemCandidateCounts, systemReceipts: receiptResult.receipts };
+    const reconciled = { ...reconcileHqSnapshotCommitments(remote, getTasks()), nextBrief, systemCandidateCounts };
     writeCache({ brief: reconciled.brief, decisions: reconciled.decisions || [] });
     renderSnapshot(app, reconciled, { remote: true });
   } catch {

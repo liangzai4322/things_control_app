@@ -1,0 +1,26 @@
+[Unit]
+Description=TaskBox mission daily-intake consumer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=taskbox-mission
+Group=taskbox-mission
+LoadCredential=mission.token:/etc/taskbox-daily-intake/mission.token
+Environment=DAILY_INTAKE_MISSION_TOKEN_FILE=%d/mission.token
+Environment=DAILY_INTAKE_ENDPOINT=https://liangzai666.com/taskbox-api/v1
+Environment=MISSION_DAILY_INTAKE_STATE_DIR=/var/lib/taskbox-mission-daily-intake
+Environment=MISSION_DAILY_INTAKE_DISABLE_FILE=/etc/taskbox-mission-daily-intake.disabled
+RuntimeDirectory=taskbox-mission-daily-intake
+StateDirectory=taskbox-mission-daily-intake
+ExecStart=/usr/bin/flock -n /run/taskbox-mission-daily-intake/runner.lock /usr/bin/node /opt/taskbox-daily-intake/scripts/consume-daily-intake-mission.mjs
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=-/etc/taskbox-daily-intake.disabled -/etc/taskbox-mission-daily-intake.disabled
+ReadWritePaths=/var/lib/taskbox-mission-daily-intake /run/taskbox-mission-daily-intake
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,24 @@
+[Unit]
+Description=TaskBox health daily-intake consumer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=taskbox-health
+Group=taskbox-health
+LoadCredential=health.token:/etc/taskbox-daily-intake/health.token
+Environment=DAILY_INTAKE_HEALTH_TOKEN_FILE=%d/health.token
+Environment=DAILY_INTAKE_ENDPOINT=https://liangzai666.com/taskbox-api
+RuntimeDirectory=taskbox-health-daily-intake
+StateDirectory=taskbox-health-daily-intake
+ExecStart=/usr/bin/flock -n /run/taskbox-health-daily-intake/runner.lock /usr/bin/node /opt/taskbox-daily-intake/scripts/consume-daily-intake-health.mjs
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=-/etc/taskbox-daily-intake.disabled -/etc/taskbox-health-daily-intake.disabled
+ReadWritePaths=/var/lib/taskbox-health-daily-intake /run/taskbox-health-daily-intake
+
+[Install]
+WantedBy=multi-user.target

@@ -18,6 +18,7 @@ const executionDisableFile = String(process.env.EXECUTION_SYSTEM_API_DISABLE_FIL
 const dailyIntakeApiEnabled = String(process.env.DAILY_INTAKE_API_ENABLED || '') === '1';
 const dailyIntakeDisableFile = String(process.env.DAILY_INTAKE_DISABLE_FILE || '/etc/taskbox-daily-intake.disabled').trim();
 const dailyIntakeSystems = ['execution', 'health', 'attention', 'feedback', 'mission', 'governance'];
+const hqDailyIntakeCacheFile = String(process.env.HQ_DAILY_INTAKE_CACHE_FILE || '/var/lib/taskbox-hq-daily-intake/receipts-summary.json').trim();
 const allowedOrigins = String(process.env.TASKBOX_ALLOWED_ORIGINS || 'https://liangzai4322.github.io,http://localhost:8000,http://127.0.0.1:8000')
   .split(',')
   .map((item) => item.trim())
@@ -94,13 +95,16 @@ const dailyIntakeIdentities = () => {
       name: systemId,
       systemId,
       token: readSecretFile(String(process.env[`DAILY_INTAKE_${systemId.toUpperCase()}_TOKEN_FILE`] || '').trim()),
-      scopes: ['intakes:read', 'receipts:write'],
+      scopes: systemId === 'health'
+        ? ['intakes:read', 'receipts:write', 'health:observations:read', 'health:observations:write']
+        : systemId === 'mission'
+          ? ['intakes:read', 'receipts:write', 'mission-state:read']
+        : ['intakes:read', 'receipts:write'],
     })),
   ];
   return identities.filter((identity) => identity.token);
 };
 const resolveDailyIntakeIdentity = (req) => {
-  if (!dailyIntakeApiEnabled || (dailyIntakeDisableFile && fs.existsSync(dailyIntakeDisableFile))) return null;
   const token = bearerToken(req);
   return dailyIntakeIdentities().find((identity) => secretMatches(token, identity.token)) || null;
 };
@@ -148,9 +152,24 @@ app.use((req, res, next) => {
   return next();
 });
 app.use((req, res, next) => {
+  const intakeRoute = req.path === '/v1/mission/state'
+    || req.path === '/v1/hq/system-receipts'
+    || req.path === '/v1/health/observations'
+    || req.path === '/v1/health/observations/batch'
+    || /^\/v1\/system-candidates\/[^/]+\/receipt$/.test(req.path)
+    || (req.path === '/v1/system-candidates' && String(req.query?.intake || '') === '1')
+    || (req.path === '/v1/system-candidates/batch' && dailyIntakeTransport.isIntakeBatch(req));
+  if (intakeRoute && dailyIntakeApiEnabled && !req.dailyIntakeIdentity) {
+    if (dailyIntakeDisableFile && fs.existsSync(dailyIntakeDisableFile)) {
+      return res.status(503).json({ error: 'daily_intake_api_disabled' });
+    }
+    return res.status(401).json({ error: 'daily_intake_unauthorized' });
+  }
   if (req.dailyIntakeIdentity) {
     if (req.path === '/v1/system-candidates' || req.path === '/v1/system-candidates/batch'
-      || /^\/v1\/system-candidates\/[^/]+\/receipt$/.test(req.path) || req.path === '/v1/hq/system-receipts') return next();
+      || /^\/v1\/system-candidates\/[^/]+\/receipt$/.test(req.path) || req.path === '/v1/hq/system-receipts'
+      || req.path === '/v1/health/observations' || req.path === '/v1/health/observations/batch'
+      || req.path === '/v1/mission/state') return next();
     return res.status(403).json({ error: 'daily_intake_route_denied' });
   }
   if (req.path.startsWith('/v1/execution')) {
@@ -169,6 +188,9 @@ app.use((req, res, next) => {
       scopes: new Set(String(process.env.EXECUTION_SYSTEM_API_SCOPES || '').split(',').map((item) => item.trim()).filter(Boolean)),
     };
     return next();
+  }
+  if (dailyIntakeApiEnabled && (req.path === '/v1/health/observations' || req.path === '/v1/health/observations/batch')) {
+    return res.status(401).json({ error: 'daily_intake_unauthorized' });
   }
   if (!apiToken) return next();
   const auth = bearerToken(req);
@@ -1441,8 +1463,8 @@ app.get('/health', (req, res) => {
   res.json({ ok: true, db: path.basename(dbPath), time: now() });
 });
 
-installHealthSystemRoutes({ app, db, now, json, parseJson });
-installMissionSystemRoutes({ app, db, now, json, parseJson });
+installHealthSystemRoutes({ app, db, now, json, parseJson, authorizeDailyIntake });
+installMissionSystemRoutes({ app, db, now, json, parseJson, authorizeDailyIntake });
 installExecutionSystemRoutes({
   app, db, now, json, parseJson, uid, rowToTask, taskParams, normalizeTaskCompletionTransition,
 });
@@ -1497,9 +1519,47 @@ app.patch('/v1/daily-quote', (req, res) => {
   res.json(next);
 });
 
+const HQ_RECEIPT_SYSTEMS = new Set(['mission', 'health', 'attention', 'execution', 'feedback']);
+const HQ_RECEIPT_FIELDS = ['systemId', 'receiptId', 'intakeRef', 'effectiveDate', 'generatedAt', 'freshness', 'status', 'riskLevel', 'needsUserInput', 'inputGaps', 'factRefs', 'evidenceRefs', 'syncState', 'revision'];
+const safeReceiptText = (value, max = 240) => String(value || '').trim().slice(0, max);
+const safeReceiptList = (value, maxItems = 40) => (Array.isArray(value) ? value : [])
+  .map((item) => safeReceiptText(item, 500)).filter(Boolean).slice(0, maxItems);
+
+function readHqDailyIntakeReceipts(reviewDate) {
+  try {
+    if (!hqDailyIntakeCacheFile || fs.statSync(hqDailyIntakeCacheFile).size > 1024 * 1024) return [];
+    const cache = parseJson(fs.readFileSync(hqDailyIntakeCacheFile, 'utf8'), null);
+    if (!cache || !Array.isArray(cache.receipts)) return [];
+    return cache.receipts.map((item) => {
+      const projection = item?.projection && typeof item.projection === 'object' ? item.projection : {};
+      const effectiveDate = validDateKey(item?.effectiveDate || item?.reviewDate);
+      if (!HQ_RECEIPT_SYSTEMS.has(safeReceiptText(item?.systemId, 80)) || effectiveDate !== reviewDate) return null;
+      const receipt = {
+        systemId: safeReceiptText(item.systemId, 80),
+        receiptId: safeReceiptText(item.receiptId || item.id, 240),
+        intakeRef: safeReceiptText(item.intakeRef || item.intakeId, 240),
+        effectiveDate,
+        generatedAt: safeReceiptText(item.generatedAt || item.updatedAt, 80),
+        freshness: typeof item.freshness === 'object' ? { status: safeReceiptText(item.freshness?.status, 40) } : safeReceiptText(item.freshness, 40),
+        status: safeReceiptText(item.status, 80) || 'unknown',
+        riskLevel: safeReceiptText(item.riskLevel || projection.riskLevel, 80),
+        needsUserInput: item.needsUserInput === true || projection.needsUserInput === true,
+        inputGaps: safeReceiptList(item.inputGaps || projection.inputGaps),
+        factRefs: safeReceiptList(item.factRefs || projection.factRefs),
+        evidenceRefs: safeReceiptList(item.evidenceRefs || projection.evidenceRefs),
+        syncState: safeReceiptText(item.syncState || projection.syncState, 80),
+        revision: Math.max(1, Number(item.revision) || 1),
+      };
+      return Object.fromEntries(HQ_RECEIPT_FIELDS.filter((key) => receipt[key] !== undefined).map((key) => [key, receipt[key]]));
+    }).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 app.get('/v1/hq/today', (req, res) => {
   const reviewDate = validDateKey(req.query.date) || todayKey();
-  res.json(buildHqSnapshot(reviewDate));
+  res.json({ ...buildHqSnapshot(reviewDate), systemReceipts: readHqDailyIntakeReceipts(reviewDate) });
 });
 
 app.get('/v1/hq/review-status', (req, res) => {

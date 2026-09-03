@@ -2,6 +2,8 @@
 set -euo pipefail
 
 APP_DIR="${TASKBOX_APP_DIR:-/opt/taskbox-api}"
+DAILY_INTAKE_APP_DIR="${DAILY_INTAKE_APP_DIR:-/opt/taskbox-daily-intake}"
+SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
 SERVICE="${TASKBOX_SERVICE:-taskbox-api.service}"
 ENV_FILE="${TASKBOX_ENV_FILE:-/etc/taskbox-api.env}"
 RELEASE_DIR="${1:-}"
@@ -11,12 +13,46 @@ EXECUTION_TOKEN_FILE="${EXECUTION_SYSTEM_API_TOKEN_FILE:-/etc/taskbox-execution-
 EXECUTION_DISABLE_FILE="${EXECUTION_SYSTEM_API_DISABLE_FILE:-/etc/taskbox-execution-system.disabled}"
 DAILY_INTAKE_TOKEN_DIR="${DAILY_INTAKE_TOKEN_DIR:-/etc/taskbox-daily-intake}"
 DAILY_INTAKE_DISABLE_FILE="${DAILY_INTAKE_DISABLE_FILE:-/etc/taskbox-daily-intake.disabled}"
+DAILY_INTAKE_ENABLE_TIMERS="${DAILY_INTAKE_ENABLE_TIMERS:-0}"
 EXECUTION_GRANT_ID="standing-execution-taskbox-normal-2026-09-02"
 EXECUTION_SCOPES="tasks:read,tasks:create,tasks:update,tasks:schedule,tasks:progress,tasks:evidence,tasks:complete,tasks:delete,tasks:audit"
+if [[ -f "$RELEASE_DIR/schema.sql" ]]; then
+  API_RELEASE_DIR="$RELEASE_DIR"
+else
+  API_RELEASE_DIR="$RELEASE_DIR/taskbox-api"
+fi
+DAILY_RELEASE_DIR="${RELEASE_DIR}/daily-intake"
 
-if [[ -z "$RELEASE_DIR" || ! -f "$RELEASE_DIR/schema.sql" || ! -f "$RELEASE_DIR/src/server.js" ]]; then
+if [[ -z "$RELEASE_DIR" || ! -f "$API_RELEASE_DIR/schema.sql" || ! -f "$API_RELEASE_DIR/src/server.js" ]]; then
   echo "usage: $0 /absolute/path/to/taskbox-api-release" >&2
   exit 2
+fi
+if [[ "$API_RELEASE_DIR" != "$RELEASE_DIR" ]]; then
+  required_runtime_files=(
+    package.json
+    scripts/consume-daily-intake-attention.mjs
+    scripts/consume-daily-intake-execution.mjs
+    scripts/consume-daily-intake-health.mjs
+    scripts/consume-daily-intake-mission.mjs
+    scripts/sync-hq-daily-intake-receipts.mjs
+    integrations/attention-system/daily-intake-runner.mjs
+    integrations/execution-system/daily-intake-consumer.mjs
+    integrations/feedback-system/daily-intake-runner.mjs
+    integrations/health-system/daily-intake-worker.mjs
+    integrations/mission-system/daily-intake-runner.mjs
+  )
+  for file in "${required_runtime_files[@]}"; do
+    if [[ ! -f "$DAILY_RELEASE_DIR/$file" ]]; then
+      echo "daily intake release missing $file" >&2
+      exit 2
+    fi
+  done
+  for unit in taskbox-{attention,execution,feedback,health,hq,mission}-daily-intake.{service,timer}; do
+    if [[ ! -f "$DAILY_RELEASE_DIR/systemd/$unit" ]]; then
+      echo "daily intake release missing systemd/$unit" >&2
+      exit 2
+    fi
+  done
 fi
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "missing $ENV_FILE" >&2
@@ -39,6 +75,12 @@ systemctl stop "$SERVICE"
 
 cp -a "$APP_DIR/package.json" "$APP_DIR/package-lock.json" "$APP_DIR/schema.sql" "$BACKUP_DIR/code/"
 cp -a "$APP_DIR/src" "$APP_DIR/scripts" "$BACKUP_DIR/code/"
+if [[ -d "$DAILY_INTAKE_APP_DIR" ]]; then
+  cp -a "$DAILY_INTAKE_APP_DIR" "$BACKUP_DIR/code/daily-intake"
+fi
+for unit in taskbox-{attention,execution,feedback,health,hq,mission}-daily-intake.{service,timer}; do
+  if [[ -f "$SYSTEMD_DIR/$unit" ]]; then cp -a "$SYSTEMD_DIR/$unit" "$BACKUP_DIR/config/"; fi
+done
 cp -p "$ENV_FILE" "$BACKUP_DIR/config/taskbox-api.env"
 for suffix in '' '-wal' '-shm'; do
   if [[ -f "${DB_PATH}${suffix}" ]]; then
@@ -51,12 +93,22 @@ cleanup() {
 }
 trap cleanup ERR
 
-install -m 0644 "$RELEASE_DIR/package.json" "$APP_DIR/package.json"
-install -m 0644 "$RELEASE_DIR/package-lock.json" "$APP_DIR/package-lock.json"
-install -m 0644 "$RELEASE_DIR/schema.sql" "$APP_DIR/schema.sql"
+install -m 0644 "$API_RELEASE_DIR/package.json" "$APP_DIR/package.json"
+install -m 0644 "$API_RELEASE_DIR/package-lock.json" "$APP_DIR/package-lock.json"
+install -m 0644 "$API_RELEASE_DIR/schema.sql" "$APP_DIR/schema.sql"
 rm -rf "$APP_DIR/src" "$APP_DIR/scripts"
-cp -a "$RELEASE_DIR/src" "$APP_DIR/src"
-cp -a "$RELEASE_DIR/scripts" "$APP_DIR/scripts"
+cp -a "$API_RELEASE_DIR/src" "$APP_DIR/src"
+cp -a "$API_RELEASE_DIR/scripts" "$APP_DIR/scripts"
+
+if [[ -d "$DAILY_RELEASE_DIR" ]]; then
+  rm -rf "$DAILY_INTAKE_APP_DIR"
+  install -d -m 0755 "$DAILY_INTAKE_APP_DIR"
+  cp -a "$DAILY_RELEASE_DIR/." "$DAILY_INTAKE_APP_DIR/"
+  chown -R root:root "$DAILY_INTAKE_APP_DIR"
+  find "$DAILY_INTAKE_APP_DIR" -type d -exec chmod 755 {} +
+  find "$DAILY_INTAKE_APP_DIR" -type f -exec chmod 644 {} +
+  find "$DAILY_INTAKE_APP_DIR" -type f -name '*.mjs' -exec chmod 755 {} +
+fi
 
 upsert_env() {
   local key="$1" value="$2" tmp
@@ -107,6 +159,30 @@ for system in execution health attention feedback mission; do
   upsert_env "DAILY_INTAKE_${upper}_TOKEN_FILE" "$token_file"
 done
 rm -f "$DAILY_INTAKE_DISABLE_FILE"
+
+if [[ -d "$DAILY_RELEASE_DIR/systemd" ]]; then
+  for system in attention execution feedback health hq mission; do
+    if ! getent group "taskbox-$system" >/dev/null 2>&1; then
+      groupadd --system "taskbox-$system"
+    fi
+    if ! id -u "taskbox-$system" >/dev/null 2>&1; then
+      useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin \
+        --gid "taskbox-$system" "taskbox-$system"
+    fi
+  done
+  install -d -m 0755 "$SYSTEMD_DIR"
+  for unit in taskbox-{attention,execution,feedback,health,hq,mission}-daily-intake.{service,timer}; do
+    if [[ -f "$DAILY_RELEASE_DIR/systemd/$unit" ]]; then
+      install -m 0644 "$DAILY_RELEASE_DIR/systemd/$unit" "$SYSTEMD_DIR/$unit"
+    fi
+  done
+  systemctl daemon-reload
+  # Installation never starts consumers. Enablement is a separate, post-gate action.
+  for system in attention execution feedback health hq mission; do
+    systemctl disable --now "taskbox-$system-daily-intake.timer" >/dev/null 2>&1 || true
+    systemctl disable "taskbox-$system-daily-intake.service" >/dev/null 2>&1 || true
+  done
+fi
 
 cd "$APP_DIR"
 npm ci --omit=dev
@@ -166,6 +242,39 @@ if [[ "$(curl --silent --output /dev/null --write-out '%{http_code}' --header "A
   echo "daily sender unexpectedly read a consumer inbox" >&2
   exit 1
 fi
+for system in attention execution feedback health mission; do
+  token_file="$DAILY_INTAKE_TOKEN_DIR/$system.token"
+  token="$(tr -d '\r\n' < "$token_file")"
+  inbox="$API_BASE_URL/v1/system-candidates?intake=1&systemId=$system&limit=1"
+  code="$(curl --silent --output /dev/null --write-out '%{http_code}' --header "Authorization: Bearer $token" "$inbox")"
+  [[ "$code" == "200" ]] || { echo "daily intake auth probe failed for $system: $code" >&2; exit 1; }
+done
+for system in attention execution feedback health mission; do
+  code="$(curl --silent --output /dev/null --write-out '%{http_code}' --header "Authorization: Bearer $DAILY_EXECUTION_TOKEN" "$API_BASE_URL/v1/system-candidates?intake=1&systemId=$system&limit=1")"
+  if [[ "$system" != execution && "$code" != "403" ]]; then
+    echo "execution identity crossed into $system intake: $code" >&2
+    exit 1
+  fi
+done
+daily_intake_timer_state=disabled
+if [[ "$DAILY_INTAKE_ENABLE_TIMERS" == "1" ]]; then
+  for system in attention execution feedback health mission; do
+    token="$(tr -d '\r\n' < "$DAILY_INTAKE_TOKEN_DIR/$system.token")"
+    inbox="$API_BASE_URL/v1/system-candidates?intake=1&systemId=$system&status=accepted&limit=1"
+    queue_count="$(curl --silent --show-error --fail --header "Authorization: Bearer $token" "$inbox" \
+      | node -e "let input='';process.stdin.on('data',d=>input+=d).on('end',()=>{const body=JSON.parse(input);process.stdout.write(String(Number(body.count)||0));});")"
+    if [[ "$queue_count" != "0" ]]; then
+      echo "daily intake enable gate is not empty for $system" >&2
+      exit 1
+    fi
+  done
+  for system in hq mission health attention feedback execution; do
+    systemctl enable --now "taskbox-$system-daily-intake.timer"
+    systemctl is-enabled --quiet "taskbox-$system-daily-intake.timer"
+    systemctl is-active --quiet "taskbox-$system-daily-intake.timer"
+  done
+  daily_intake_timer_state=enabled
+fi
 trap - ERR
 
 echo "deployment_ok"
@@ -176,3 +285,4 @@ echo "daily_intake_sender_token_file=$DAILY_SENDER_TOKEN_FILE"
 echo "daily_intake_hq_token_file=$DAILY_HQ_TOKEN_FILE"
 echo "daily_intake_token_dir=$DAILY_INTAKE_TOKEN_DIR"
 echo "daily_intake_disable_file=$DAILY_INTAKE_DISABLE_FILE"
+echo "daily_intake_timers=$daily_intake_timer_state"

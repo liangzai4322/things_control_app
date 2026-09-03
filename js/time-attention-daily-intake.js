@@ -1,11 +1,9 @@
-import { requestTaskboxApi } from './db.js';
-
 export const ATTENTION_INTAKE_SYSTEM_ID = 'attention';
 export const ATTENTION_INTAKE_CONTRACT_VERSION = '2026-09-03.1';
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-const TERMINAL_STATUSES = new Set(['processed', 'ignored']);
-const INTAKE_STATUSES = new Set(['pending', 'accepted', 'received', 'processing', 'retrying', 'failed', 'processed', 'ignored']);
+const TERMINAL_STATUSES = new Set(['processed', 'failed', 'ignored']);
+const INTAKE_STATUSES = new Set(['accepted', 'processing', 'retrying', 'failed', 'processed', 'ignored']);
 const OVERLOAD_VALUES = new Set(['normal', 'warning', 'overloaded', 'unknown']);
 const VARIANCE_VALUES = new Set(['within_plan', 'overrun', 'underrun', 'unknown']);
 const CONFLICT_VALUES = new Set(['clear', 'conflict', 'unknown']);
@@ -53,6 +51,7 @@ function validationError(code, detail = {}) {
 
 export function validateAttentionIntake(intake, {
   reviewDate = null,
+  expectedStatus = null,
   supportedContractVersions = [ATTENTION_INTAKE_CONTRACT_VERSION],
 } = {}) {
   if (!plainObject(intake)) return validationError('invalid_intake');
@@ -89,6 +88,7 @@ export function validateAttentionIntake(intake, {
     return validationError('missing_attention_field', { field: 'calendarCoverage' });
   }
   if (!INTAKE_STATUSES.has(intake.status)) return validationError('invalid_status');
+  if (expectedStatus && intake.status !== expectedStatus) return validationError('intake_status_mismatch');
   if (!validTimestamp(intake.receivedAt) || !validTimestamp(intake.updatedAt)) return validationError('invalid_transport_timestamp');
   if (new Date(intake.updatedAt) < new Date(intake.receivedAt)) return validationError('invalid_transport_timestamp_order');
   if (intake.receipt != null && !plainObject(intake.receipt)) return validationError('invalid_receipt');
@@ -194,7 +194,7 @@ function canSafelyIgnoreContract(intake, reviewDate, supportedContractVersions) 
     && clean(intake.id)
     && intake.systemId === ATTENTION_INTAKE_SYSTEM_ID
     && validDateKey(intake.reviewDate)
-    && intake.reviewDate === reviewDate
+    && (!reviewDate || intake.reviewDate === reviewDate)
     && Number.isSafeInteger(intake.revision)
     && intake.revision > 0
     && clean(intake.idempotencyKey)
@@ -241,43 +241,57 @@ export function prepareAttentionIntakes(intakes, options = {}) {
 }
 
 export async function consumeAttentionDailyReviewIntakes({
-  request = requestTaskboxApi,
-  reviewDate,
+  request,
+  reviewDate = null,
   status = 'accepted',
   limit = 100,
   supportedContractVersions = [ATTENTION_INTAKE_CONTRACT_VERSION],
 } = {}) {
-  if (!validDateKey(reviewDate)) throw new Error('invalid_review_date');
+  if (typeof request !== 'function') throw new Error('attention_intake_request_required');
+  if (reviewDate != null && !validDateKey(reviewDate)) throw new Error('invalid_review_date');
+  if (!['accepted', 'retrying'].includes(status)) throw new Error('invalid_intake_status');
   const safeLimit = Math.max(1, Math.min(500, Number(limit) || 100));
-  const query = new URLSearchParams({ systemId: ATTENTION_INTAKE_SYSTEM_ID, intake: '1', reviewDate, status, limit: String(safeLimit) });
+  const query = new URLSearchParams({ systemId: ATTENTION_INTAKE_SYSTEM_ID, intake: '1' });
+  if (reviewDate) query.set('reviewDate', reviewDate);
+  query.set('status', status);
+  query.set('limit', String(safeLimit));
   const response = await request(`/system-candidates?${query.toString()}`);
-  if (response == null) return { connected: false, processed: [], ignored: [], rejected: [], skipped: [] };
+  if (response == null) return { connected: false, processed: [], ignored: [], failures: [], rejected: [], skipped: [] };
   if (!plainObject(response) || !Array.isArray(response.intakes)) throw new Error('invalid_intake_response');
   const incompatible = response.intakes.filter((intake) => canSafelyIgnoreContract(
     intake, reviewDate, supportedContractVersions,
   ));
   const ignored = [];
+  const failures = [];
   for (const intake of incompatible) {
     const receipt = buildIgnoredContractReceipt(intake);
-    const result = await request(`/system-candidates/${encodeURIComponent(intake.id)}/receipt`, {
-      method: 'POST',
-      body: JSON.stringify(receipt),
-    });
-    ignored.push({ id: intake.id, revision: intake.revision, receipt, result });
+    try {
+      const result = await request(`/system-candidates/${encodeURIComponent(intake.id)}/receipt`, {
+        method: 'POST',
+        body: JSON.stringify(receipt),
+      });
+      ignored.push({ id: intake.id, revision: intake.revision, receipt, result });
+    } catch (error) {
+      failures.push({ id: intake.id, revision: intake.revision, errorCode: clean(error?.code) || `http_${error?.status || 'request_failed'}` });
+    }
   }
   const incompatibleIds = new Set(incompatible.map((intake) => intake.id));
   const prepared = prepareAttentionIntakes(
     response.intakes.filter((intake) => !incompatibleIds.has(intake?.id)),
-    { reviewDate, supportedContractVersions },
+    { reviewDate, expectedStatus: status, supportedContractVersions },
   );
   const processed = [];
   for (const intake of prepared.accepted) {
     const receipt = buildAttentionReceipt(intake);
-    const result = await request(`/system-candidates/${encodeURIComponent(intake.id)}/receipt`, {
-      method: 'POST',
-      body: JSON.stringify(receipt),
-    });
-    processed.push({ id: intake.id, revision: intake.revision, receipt, result });
+    try {
+      const result = await request(`/system-candidates/${encodeURIComponent(intake.id)}/receipt`, {
+        method: 'POST',
+        body: JSON.stringify(receipt),
+      });
+      processed.push({ id: intake.id, revision: intake.revision, receipt, result });
+    } catch (error) {
+      failures.push({ id: intake.id, revision: intake.revision, errorCode: clean(error?.code) || `http_${error?.status || 'request_failed'}` });
+    }
   }
-  return { connected: true, processed, ignored, rejected: prepared.rejected, skipped: prepared.skipped };
+  return { connected: true, processed, ignored, failures, rejected: prepared.rejected, skipped: prepared.skipped };
 }

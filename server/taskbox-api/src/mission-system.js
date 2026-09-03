@@ -39,7 +39,14 @@ function validCandidateDecision(candidate = {}) {
     && Boolean(String(decision.expectedResult || '').trim());
 }
 
-function installMissionSystemRoutes({ app, db, now, json, parseJson }) {
+function installMissionSystemRoutes({ app, db, now, json, parseJson, authorizeDailyIntake }) {
+  function authorizeState(req, res) {
+    if (!req.dailyIntakeIdentity) return true;
+    const result = authorizeDailyIntake(req, 'mission-state:read', 'mission');
+    if (result.ok) return true;
+    res.status(result.status).json({ error: result.error });
+    return false;
+  }
   const recordUpsert = db.prepare(`
     INSERT INTO mission_records (
       record_id, record_type, mission_id, version, status, revision, content_hash,
@@ -158,6 +165,7 @@ function installMissionSystemRoutes({ app, db, now, json, parseJson }) {
   });
 
   app.get('/v1/mission/state', (req, res) => {
+    if (!authorizeState(req, res)) return;
     const records = db.prepare('SELECT * FROM mission_records ORDER BY record_type, version, updated_at').all();
     const draftRow = records.filter((row) => row.record_type === 'draft').sort((a, b) => b.updated_at.localeCompare(a.updated_at))[0];
     const draftPayload = parseJson(draftRow?.payload_json, {});

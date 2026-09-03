@@ -13,7 +13,14 @@ function inferEnergyScore(value) {
   return ENERGY_TEXT_SCORES.find(([, pattern]) => pattern.test(text))?.[0] ?? null;
 }
 
-function installHealthSystemRoutes({ app, db, now, json, parseJson }) {
+function installHealthSystemRoutes({ app, db, now, json, parseJson, authorizeDailyIntake }) {
+  function authorize(req, res, scope) {
+    if (!req.dailyIntakeIdentity) return true;
+    const result = authorizeDailyIntake(req, scope, 'health');
+    if (result.ok) return true;
+    res.status(result.status).json({ error: result.error });
+    return false;
+  }
   function date(value) {
     const text = String(value || '').trim();
     return DATE_PATTERN.test(text) ? text : '';
@@ -124,6 +131,7 @@ function installHealthSystemRoutes({ app, db, now, json, parseJson }) {
   });
 
   app.get('/v1/health/observations', (req, res) => {
+    if (!authorize(req, res, 'health:observations:read')) return;
     const limit = Math.max(1, Math.min(365, Number(req.query.limit) || 90));
     const rows = db.prepare(`
       SELECT * FROM health_observations
@@ -134,6 +142,7 @@ function installHealthSystemRoutes({ app, db, now, json, parseJson }) {
   });
 
   app.post('/v1/health/observations/batch', (req, res) => {
+    if (!authorize(req, res, 'health:observations:write')) return;
     const values = Array.isArray(req.body?.observations) ? req.body.observations : [];
     if (!values.length || values.length > 100) return res.status(400).json({ error: 'health_observations_invalid' });
     try {

@@ -121,6 +121,27 @@ child.stderr.on('data', (chunk) => { serverError += chunk.toString('utf8'); });
     if (unauthenticated.status !== 401) throw new Error('system intake list must require API authentication');
     const genericTokenRead = await request('/v1/system-candidates?intake=1&systemId=execution');
     if (genericTokenRead.status !== 401) throw new Error('generic TaskBox token must not access daily intake routes');
+    const genericHealthRead = await request('/v1/health/observations');
+    if (genericHealthRead.status !== 401) throw new Error('generic TaskBox token must not access scoped health facts');
+    const genericMissionRead = await request('/v1/mission/state');
+    if (genericMissionRead.status !== 401) throw new Error('generic TaskBox token must not access mission state');
+    const genericReceiptRead = await request('/v1/hq/system-receipts');
+    if (genericReceiptRead.status !== 401) throw new Error('generic TaskBox token must not access HQ receipt projection');
+    const genericLegacyRead = await request('/v1/system-candidates?systemId=execution');
+    if (genericLegacyRead.status !== 200) throw new Error('legacy system candidate route compatibility regressed');
+    const crossSystemHealthRead = await request('/v1/health/observations', 'GET', null, { authToken: consumerTokens.execution });
+    if (crossSystemHealthRead.status !== 403) throw new Error('non-health daily identity must not access health facts');
+    const crossSystemMissionRead = await request('/v1/mission/state', 'GET', null, { authToken: consumerTokens.execution });
+    if (crossSystemMissionRead.status !== 403) throw new Error('non-mission daily identity must not access mission state');
+    const healthRead = await request('/v1/health/observations', 'GET', null, { authToken: consumerTokens.health });
+    if (healthRead.status !== 200 || !Array.isArray(healthRead.data.observations)) throw new Error('health identity must read health facts');
+    const healthWrite = await request('/v1/health/observations/batch', 'POST', { observations: [{
+      observationId: 'daily-intake-health-scope-fixture', observationDate: '2026-09-03', effectiveDate: '2026-09-03',
+      source: 'manual', authority: 'explicit_user', confidence: 1, sourceRef: 'scope-test', energy: 3,
+    }] }, { authToken: consumerTokens.health });
+    if (healthWrite.status !== 200 || healthWrite.data.created !== 1) throw new Error(`health identity must write health facts: ${JSON.stringify(healthWrite)}`);
+    const senderHealthWrite = await request('/v1/health/observations/batch', 'POST', { observations: [] }, { authToken: senderToken });
+    if (senderHealthWrite.status !== 403) throw new Error('daily sender must not write health facts');
 
     const partial = await request('/v1/system-candidates/batch', 'POST', {
       contractVersion: '2026-09-03.1',

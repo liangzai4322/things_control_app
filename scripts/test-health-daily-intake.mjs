@@ -51,7 +51,7 @@ function intake(overrides = {}) {
 }
 
 assert.equal(classifyHealthDailyIntake(intake()).action, 'process_fact');
-assert.equal(classifyHealthDailyIntake(intake({ contractVersion: '2026-09-02' })).action, 'failed');
+assert.equal(classifyHealthDailyIntake(intake({ contractVersion: '2026-09-02' })).action, 'ignored');
 assert.equal(classifyHealthDailyIntake(intake({ contractVersion: '2026-09-02' })).errorCode, 'unsupported_contract_version');
 assert.equal(classifyHealthDailyIntake(intake({ data: { observationDate: '2026-09-01' } })).action, 'failed');
 assert.equal(classifyHealthDailyIntake(intake({ data: { authority: undefined } })).action, 'ignored');
@@ -149,7 +149,7 @@ await consumeHealthDailyIntakes({
 assert.equal(rejectedCalls.some((item) => item.path === '/health/observations/batch'), false, 'invalid or AI-only intake never writes a health fact');
 assert.deepEqual(
   rejectedCalls.filter((item) => item.path.endsWith('/receipt')).map((item) => JSON.parse(item.options.body).status),
-  ['failed', 'failed', 'ignored'],
+  ['ignored', 'failed', 'ignored'],
 );
 
 const retryStorage = memoryStorage();

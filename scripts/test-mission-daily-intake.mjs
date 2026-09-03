@@ -55,8 +55,25 @@ assert.equal(classifyMissionDailyIntake(intake({ data: { observedProgress: { cam
 assert.equal(classifyMissionDailyIntake(intake({ data: { observedProgress: { campaignAssessment: 'blocked', assessmentIsFormalStatus: false, progressSummary: '存在阻塞', milestoneChanges: [], commitmentResults: [], deviationSignals: [{ signalId: 'signal:1' }] } } }), published, { now }).result, MISSION_DAILY_INTAKE_RESULTS.NEEDS_DECISION);
 assert.equal(classifyMissionDailyIntake(intake({ data: { baseline: { ...intake().data.baseline, activeVersionId: 'mission-intake-test:v0' } } }), published, { now }).result, MISSION_DAILY_INTAKE_RESULTS.SYNC_CONFLICT);
 assert.equal(classifyMissionDailyIntake(intake({ data: { baseline: { ...intake().data.baseline, baselineState: 'unknown', activeVersionId: null } } }), published, { now }).result, MISSION_DAILY_INTAKE_RESULTS.SYNC_CONFLICT);
-assert.equal(classifyMissionDailyIntake(intake({ freshness: 'stale' }), published, { now }).result, MISSION_DAILY_INTAKE_RESULTS.INVALID);
+assert.equal(classifyMissionDailyIntake(intake({ freshness: { status: 'stale', generatedAt: '2026-09-03T11:00:00.000Z' } }), published, { now }).result, MISSION_DAILY_INTAKE_RESULTS.INVALID);
 assert.equal(classifyMissionDailyIntake(intake({ contractVersion: 'future-version' }), published, { now }).result, MISSION_DAILY_INTAKE_RESULTS.INVALID);
+
+const productionShape = intake({
+  id: 'transport-generated-id',
+  idempotencyKey: 'mission:2026-09-03:1:producerhash',
+  freshness: '2026-09-03T11:00:00.000Z',
+  data: {
+    schemaVersion: undefined, intakeId: undefined, idempotencyKey: undefined, sourceSystem: undefined, targetSystem: undefined,
+    generatedAt: undefined, epistemicState: undefined, writesTargetSystem: undefined, baseline: undefined,
+    observedProgress: undefined, evidenceCoverage: undefined, evidenceRefs: undefined,
+    reviewDate: '2026-09-03', activeVersion: { versionId: 'mission-intake-test:v1' },
+    campaignAssessment: 'on_track', directionConflict: null, decisionRequest: null,
+  },
+});
+assert.equal(classifyMissionDailyIntake(productionShape, published, { now }).result, MISSION_DAILY_INTAKE_RESULTS.CANDIDATE_RECORDED, 'the frozen producer contract is accepted without requiring richer optional domain fields');
+const unsupported = prepareMissionDailyIntakeReceipt(intake({ contractVersion: 'future-version' }), published, { schemaVersion: 1, entries: {} }, { now });
+assert.equal(unsupported.classified.result, 'invalid');
+assert.equal(unsupported.body.status, 'ignored', 'unknown transport versions are acknowledged without domain side effects');
 
 const storage = new MemoryStorage({ [MISSION_STORAGE_KEY]: JSON.stringify(withPendingDraft) });
 const missionBefore = storage.getItem(MISSION_STORAGE_KEY);

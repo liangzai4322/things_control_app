@@ -1,0 +1,26 @@
+[Unit]
+Description=TaskBox HQ daily-intake receipt cache
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=taskbox-hq
+Group=taskbox-hq
+LoadCredential=hq.token:/etc/taskbox-daily-intake/hq.token
+Environment=DAILY_INTAKE_HQ_TOKEN_FILE=%d/hq.token
+Environment=DAILY_INTAKE_ENDPOINT=https://liangzai666.com/taskbox-api
+Environment=HQ_DAILY_INTAKE_CACHE_FILE=/var/lib/taskbox-hq-daily-intake/receipts-summary.json
+Environment=HQ_DAILY_INTAKE_LOCK_FILE=/run/taskbox-hq-daily-intake/sync.lock
+RuntimeDirectory=taskbox-hq-daily-intake
+StateDirectory=taskbox-hq-daily-intake
+ExecStart=/usr/bin/node /opt/taskbox-daily-intake/scripts/sync-hq-daily-intake-receipts.mjs
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=-/etc/taskbox-daily-intake.disabled
+ReadWritePaths=/var/lib/taskbox-hq-daily-intake /run/taskbox-hq-daily-intake
+
+[Install]
+WantedBy=multi-user.target

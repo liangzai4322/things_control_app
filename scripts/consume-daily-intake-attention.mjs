@@ -1,0 +1,13 @@
+import { attentionRunnerHealth, runAttentionIntakeCycle } from '../integrations/attention-system/daily-intake-runner.mjs';
+
+const options = {
+  endpoint: process.env.DAILY_INTAKE_API_ENDPOINT || undefined,
+  tokenFile: process.env.DAILY_INTAKE_TOKEN_FILE || undefined,
+  disableFile: process.env.DAILY_INTAKE_DISABLE_FILE || undefined,
+  stateFile: process.env.ATTENTION_INTAKE_STATE_FILE || undefined,
+};
+Object.keys(options).forEach((key) => options[key] === undefined && delete options[key]);
+const healthOnly = process.argv.includes('--health');
+const result = healthOnly ? attentionRunnerHealth(options) : await runAttentionIntakeCycle(options);
+console.log(JSON.stringify(result));
+if (!healthOnly && !result.ok) process.exitCode = 1;

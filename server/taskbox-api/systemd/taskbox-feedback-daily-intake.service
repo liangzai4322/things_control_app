@@ -1,0 +1,24 @@
+[Unit]
+Description=TaskBox feedback daily-intake consumer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=taskbox-feedback
+Group=taskbox-feedback
+LoadCredential=feedback.token:/etc/taskbox-daily-intake/feedback.token
+Environment=FEEDBACK_DAILY_INTAKE_TOKEN_FILE=%d/feedback.token
+Environment=FEEDBACK_DAILY_INTAKE_ENDPOINT=https://liangzai666.com/taskbox-api/v1
+RuntimeDirectory=taskbox-feedback-daily-intake
+StateDirectory=taskbox-feedback-daily-intake
+ExecStart=/usr/bin/flock -n /run/taskbox-feedback-daily-intake/runner.lock /usr/bin/node /opt/taskbox-daily-intake/integrations/feedback-system/daily-intake-runner.mjs
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=-/etc/taskbox-daily-intake.disabled
+ReadWritePaths=/var/lib/taskbox-feedback-daily-intake /run/taskbox-feedback-daily-intake
+
+[Install]
+WantedBy=multi-user.target

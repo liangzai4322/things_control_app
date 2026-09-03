@@ -2,19 +2,30 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROJECT_ROOT="$(cd "$ROOT/../.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 APP_DIR="$TMP/app"
 RELEASE_DIR="$TMP/release"
+API_RELEASE_DIR="$RELEASE_DIR/taskbox-api"
 BACKUP_ROOT="$TMP/backups"
 ENV_FILE="$TMP/taskbox-api.env"
 BIN_DIR="$TMP/bin"
 STATE_FILE="$TMP/service-state"
-mkdir -p "$APP_DIR/data" "$RELEASE_DIR" "$BACKUP_ROOT" "$BIN_DIR"
+mkdir -p "$APP_DIR/data" "$API_RELEASE_DIR" "$BACKUP_ROOT" "$BIN_DIR"
 
 cp -a "$ROOT/package.json" "$ROOT/package-lock.json" "$ROOT/schema.sql" "$ROOT/src" "$ROOT/scripts" "$APP_DIR/"
-cp -a "$ROOT/package.json" "$ROOT/package-lock.json" "$ROOT/schema.sql" "$ROOT/src" "$ROOT/scripts" "$RELEASE_DIR/"
+cp -a "$ROOT/package.json" "$ROOT/package-lock.json" "$ROOT/schema.sql" "$ROOT/src" "$ROOT/scripts" "$API_RELEASE_DIR/"
+mkdir -p "$RELEASE_DIR/daily-intake/systemd" "$RELEASE_DIR/daily-intake/integrations" "$RELEASE_DIR/daily-intake/scripts"
+cp -a "$ROOT/systemd/." "$RELEASE_DIR/daily-intake/systemd/"
+cp -a "$PROJECT_ROOT/integrations/attention-system/systemd/." "$RELEASE_DIR/daily-intake/systemd/"
+for system in attention-system execution-system feedback-system health-system mission-system; do
+  cp -a "$PROJECT_ROOT/integrations/$system" "$RELEASE_DIR/daily-intake/integrations/"
+done
+cp "$PROJECT_ROOT"/scripts/consume-daily-intake-{attention,execution,health,mission}.mjs "$PROJECT_ROOT/scripts/sync-hq-daily-intake-receipts.mjs" "$RELEASE_DIR/daily-intake/scripts/"
+cp -a "$PROJECT_ROOT/js" "$RELEASE_DIR/daily-intake/"
+printf '{"private":true,"type":"module"}\n' > "$RELEASE_DIR/daily-intake/package.json"
 printf 'TASKBOX_DB_PATH=%s\n' "$APP_DIR/data/taskbox.sqlite" > "$ENV_FILE"
 printf 'TASKBOX_API_PORT=3107\n' >> "$ENV_FILE"
 printf 'TASKBOX_API_TOKEN=release-test-token\n' >> "$ENV_FILE"
@@ -36,6 +47,9 @@ case "$1" in
   stop) printf 'inactive\n' > "$SYSTEMCTL_STATE_FILE" ;;
   start) printf 'active\n' > "$SYSTEMCTL_STATE_FILE" ;;
   is-active) grep -qx active "$SYSTEMCTL_STATE_FILE" ;;
+  enable) printf 'enable %s\n' "${3:-$2}" >> "$SYSTEMCTL_CALL_LOG" ;;
+  is-enabled) : ;;
+  daemon-reload|disable) printf '%s %s\n' "$1" "${2:-}" >> "$SYSTEMCTL_CALL_LOG" ;;
   *) exit 2 ;;
 esac
 EOF
@@ -66,21 +80,51 @@ fi
 if [[ "$*" == *"/v1/system-candidates?"* ]]; then
   if [[ "$*" == *"Authorization: Bearer release-test-token"* ]]; then printf '401'; exit; fi
   if [[ "$*" == *"Authorization: Bearer sender-test-token"* ]]; then printf '403'; exit; fi
+  if [[ "$*" == *"Authorization: Bearer execution-test-token"* && "$*" != *"systemId=execution"* ]]; then printf '403'; exit; fi
+  if [[ "$*" == *"-test-token"* ]]; then
+    if [[ "$*" == *"--output /dev/null"* ]]; then printf '200'; else printf '{"intakes":[],"count":0}'; fi
+    exit
+  fi
   exit
 fi
 if [[ "$*" == *"/v1/hq/system-receipts"* ]]; then exit; fi
 exit 2
 EOF
 chmod +x "$BIN_DIR/systemctl" "$BIN_DIR/npm" "$BIN_DIR/curl"
+cat > "$BIN_DIR/getent" <<'EOF'
+#!/usr/bin/env bash
+exit 2
+EOF
+cat > "$BIN_DIR/groupadd" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+cat > "$BIN_DIR/useradd" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+cat > "$BIN_DIR/id" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+cat > "$BIN_DIR/chown" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$BIN_DIR/getent" "$BIN_DIR/groupadd" "$BIN_DIR/useradd" "$BIN_DIR/id" "$BIN_DIR/chown"
 
 export PATH="$BIN_DIR:$PATH"
 export SYSTEMCTL_STATE_FILE="$STATE_FILE"
 export NPM_CALL_LOG="$TMP/npm.log"
 export CURL_CALL_LOG="$TMP/curl.log"
 export CURL_ATTEMPTS_FILE="$TMP/curl-attempts"
+export SYSTEMCTL_CALL_LOG="$TMP/systemctl.log"
 export TASKBOX_APP_DIR="$APP_DIR"
 export TASKBOX_ENV_FILE="$ENV_FILE"
 export TASKBOX_BACKUP_DIR="$BACKUP_ROOT/snapshot"
+export DAILY_INTAKE_APP_DIR="$TMP/daily-app"
+export SYSTEMD_DIR="$TMP/systemd"
+export DAILY_INTAKE_ENABLE_TIMERS=1
 
 "$ROOT/scripts/deploy-system-candidates-release.sh" "$RELEASE_DIR" > "$TMP/deploy.log"
 grep -qx active "$STATE_FILE"
@@ -99,6 +143,16 @@ test -s "$TMP/execution-token"
 grep -q '^DAILY_INTAKE_API_ENABLED=1$' "$ENV_FILE"
 test -s "$TMP/daily-intake/sender.token"
 test -s "$TMP/daily-intake/hq.token"
+for system in attention execution feedback health hq mission; do
+  mode="$(stat -c '%a' "$TMP/daily-intake/$system.token" 2>/dev/null || stat -f '%Lp' "$TMP/daily-intake/$system.token")"
+  test "$mode" = "600"
+  test -f "$TMP/systemd/taskbox-$system-daily-intake.service"
+  test -f "$TMP/systemd/taskbox-$system-daily-intake.timer"
+  grep -q '^RuntimeDirectory=' "$TMP/systemd/taskbox-$system-daily-intake.service"
+  grep -q '^ReadOnlyPaths=-' "$TMP/systemd/taskbox-$system-daily-intake.service"
+done
+grep -q 'daily_intake_timers=enabled' "$TMP/deploy.log"
+grep -q 'enable taskbox-hq-daily-intake.timer' "$TMP/systemctl.log"
 
 printf 'changed\n' > "$APP_DIR/schema.sql"
 "$ROOT/scripts/rollback-system-candidates-release.sh" "$BACKUP_ROOT/snapshot" > "$TMP/rollback.log"

@@ -24,6 +24,10 @@ const clone = (value, fallback = null) => {
 };
 const validDate = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value || '');
 const validTimestamp = (value) => Boolean(value) && !Number.isNaN(new Date(value).getTime());
+const isObject = (value) => Boolean(value && typeof value === 'object' && !Array.isArray(value));
+const freshnessTimestamp = (value) => typeof value === 'string'
+  ? value
+  : clean(value?.generatedAt || value?.updatedAt || value?.observedAt);
 const stableStringify = (value) => {
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
   if (value && typeof value === 'object') return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(',')}}`;
@@ -62,23 +66,25 @@ export function validateMissionDailyIntake(intake, {
   if (!clean(intake.idempotencyKey) || !Number.isInteger(Number(intake.revision)) || Number(intake.revision) < 1) errors.push('transport_identity_invalid');
   if (Number(intake.schemaVersion) !== 1) errors.push('transport_schema_unsupported');
   if (!supportedContractVersions.includes(intake.contractVersion)) errors.push('contract_version_unsupported');
-  if (intake.systemId !== 'mission' || data.targetSystem !== 'mission') errors.push('wrong_target_system');
-  if (data.sourceSystem !== 'daily-review') errors.push('wrong_source_system');
-  if (data.schemaVersion !== MISSION_DAILY_INTAKE_SCHEMA) errors.push('domain_schema_unsupported');
-  if (data.intakeId !== intake.id || data.idempotencyKey !== intake.idempotencyKey) errors.push('identity_mismatch');
-  if (data.writesTargetSystem !== false) errors.push('write_boundary_violated');
-  if (data.epistemicState !== 'candidate_unvalidated') errors.push('epistemic_state_invalid');
+  if (intake.systemId !== 'mission' || (data.targetSystem && data.targetSystem !== 'mission')) errors.push('wrong_target_system');
+  if (data.sourceSystem && data.sourceSystem !== 'daily-review') errors.push('wrong_source_system');
+  if (data.schemaVersion && data.schemaVersion !== MISSION_DAILY_INTAKE_SCHEMA) errors.push('domain_schema_unsupported');
+  if ((data.intakeId && data.intakeId !== intake.id) || (data.idempotencyKey && data.idempotencyKey !== intake.idempotencyKey)) errors.push('identity_mismatch');
+  if (data.writesTargetSystem !== undefined && data.writesTargetSystem !== false) errors.push('write_boundary_violated');
+  if (data.epistemicState && data.epistemicState !== 'candidate_unvalidated') errors.push('epistemic_state_invalid');
   if (!validDate(intake.reviewDate) || data.reviewDate !== intake.reviewDate) errors.push('review_date_invalid');
-  if (!validTimestamp(data.generatedAt)) errors.push('generated_at_invalid');
+  const generatedAt = clean(data.generatedAt) || freshnessTimestamp(intake.freshness);
+  if (!validTimestamp(generatedAt)) errors.push('generated_at_invalid');
   else {
-    const age = new Date(now).getTime() - new Date(data.generatedAt).getTime();
+    const age = new Date(now).getTime() - new Date(generatedAt).getTime();
     if (age > MISSION_DAILY_INTAKE_MAX_AGE_MS || age < -5 * 60 * 1000) errors.push('intake_not_current');
   }
-  if (intake.freshness !== 'current' || data.evidenceCoverage?.freshness !== 'current') errors.push('evidence_not_current');
-  if (!data.baseline || !['known', 'unknown'].includes(data.baseline.baselineState)) errors.push('baseline_invalid');
-  if (!data.observedProgress || data.observedProgress.assessmentIsFormalStatus !== false) errors.push('formal_status_boundary_violated');
-  if (data.observedProgress && !['milestoneChanges', 'commitmentResults', 'deviationSignals'].every((key) => Array.isArray(data.observedProgress[key]))) errors.push('observed_progress_shape_invalid');
-  if (!Array.isArray(data.evidenceRefs) || !Array.isArray(data.evidenceCoverage?.missingSources)) errors.push('evidence_shape_invalid');
+  const freshnessStatus = isObject(intake.freshness) ? clean(intake.freshness.status) : '';
+  if (freshnessStatus && !['fresh', 'current'].includes(freshnessStatus)) errors.push('evidence_not_current');
+  if (data.evidenceCoverage?.freshness && data.evidenceCoverage.freshness !== 'current') errors.push('evidence_not_current');
+  if (!Object.hasOwn(data, 'activeVersion') && !isObject(data.baseline)) errors.push('baseline_invalid');
+  if (data.baseline && !['known', 'unknown'].includes(data.baseline.baselineState)) errors.push('baseline_invalid');
+  if (data.observedProgress?.assessmentIsFormalStatus !== undefined && data.observedProgress.assessmentIsFormalStatus !== false) errors.push('formal_status_boundary_violated');
   return { valid: errors.length === 0, errors, data };
 }
 
@@ -89,6 +95,8 @@ function hasCandidateContent(data) {
     || (observed.campaignAssessment && !['no_evidence', 'unknown'].includes(observed.campaignAssessment))
     || ['milestoneChanges', 'commitmentResults', 'deviationSignals'].some((key) => Array.isArray(observed[key]) && observed[key].length)
     || (Array.isArray(data.evidenceRefs) && data.evidenceRefs.length)
+    || ['campaignAssessment', 'version', 'campaign', 'milestone', 'directionConflict', 'decisionRequest']
+      .some((key) => data[key] !== undefined && data[key] !== null && data[key] !== '' && (!Array.isArray(data[key]) || data[key].length))
   );
 }
 
@@ -96,7 +104,8 @@ function requiresDecision(data) {
   const observed = data.observedProgress || {};
   return data.conditional?.requiresDecision === true
     || ['at_risk', 'blocked'].includes(observed.campaignAssessment)
-    || (Array.isArray(observed.deviationSignals) && observed.deviationSignals.length > 0);
+    || (Array.isArray(observed.deviationSignals) && observed.deviationSignals.length > 0)
+    || Boolean(data.directionConflict || data.decisionRequest);
 }
 
 function currentActiveVersionId(store) { return activeMissionSnapshot(store)?.versionId || null; }
@@ -109,8 +118,10 @@ export function classifyMissionDailyIntake(intake, storeInput = {}, {
   const store = normalizeMissionStore(storeInput);
   const checked = validateMissionDailyIntake(intake, { now, supportedContractVersions });
   if (!checked.valid) return { result: MISSION_DAILY_INTAKE_RESULTS.INVALID, errors: checked.errors, decisionRequired: false };
-  const sourceActiveVersionId = checked.data.baseline.activeVersionId ?? null;
-  if (checked.data.baseline.baselineState !== 'known' || sourceActiveVersionId !== currentActiveVersionId(store) || (storage && missionSyncIsConflicted(storage))) {
+  const observedActive = checked.data.baseline?.activeVersionId ?? checked.data.activeVersion ?? null;
+  const sourceActiveVersionId = isObject(observedActive) ? clean(observedActive.versionId || observedActive.id) || null : clean(observedActive) || null;
+  const baselineKnown = checked.data.baseline ? checked.data.baseline.baselineState === 'known' : Object.hasOwn(checked.data, 'activeVersion');
+  if (!baselineKnown || sourceActiveVersionId !== currentActiveVersionId(store) || (storage && missionSyncIsConflicted(storage))) {
     return { result: MISSION_DAILY_INTAKE_RESULTS.SYNC_CONFLICT, errors: ['active_version_baseline_conflict'], decisionRequired: true };
   }
   if (!hasCandidateContent(checked.data)) return { result: MISSION_DAILY_INTAKE_RESULTS.NO_CHANGE, errors: [], decisionRequired: false };
@@ -144,8 +155,8 @@ export function buildMissionIntakeProjection(storeInput = {}, ledgerInput = {}, 
   };
 }
 
-function receiptStatus(result) {
-  if (result === MISSION_DAILY_INTAKE_RESULTS.INVALID) return 'failed';
+function receiptStatus(result, errors = []) {
+  if (result === MISSION_DAILY_INTAKE_RESULTS.INVALID) return errors.includes('contract_version_unsupported') ? 'ignored' : 'failed';
   if (result === MISSION_DAILY_INTAKE_RESULTS.SYNC_CONFLICT) return 'retrying';
   return 'processed';
 }
@@ -177,20 +188,22 @@ export function prepareMissionDailyIntakeReceipt(intake, storeInput, ledgerInput
     return { key, replay: true, payloadDigest, classified: existing.classified, body: clone(existing.body) };
   }
   const classified = classifyMissionDailyIntake(intake, storeInput, { storage, now, supportedContractVersions });
+  const observedActive = intake?.data?.baseline?.activeVersionId ?? intake?.data?.activeVersion ?? null;
   const receipt = {
     intakeId: clean(intake.id),
     processedAt: new Date(now).toISOString(),
     result: classified.result,
     candidateCountDelta: [MISSION_DAILY_INTAKE_RESULTS.CANDIDATE_RECORDED, MISSION_DAILY_INTAKE_RESULTS.NEEDS_DECISION].includes(classified.result) ? 1 : 0,
     decisionRequiredCount: classified.decisionRequired ? 1 : 0,
-    sourceActiveVersionId: intake?.data?.baseline?.activeVersionId ?? null,
+    sourceActiveVersionId: isObject(observedActive) ? clean(observedActive.versionId || observedActive.id) || null : clean(observedActive) || null,
   };
   const nextLedger = clone(ledgerInput, { schemaVersion: 1, entries: {} });
   nextLedger.entries[key] = { payloadDigest, classified, body: null, intake: clone(intake), processedAt: receipt.processedAt, decisionRequired: classified.decisionRequired };
   const projection = buildMissionIntakeProjection(storeInput, nextLedger, receipt, { now });
+  const transportStatus = receiptStatus(classified.result, classified.errors);
   const body = {
-    status: receiptStatus(classified.result),
-    idempotencyKey: `mission-intake-receipt:${clean(intake.id)}:r${Number(intake.revision) || 0}:${bodyTransition(receiptStatus(classified.result))}`,
+    status: transportStatus,
+    idempotencyKey: `mission-intake-receipt:${clean(intake.id)}:r${Number(intake.revision) || 0}:${bodyTransition(transportStatus)}`,
     projection,
     ...(classified.errors.length ? { errorCode: classified.errors[0], errorMessage: classified.errors.join(',') } : {}),
   };
@@ -213,7 +226,9 @@ export async function consumeMissionDailyIntakes({
   const ledger = readMissionDailyIntakeLedger(storage);
   const processed = [];
   for (const intake of response.intakes) {
-    if (['processed', 'ignored'].includes(intake.status)) continue;
+    const remoteStatus = clean(intake.receipt?.status || intake.status);
+    if (['processed', 'ignored', 'failed'].includes(remoteStatus)) continue;
+    if (remoteStatus === 'retrying' && validTimestamp(intake.receipt?.retryAt) && new Date(intake.receipt.retryAt) > new Date(now)) continue;
     const prepared = prepareMissionDailyIntakeReceipt(intake, storeBefore, ledger, { storage, now, supportedContractVersions });
     const entry = ledger.entries[prepared.key];
     if (prepared.conflict) {
@@ -255,13 +270,6 @@ export async function mountMissionDailyIntake(app, beforeSelector) {
   const host = document.createElement('section');
   host.className = 'system-daily-candidates';
   host.dataset.missionDailyIntake = 'true';
-  host.innerHTML = '<header><div><span>DAILY REVIEW INTAKE · CANDIDATE ONLY</span><h2>日省使命观察</h2></div><p>正在核对……</p></header>';
+  host.innerHTML = '<header><div><span>DAILY REVIEW INTAKE · CANDIDATE ONLY</span><h2>日省使命观察</h2></div><p>后台独立处理</p></header><p class="system-candidate-rule">专用后台身份只读取使命候选并写回处理回执；浏览器不保存服务凭据，也不会改写草稿、正式使命、战役状态、任务或跨系统规则。</p>';
   const before = app.querySelector(beforeSelector); if (before) before.before(host); else app.querySelector('main')?.append(host);
-  try {
-    const result = await consumeMissionDailyIntakes();
-    const recorded = result.processed.filter((item) => item.result === MISSION_DAILY_INTAKE_RESULTS.CANDIDATE_RECORDED).length;
-    host.innerHTML = `<header><div><span>DAILY REVIEW INTAKE · CANDIDATE ONLY</span><h2>日省使命观察</h2></div><p>${result.connected ? `${recorded} 条新观察 · ${result.decisionRequiredCount} 条待决策` : 'API 未连接'}</p></header><p class="system-candidate-rule">只记录未验证候选与处理回执；不会改写草稿、正式使命、战役状态、任务或跨系统规则。</p>${result.compatible === false ? '<div class="system-candidate-empty">服务端仍是旧候选协议，本轮未消费。</div>' : ''}`;
-  } catch {
-    host.innerHTML = '<header><div><span>DAILY REVIEW INTAKE · CANDIDATE ONLY</span><h2>日省使命观察</h2></div><p>同步失败</p></header><div class="system-candidate-empty">使命主体仍可独立使用；本轮没有改写正式事实。</div>';
-  }
 }

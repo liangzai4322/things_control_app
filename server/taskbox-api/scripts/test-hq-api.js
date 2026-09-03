@@ -9,9 +9,18 @@ const dbPath = path.join(os.tmpdir(), `taskbox-hq-api-${process.pid}-${Date.now(
 const port = 3200 + (process.pid % 500);
 const token = 'hq-integration-test-token';
 const baselinePath = path.join(os.tmpdir(), `taskbox-five-system-baseline-${process.pid}-${Date.now()}.json`);
+const hqReceiptCachePath = path.join(os.tmpdir(), `taskbox-hq-receipts-${process.pid}-${Date.now()}.json`);
 fs.writeFileSync(baselinePath, JSON.stringify({
   schemaVersion: 'five-system-bootstrap-v1',
   dataset: { runId: 'integration-baseline', sourceReviewCount: 30 },
+}), 'utf8');
+fs.writeFileSync(hqReceiptCachePath, JSON.stringify({
+  schemaVersion: 1,
+  receipts: [
+    { id: 'safe-health-receipt', intakeId: 'health-intake', systemId: 'health', reviewDate: '2026-07-30', status: 'processed', revision: 2,
+      projection: { riskLevel: 'watch', inputGaps: ['sleepHours'], factRefs: ['health:obs:1'], evidenceRefs: ['review:1'], syncState: 'fresh', hidden: 'must-not-leak' }, data: { hidden: true } },
+    { id: 'wrong-date', systemId: 'mission', reviewDate: '2026-07-29', status: 'processed' },
+  ],
 }), 'utf8');
 let serverError = '';
 
@@ -68,6 +77,7 @@ const child = spawn(process.execPath, [path.join(root, 'src', 'server.js')], {
     TASKBOX_API_TOKEN: token,
     TASKBOX_ALLOWED_ORIGINS: 'http://127.0.0.1:4176',
     TASKBOX_FIVE_SYSTEM_BASELINE_PATH: baselinePath,
+    HQ_DAILY_INTAKE_CACHE_FILE: hqReceiptCachePath,
   },
   stdio: ['ignore', 'ignore', 'pipe'],
 });
@@ -79,6 +89,12 @@ child.stderr.on('data', (chunk) => { serverError += chunk.toString('utf8'); });
     if (!health.ok) throw new Error('health check failed');
     const serverBaseline = await request('/v1/system-baseline/current');
     if (serverBaseline.dataset?.runId !== 'integration-baseline') throw new Error('server baseline read failed');
+    const hqCacheSnapshot = await request('/v1/hq/today?date=2026-07-30');
+    if (hqCacheSnapshot.systemReceipts?.length !== 1 || hqCacheSnapshot.systemReceipts[0]?.systemId !== 'health'
+      || hqCacheSnapshot.systemReceipts[0]?.riskLevel !== 'watch' || Object.hasOwn(hqCacheSnapshot.systemReceipts[0], 'data')
+      || Object.hasOwn(hqCacheSnapshot.systemReceipts[0], 'projection')) {
+      throw new Error('HQ daily intake cache projection was not safely merged');
+    }
     const candidateBatch = await request('/v1/system-candidates/batch', 'POST', { candidates: [{
       candidateId: 'daily-review:2026-08-12:mission:test:1', systemId: 'mission', reviewDate: '2026-08-12',
       kind: 'alignment_deviation_candidate', statement: '方向偏离候选', authority: 'ai_summary',

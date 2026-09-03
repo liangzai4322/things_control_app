@@ -11,7 +11,8 @@ function text(value) {
 }
 
 function inferFreshness(snapshot = {}) {
-  if (FRESHNESS.has(snapshot.freshness)) return snapshot.freshness;
+  const explicit = typeof snapshot.freshness === 'object' ? snapshot.freshness?.status : snapshot.freshness;
+  if (FRESHNESS.has(explicit)) return explicit;
   if (snapshot.status === 'stale' || snapshot.health === 'stale') return 'stale';
   if (['unknown', 'unavailable'].includes(snapshot.status) || snapshot.health === 'unknown') return 'unknown';
   return snapshot.generatedAt || snapshot.updatedAt ? 'fresh' : 'unknown';
@@ -33,19 +34,20 @@ export function normalizeSystemReceipt(receipt = {}, { systemId, intakeRef, effe
   const revision = Math.max(1, Number(receipt.revision) || 1);
   const generatedAt = text(receipt.generatedAt || receipt.updatedAt);
   const status = text(receipt.status || receipt.health) || 'unknown';
+  const projection = receipt.projection && typeof receipt.projection === 'object' ? receipt.projection : {};
   return Object.freeze({
     systemId: id,
-    receiptId: text(receipt.receiptId || receipt.snapshotId) || `system:${id}:${effectiveDate || 'unknown'}:${revision}`,
-    intakeRef: text(receipt.intakeRef) || intakeRef || null,
-    effectiveDate: text(receipt.effectiveDate) || effectiveDate || null,
+    receiptId: text(receipt.receiptId || receipt.id || receipt.snapshotId) || `system:${id}:${effectiveDate || 'unknown'}:${revision}`,
+    intakeRef: text(receipt.intakeRef || receipt.intakeId) || intakeRef || null,
+    effectiveDate: text(receipt.effectiveDate || receipt.reviewDate) || effectiveDate || null,
     generatedAt,
     freshness: inferFreshness(receipt),
     status,
-    riskLevel: text(receipt.riskLevel) || (['alert', 'blocked'].includes(status) ? 'action' : status === 'attention' ? 'watch' : 'none'),
-    needsUserInput: receipt.needsUserInput === true,
-    inputGaps: list(receipt.inputGaps || receipt.missingRequiredFields),
-    factRefs: list(receipt.factRefs || receipt.sourceRefs),
-    evidenceRefs: list(receipt.evidenceRefs),
+    riskLevel: text(receipt.riskLevel || projection.riskLevel) || (['alert', 'blocked', 'failed'].includes(status) ? 'action' : ['attention', 'retrying'].includes(status) ? 'watch' : 'none'),
+    needsUserInput: receipt.needsUserInput === true || projection.needsUserInput === true,
+    inputGaps: list(receipt.inputGaps || receipt.missingRequiredFields || projection.inputGaps),
+    factRefs: list(receipt.factRefs || receipt.sourceRefs || projection.factRefs),
+    evidenceRefs: list(receipt.evidenceRefs || projection.evidenceRefs),
     syncState: inferSyncState(receipt, syncState),
     revision,
     candidateCount: Math.max(0, Number(receipt.candidateCount) || 0),
@@ -82,8 +84,9 @@ export function selectSystemReceipts(payload, reviewDate = '') {
   const selected = new Map();
   receiptList(payload).forEach((item) => {
     if (!item || typeof item !== 'object' || !item.systemId) return;
-    if (reviewDate && item.effectiveDate && item.effectiveDate !== reviewDate) return;
-    const receiptId = text(item.receiptId || item.snapshotId);
+    const itemDate = text(item.effectiveDate || item.reviewDate);
+    if (reviewDate && itemDate && itemDate !== reviewDate) return;
+    const receiptId = text(item.receiptId || item.id || item.snapshotId);
     if (!receiptId) return;
     const current = selected.get(receiptId);
     const revision = Math.max(1, Number(item.revision) || 1);

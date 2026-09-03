@@ -2,6 +2,8 @@
 set -euo pipefail
 
 APP_DIR="${TASKBOX_APP_DIR:-/opt/taskbox-api}"
+DAILY_INTAKE_APP_DIR="${DAILY_INTAKE_APP_DIR:-/opt/taskbox-daily-intake}"
+SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
 SERVICE="${TASKBOX_SERVICE:-taskbox-api.service}"
 ENV_FILE="${TASKBOX_ENV_FILE:-/etc/taskbox-api.env}"
 BACKUP_DIR="${1:-}"
@@ -42,6 +44,16 @@ rm -rf "$APP_DIR/src" "$APP_DIR/scripts"
 cp -a "$BACKUP_DIR/code/src" "$APP_DIR/src"
 cp -a "$BACKUP_DIR/code/scripts" "$APP_DIR/scripts"
 
+if [[ -d "$BACKUP_DIR/code/daily-intake" ]]; then
+  rm -rf "$DAILY_INTAKE_APP_DIR"
+  install -d -m 0755 "$DAILY_INTAKE_APP_DIR"
+  cp -a "$BACKUP_DIR/code/daily-intake/." "$DAILY_INTAKE_APP_DIR/"
+  chown -R root:root "$DAILY_INTAKE_APP_DIR"
+fi
+for unit in taskbox-{attention,execution,feedback,health,hq,mission}-daily-intake.{service,timer}; do
+  if [[ -f "$BACKUP_DIR/config/$unit" ]]; then install -m 0644 "$BACKUP_DIR/config/$unit" "$SYSTEMD_DIR/$unit"; fi
+done
+
 if [[ "${RESTORE_TASKBOX_DATABASE:-0}" == "1" ]]; then
   rm -f "$DB_PATH" "${DB_PATH}-wal" "${DB_PATH}-shm"
   for source in "$BACKUP_DIR"/data/*; do
@@ -53,6 +65,10 @@ fi
 cd "$APP_DIR"
 npm ci --omit=dev
 npm run init-db
+systemctl daemon-reload
+for system in attention execution feedback health hq mission; do
+  systemctl disable --now "taskbox-$system-daily-intake.timer" >/dev/null 2>&1 || true
+done
 systemctl start "$SERVICE"
 systemctl is-active --quiet "$SERVICE"
 echo "rollback_ok"
