@@ -45,7 +45,7 @@ cat > "$BIN_DIR/systemctl" <<'EOF'
 set -euo pipefail
 case "$1" in
   stop) printf 'inactive\n' > "$SYSTEMCTL_STATE_FILE" ;;
-  start) printf 'active\n' > "$SYSTEMCTL_STATE_FILE" ;;
+  start) printf 'active\n' > "$SYSTEMCTL_STATE_FILE"; printf 'start %s\n' "$2" >> "$SYSTEMCTL_CALL_LOG" ;;
   is-active) grep -qx active "$SYSTEMCTL_STATE_FILE" ;;
   enable) printf 'enable %s\n' "${3:-$2}" >> "$SYSTEMCTL_CALL_LOG" ;;
   is-enabled) : ;;
@@ -152,6 +152,7 @@ for system in attention execution feedback health hq mission; do
   grep -q '^ReadOnlyPaths=-' "$TMP/systemd/taskbox-$system-daily-intake.service"
 done
 grep -q 'daily_intake_timers=enabled' "$TMP/deploy.log"
+grep -q 'start taskbox-hq-daily-intake.service' "$SYSTEMCTL_CALL_LOG"
 grep -q 'enable taskbox-hq-daily-intake.timer' "$TMP/systemctl.log"
 
 printf 'changed\n' > "$APP_DIR/schema.sql"
