@@ -2,6 +2,12 @@ name: Deploy TaskBox API
 
 on:
   workflow_dispatch:
+    inputs:
+      enable_daily_intake_timers:
+        description: Enable Daily Intake timers after all deployment gates pass
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -45,13 +51,14 @@ jobs:
           SSHPASS: ${{ secrets.TASKBOX_SERVER_PASSWORD }}
           HOST: ${{ secrets.TASKBOX_SERVER_HOST }}
           USER: ${{ secrets.TASKBOX_SERVER_USER }}
+          ENABLE_DAILY_INTAKE_TIMERS: ${{ inputs.enable_daily_intake_timers && '1' || '0' }}
         run: |
-          sshpass -e ssh -o StrictHostKeyChecking=accept-new "$USER@$HOST" '
+          sshpass -e ssh -o StrictHostKeyChecking=accept-new "$USER@$HOST" "
             set -e
             release=/tmp/taskbox-api-release
-            rm -rf "$release"
-            mkdir -p "$release"
-            tar -xzf /tmp/taskbox-api-release.tgz -C "$release"
-            bash "$release/scripts/deploy-system-candidates-release.sh" "$release"
-            rm -rf "$release" /tmp/taskbox-api-release.tgz
-          '
+            rm -rf \"\$release\"
+            mkdir -p \"\$release\"
+            tar -xzf /tmp/taskbox-api-release.tgz -C \"\$release\"
+            DAILY_INTAKE_ENABLE_TIMERS=$ENABLE_DAILY_INTAKE_TIMERS bash \"\$release/taskbox-api/scripts/deploy-system-candidates-release.sh\" \"\$release\"
+            rm -rf \"\$release\" /tmp/taskbox-api-release.tgz
+          "
