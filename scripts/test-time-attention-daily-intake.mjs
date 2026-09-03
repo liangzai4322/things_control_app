@@ -81,7 +81,7 @@ const consumed = await consumeAttentionDailyReviewIntakes({
   },
 });
 assert.equal(consumed.processed.length, 1);
-assert.match(requests[0].path, /^\/system-candidates\?systemId=attention&intake=1&reviewDate=2026-09-03&status=pending&limit=100$/);
+assert.match(requests[0].path, /^\/system-candidates\?systemId=attention&intake=1&reviewDate=2026-09-03&status=accepted&limit=100$/);
 assert.equal(requests[1].path, '/system-candidates/daily-review%3A2026-09-03%3Aattention%3A1/receipt');
 assert.equal(requests[1].options.method, 'POST');
 assert.deepEqual(Object.keys(JSON.parse(requests[1].options.body)).sort(), ['idempotencyKey', 'projection', 'status']);

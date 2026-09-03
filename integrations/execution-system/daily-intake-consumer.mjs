@@ -182,10 +182,12 @@ export class DailyIntakeConsumer {
 }
 
 export function createDailyIntakeConsumerFromEnv(env = process.env, options = {}) {
-  const tokenFile = env.DAILY_INTAKE_TOKEN_FILE || env.TASKBOX_API_TOKEN_FILE || path.join(os.homedir(), '.codex', 'secrets', 'taskbox-api-token');
+  const tokenFile = env.DAILY_INTAKE_TOKEN_FILE || '';
+  const token = readToken({ token: env.DAILY_INTAKE_TOKEN, tokenFile });
+  if (!token) throw new DailyIntakeError('daily_intake_token_missing');
   return new DailyIntakeConsumer({
-    endpoint: env.DAILY_INTAKE_ENDPOINT || env.TASKBOX_API_ENDPOINT || 'https://liangzai666.com/taskbox-api',
-    token: readToken({ token: env.DAILY_INTAKE_TOKEN || env.TASKBOX_API_TOKEN, tokenFile }),
+    endpoint: env.DAILY_INTAKE_ENDPOINT || 'https://liangzai666.com/taskbox-api',
+    token,
     ...options,
   });
 }

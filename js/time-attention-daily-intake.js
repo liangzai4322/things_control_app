@@ -243,7 +243,7 @@ export function prepareAttentionIntakes(intakes, options = {}) {
 export async function consumeAttentionDailyReviewIntakes({
   request = requestTaskboxApi,
   reviewDate,
-  status = 'pending',
+  status = 'accepted',
   limit = 100,
   supportedContractVersions = [ATTENTION_INTAKE_CONTRACT_VERSION],
 } = {}) {
