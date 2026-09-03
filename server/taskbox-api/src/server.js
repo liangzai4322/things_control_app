@@ -15,6 +15,11 @@ const apiToken = String(process.env.TASKBOX_API_TOKEN || '').trim();
 const executionApiEnabled = String(process.env.EXECUTION_SYSTEM_API_ENABLED || '') === '1';
 const executionTokenFile = String(process.env.EXECUTION_SYSTEM_API_TOKEN_FILE || '').trim();
 const executionDisableFile = String(process.env.EXECUTION_SYSTEM_API_DISABLE_FILE || '/etc/taskbox-execution-system.disabled').trim();
+const assistantGatewayApiEnabled = String(process.env.ASSISTANT_GATEWAY_API_ENABLED || '') === '1';
+const assistantGatewayTokenFile = String(process.env.ASSISTANT_GATEWAY_API_TOKEN_FILE || '').trim();
+const assistantGatewayDisableFile = String(process.env.ASSISTANT_GATEWAY_API_DISABLE_FILE || '/etc/taskbox-assistant-gateway.disabled').trim();
+const assistantGatewayScopes = new Set(String(process.env.ASSISTANT_GATEWAY_API_SCOPES || '')
+  .split(',').map((item) => item.trim()).filter(Boolean));
 const dailyIntakeApiEnabled = String(process.env.DAILY_INTAKE_API_ENABLED || '') === '1';
 const dailyIntakeDisableFile = String(process.env.DAILY_INTAKE_DISABLE_FILE || '/etc/taskbox-daily-intake.disabled').trim();
 const dailyIntakeSystems = ['execution', 'health', 'attention', 'feedback', 'mission', 'governance'];
@@ -171,6 +176,22 @@ app.use((req, res, next) => {
       || req.path === '/v1/health/observations' || req.path === '/v1/health/observations/batch'
       || req.path === '/v1/mission/state') return next();
     return res.status(403).json({ error: 'daily_intake_route_denied' });
+  }
+  if (/^\/v1\/hq\/proposals\/[^/]+\/replies$/.test(req.path)) {
+    if (!assistantGatewayApiEnabled
+      || (assistantGatewayDisableFile && fs.existsSync(assistantGatewayDisableFile))) {
+      return res.status(503).json({ error: 'assistant_gateway_api_disabled' });
+    }
+    const gatewayToken = readSecretFile(assistantGatewayTokenFile);
+    if (!gatewayToken) return res.status(503).json({ error: 'assistant_gateway_api_not_configured' });
+    if (!secretMatches(bearerToken(req), gatewayToken)) {
+      return res.status(401).json({ error: 'assistant_gateway_unauthorized' });
+    }
+    if (!assistantGatewayScopes.has('proposal-replies:write')) {
+      return res.status(403).json({ error: 'assistant_gateway_scope_denied' });
+    }
+    req.assistantGatewayIdentity = { system: 'assistant-gateway', scopes: assistantGatewayScopes };
+    return next();
   }
   if (req.path.startsWith('/v1/execution')) {
     if (!executionApiEnabled || (executionDisableFile && fs.existsSync(executionDisableFile))) {
@@ -1650,6 +1671,114 @@ function sendProposalError(res, error) {
   throw error;
 }
 
+const ASSISTANT_GATEWAY_REPLY_CONTRACT = '2026-09-03';
+const ASSISTANT_GATEWAY_REPLY_DECISIONS = new Set(['approve', 'reject', 'defer', 'expand']);
+const ASSISTANT_GATEWAY_REPLY_SOURCES = new Set(['personal_wechat', 'notification_hub_weixin']);
+
+function boundedReplyText(value, maxLength, field, required = false) {
+  const text = String(value || '').trim();
+  if (required && !text) throw proposalError(`${field}_required`);
+  if (text.length > maxLength) throw proposalError(`${field}_too_long`);
+  return text;
+}
+
+function parseProposalRevisionTag(value) {
+  const match = /^"?proposal-revision-(\d+)"?$/.exec(String(value || '').trim());
+  return match ? Number(match[1]) : null;
+}
+
+function normalizeGatewayReply(req) {
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const proposalId = boundedReplyText(req.params.proposalId, 200, 'proposal_id', true);
+  if (body.proposalId && String(body.proposalId).trim() !== proposalId) {
+    throw proposalError('proposal_id_binding_mismatch', 409);
+  }
+  const idempotencyKey = boundedReplyText(req.headers['x-idempotency-key'], 300, 'idempotency_key', true);
+  if (body.idempotencyKey && String(body.idempotencyKey).trim() !== idempotencyKey) {
+    throw proposalError('idempotency_key_binding_mismatch', 409);
+  }
+  const inboundMessageId = boundedReplyText(body.inboundMessageId, 200, 'inbound_message_id', true);
+  const decision = boundedReplyText(body.decision, 20, 'decision', true);
+  if (!ASSISTANT_GATEWAY_REPLY_DECISIONS.has(decision)) throw proposalError('invalid_reply_decision');
+  const expectedProposalRevision = Number(body.expectedProposalRevision);
+  if (!Number.isSafeInteger(expectedProposalRevision) || expectedProposalRevision < 1) {
+    throw proposalError('expected_proposal_revision_required');
+  }
+  const ifMatch = String(req.headers['if-match'] || '').trim();
+  if (ifMatch) {
+    const headerRevision = parseProposalRevisionTag(ifMatch);
+    if (!headerRevision) throw proposalError('invalid_proposal_if_match');
+    if (headerRevision !== expectedProposalRevision) {
+      throw proposalError('proposal_revision_binding_mismatch', 409);
+    }
+  }
+  const textHash = boundedReplyText(body.textHash, 64, 'text_hash', true).toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(textHash)) throw proposalError('invalid_text_hash');
+  const receivedAt = boundedReplyText(body.receivedAt, 40, 'received_at', true);
+  if (Number.isNaN(new Date(receivedAt).getTime())) throw proposalError('invalid_received_at');
+  const verification = body.verification && typeof body.verification === 'object' ? body.verification : {};
+  const source = boundedReplyText(verification.source || body.source, 80, 'verified_source', true);
+  if (!ASSISTANT_GATEWAY_REPLY_SOURCES.has(source) || verification.verified !== true) {
+    throw proposalError('verified_source_required');
+  }
+  const signatureRef = boundedReplyText(verification.signatureRef || body.signatureRef, 500, 'signature_ref', true);
+  const replyRef = boundedReplyText(body.replyRef, 500, 'reply_ref', true);
+  const verifiedUserRef = boundedReplyText(body.verifiedUserRef, 500, 'verified_user_ref', true);
+  const note = boundedReplyText(body.note, 2000, 'note');
+  const clarification = boundedReplyText(body.clarification || body.note, 2000, 'clarification', decision === 'expand');
+  const deferUntil = body.deferUntil ? boundedReplyText(body.deferUntil, 10, 'defer_until') : '';
+  return {
+    proposalId, idempotencyKey, inboundMessageId, decision, expectedProposalRevision,
+    textHash, receivedAt, source, signatureRef, replyRef, verifiedUserRef, note,
+    clarification, deferUntil,
+    reasonCode: boundedReplyText(body.reasonCode, 120, 'reason_code'),
+    scopeKey: boundedReplyText(body.scopeKey, 120, 'scope_key'),
+    fingerprint: boundedReplyText(body.fingerprint, 300, 'fingerprint'),
+  };
+}
+
+function rowToGatewayReply(row) {
+  if (!row) return null;
+  return {
+    replyId: row.reply_id,
+    inboundMessageId: row.inbound_message_id,
+    idempotencyKey: row.idempotency_key,
+    requestHash: row.request_hash,
+    proposalId: row.proposal_id,
+    expectedProposalRevision: Number(row.expected_revision),
+    decision: row.decision,
+    status: row.status,
+    httpStatus: Number(row.http_status || 0),
+    response: parseJson(row.response_json, null),
+    error: row.error_code || null,
+  };
+}
+
+function recordGatewayReplyAudit(reply, eventType, detail = {}) {
+  db.prepare(`
+    INSERT OR IGNORE INTO hq_proposal_reply_audit (
+      id, reply_id, proposal_id, event_type, actor, detail_json, created_at
+    ) VALUES (?, ?, ?, ?, 'assistant-gateway', ?, ?)
+  `).run(uid(), reply.replyId, reply.proposalId, eventType, json(detail), now());
+}
+
+function finalizeGatewayReply(replyId, status, httpStatus, response, errorCode = null) {
+  db.prepare(`
+    UPDATE hq_proposal_replies
+    SET status=?, http_status=?, response_json=?, error_code=?, updated_at=?
+    WHERE reply_id=?
+  `).run(status, httpStatus, json(response), errorCode, now(), replyId);
+  return rowToGatewayReply(db.prepare('SELECT * FROM hq_proposal_replies WHERE reply_id=?').get(replyId));
+}
+
+function replyAgeError(receivedAt) {
+  const ageMs = Date.now() - new Date(receivedAt).getTime();
+  const maxAgeSeconds = Math.max(60, Number(process.env.ASSISTANT_GATEWAY_REPLY_MAX_AGE_SECONDS) || 86400);
+  if (ageMs > maxAgeSeconds * 1000) return 'reply_expired';
+  if (ageMs < -300000) return 'reply_timestamp_in_future';
+  return null;
+}
+
 function rowToReviewRule(row) {
   if (!row) return null;
   const raw = parseJson(row.raw_json, {});
@@ -1743,6 +1872,157 @@ app.post('/v1/hq/proposals', (req, res) => {
     return res.status(result.created ? 201 : 200).json(result.proposal);
   } catch (error) {
     return sendProposalError(res, error);
+  }
+});
+
+app.post('/v1/hq/proposals/:proposalId/replies', (req, res) => {
+  let input;
+  try {
+    input = normalizeGatewayReply(req);
+  } catch (error) {
+    return sendProposalError(res, error);
+  }
+
+  let proposal;
+  try {
+    proposal = getProposalOrThrow(input.proposalId);
+  } catch (error) {
+    return sendProposalError(res, error);
+  }
+
+  const requestHash = crypto.createHash('sha256').update(stableJson(input)).digest('hex');
+  const byKey = db.prepare('SELECT * FROM hq_proposal_replies WHERE idempotency_key=?').get(input.idempotencyKey);
+  const byMessage = db.prepare('SELECT * FROM hq_proposal_replies WHERE inbound_message_id=?').get(input.inboundMessageId);
+  if (byKey && byMessage && byKey.reply_id !== byMessage.reply_id) {
+    return res.status(409).json({ error: 'reply_idempotency_conflict' });
+  }
+  let reply = rowToGatewayReply(byKey || byMessage);
+  if (reply && (reply.requestHash !== requestHash
+    || reply.idempotencyKey !== input.idempotencyKey
+    || reply.inboundMessageId !== input.inboundMessageId)) {
+    return res.status(409).json({ error: 'reply_idempotency_conflict', replyId: reply.replyId });
+  }
+  if (reply && reply.status !== 'received') {
+    res.setHeader('ETag', `"proposal-revision-${reply.expectedProposalRevision}"`);
+    return res.status(reply.httpStatus || 200).json(reply.response);
+  }
+
+  if (!reply) {
+    reply = db.transaction(() => {
+      const timestamp = now();
+      const replyId = uid();
+      db.prepare(`
+        INSERT INTO hq_proposal_replies (
+          reply_id, inbound_message_id, idempotency_key, request_hash, proposal_id,
+          expected_revision, decision, text_hash, source, reply_ref, verified_user_ref,
+          signature_ref, received_at, status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'received', ?, ?)
+      `).run(
+        replyId, input.inboundMessageId, input.idempotencyKey, requestHash, input.proposalId,
+        input.expectedProposalRevision, input.decision, input.textHash, input.source,
+        input.replyRef, input.verifiedUserRef, input.signatureRef, input.receivedAt,
+        timestamp, timestamp,
+      );
+      const created = rowToGatewayReply(db.prepare('SELECT * FROM hq_proposal_replies WHERE reply_id=?').get(replyId));
+      const detail = {
+        inboundMessageId: input.inboundMessageId,
+        replyRef: input.replyRef,
+        verifiedUserRef: input.verifiedUserRef,
+        source: input.source,
+        signatureRef: input.signatureRef,
+        textHash: input.textHash,
+        decision: input.decision,
+        expectedProposalRevision: input.expectedProposalRevision,
+      };
+      recordGatewayReplyAudit(created, 'received', detail);
+      recordProposalEvent(proposal, 'gateway_reply_received', 'assistant-gateway', '', detail);
+      return created;
+    })();
+  }
+
+  const rejectReply = (code, detail = {}) => {
+    const payload = {
+      contractVersion: ASSISTANT_GATEWAY_REPLY_CONTRACT,
+      error: code,
+      replyId: reply.replyId,
+      proposalId: input.proposalId,
+      ...detail,
+    };
+    db.transaction(() => {
+      finalizeGatewayReply(reply.replyId, 'rejected', 409, payload, code);
+      recordGatewayReplyAudit(reply, 'rejected', { error: code, ...detail });
+    })();
+    return res.status(409).json(payload);
+  };
+
+  const ageError = replyAgeError(input.receivedAt);
+  if (ageError) return rejectReply(ageError);
+  proposal = getProposalOrThrow(input.proposalId);
+  if (proposal.revision !== input.expectedProposalRevision) {
+    return rejectReply('proposal_revision_conflict', {
+      expectedRevision: input.expectedProposalRevision,
+      currentRevision: proposal.revision,
+      updatedAt: proposal.updatedAt,
+    });
+  }
+
+  try {
+    const result = db.transaction(() => {
+      let nextProposal = proposal;
+      let status = 'applied';
+      if (input.decision === 'expand') {
+        status = 'clarification_recorded';
+        recordProposalEvent(proposal, 'clarification_requested', 'assistant-gateway', input.clarification, {
+          replyId: reply.replyId,
+          replyRef: input.replyRef,
+          textHash: input.textHash,
+        });
+      } else {
+        nextProposal = transitionProposal(input.proposalId, input.decision, {
+          actor: 'assistant-gateway',
+          note: input.note,
+          deferUntil: input.deferUntil,
+          reasonCode: input.reasonCode,
+          scopeKey: input.scopeKey,
+          fingerprint: input.fingerprint,
+        });
+      }
+      const payload = {
+        contractVersion: ASSISTANT_GATEWAY_REPLY_CONTRACT,
+        replyId: reply.replyId,
+        inboundMessageId: input.inboundMessageId,
+        proposalId: input.proposalId,
+        proposalRevision: nextProposal.revision,
+        decision: input.decision,
+        status,
+        proposal: nextProposal,
+        taskboxMutation: false,
+      };
+      finalizeGatewayReply(reply.replyId, status, 200, payload);
+      recordGatewayReplyAudit(reply, status, {
+        decision: input.decision,
+        proposalStatus: nextProposal.status,
+        proposalRevision: nextProposal.revision,
+      });
+      return payload;
+    })();
+    res.setHeader('ETag', `"proposal-revision-${result.proposalRevision}"`);
+    return res.json(result);
+  } catch (error) {
+    const status = error?.status || 500;
+    const code = error?.code || 'internal_error';
+    const payload = {
+      contractVersion: ASSISTANT_GATEWAY_REPLY_CONTRACT,
+      error: code,
+      replyId: reply.replyId,
+      proposalId: input.proposalId,
+      ...(error?.detail || {}),
+    };
+    db.transaction(() => {
+      finalizeGatewayReply(reply.replyId, 'rejected', status, payload, code);
+      recordGatewayReplyAudit(reply, 'rejected', { error: code, ...(error?.detail || {}) });
+    })();
+    return res.status(status).json(payload);
   }
 });
 

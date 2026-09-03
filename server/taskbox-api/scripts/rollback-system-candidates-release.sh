@@ -23,20 +23,24 @@ source "$ENV_FILE"
 set +a
 DB_PATH="${TASKBOX_DB_PATH:-${APP_DIR}/data/taskbox.sqlite}"
 
-disable_execution_api() {
+disable_external_write_apis() {
   local tmp="${ENV_FILE}.tmp.$$"
   awk '
-    BEGIN { replaced=0 }
-    /^EXECUTION_SYSTEM_API_ENABLED=/ { print "EXECUTION_SYSTEM_API_ENABLED=0"; replaced=1; next }
+    BEGIN { execution=0; gateway=0 }
+    /^EXECUTION_SYSTEM_API_ENABLED=/ { print "EXECUTION_SYSTEM_API_ENABLED=0"; execution=1; next }
+    /^ASSISTANT_GATEWAY_API_ENABLED=/ { print "ASSISTANT_GATEWAY_API_ENABLED=0"; gateway=1; next }
     { print }
-    END { if (!replaced) print "EXECUTION_SYSTEM_API_ENABLED=0" }
+    END {
+      if (!execution) print "EXECUTION_SYSTEM_API_ENABLED=0"
+      if (!gateway) print "ASSISTANT_GATEWAY_API_ENABLED=0"
+    }
   ' "$ENV_FILE" > "$tmp"
   chmod 600 "$tmp"
   mv "$tmp" "$ENV_FILE"
 }
 
 systemctl stop "$SERVICE"
-disable_execution_api
+disable_external_write_apis
 install -m 0644 "$BACKUP_DIR/code/package.json" "$APP_DIR/package.json"
 install -m 0644 "$BACKUP_DIR/code/package-lock.json" "$APP_DIR/package-lock.json"
 install -m 0644 "$BACKUP_DIR/code/schema.sql" "$APP_DIR/schema.sql"

@@ -24,6 +24,11 @@ EXECUTION_SYSTEM_API_TOKEN_FILE=/etc/taskbox-execution-system-token
 EXECUTION_SYSTEM_API_DISABLE_FILE=/etc/taskbox-execution-system.disabled
 EXECUTION_SYSTEM_API_SCOPES=tasks:read,tasks:create,tasks:update,tasks:schedule,tasks:progress,tasks:evidence,tasks:complete,tasks:delete,tasks:audit
 EXECUTION_SYSTEM_EXPLICIT_GRANT_IDS=standing-execution-taskbox-normal-2026-09-02
+ASSISTANT_GATEWAY_API_ENABLED=1
+ASSISTANT_GATEWAY_API_TOKEN_FILE=/etc/taskbox-assistant-gateway-token
+ASSISTANT_GATEWAY_API_DISABLE_FILE=/etc/taskbox-assistant-gateway.disabled
+ASSISTANT_GATEWAY_API_SCOPES=proposal-replies:write
+ASSISTANT_GATEWAY_REPLY_MAX_AGE_SECONDS=86400
 ```
 
 Do not commit this file. Do not put the API token in the GitHub Pages repository.
@@ -52,6 +57,7 @@ npm run import-json -- /opt/taskbox-api/seed
 - `GET/POST /v1/hq/daily-briefs/:date`: daily command brief and review result upsert. Omitting `primaryTaskId` preserves the original strategic commitment; sending `primaryTaskId: null` clears commitment and action seat. P1 production builds use `currentActionTaskId` for the current action seat and `_syncMutation`/`_syncFence` to reject stale generation or client-sequence replays.
 - `/v1/hq/decisions`: decision queue record-level CRUD.
 - `GET/POST /v1/hq/proposals`, `GET /v1/hq/proposals/:id`, and proposal `approve/reject/defer/promote` actions. Only approved daily proposals can promote to TaskBox; weekly/monthly proposals remain strategic records.
+- `POST /v1/hq/proposals/:proposalId/replies`: Assistant Gateway-only verified reply intake with revision binding, durable idempotency and audit. It can approve/reject/defer or record clarification, but never promotes or writes TaskBox. See `../../docs/hq-proposal-reply-api.md`.
 - `POST /v1/system-candidates/batch`, `GET /v1/system-candidates?systemId=...`, and `PATCH /v1/system-candidates/:id`: idempotent daily-review candidate inboxes isolated by system. Candidates can only become `kept` or `dismissed`; this API cannot publish mission versions, health/time facts, TaskBox tasks, experiments, or rules.
 - `POST /v1/mission/sync` and `GET /v1/mission/state`: Mission OS Beta record sync for drafts, immutable published versions, candidates, and audit events. Mutable records require `expectedRevision`; stale writes return `409`. Published versions require valid `explicit_user` or exact Mission HQ `standing_rule` authority and never write TaskBox records.
 - `GET /v1/system-baseline/current`: authenticated, no-store delivery of the private five-system V1 bootstrap package. Configure `TASKBOX_FIVE_SYSTEM_BASELINE_PATH`; the file stays outside Git/Pages and is never exposed without the API token.
@@ -60,7 +66,7 @@ npm run import-json -- /opt/taskbox-api/seed
 
 SQLite schema lives in `schema.sql`. `raw_json` is a compatibility fallback; query-critical fields use dedicated columns and indexes.
 
-Task availability and routing fields are `device_context`, `execution_mode`, `visible_after`, `deferred_at`, `defer_note`, and `progress_logs_json`. Every task has a monotonic `revision`. Run `npm run test:schema`, `npm run test:mission`, and `npm run test:execution` before deployment.
+Task availability and routing fields are `device_context`, `execution_mode`, `visible_after`, `deferred_at`, `defer_note`, and `progress_logs_json`. Every task has a monotonic `revision`. Run `npm run test:schema`, `npm run test:hq`, `npm run test:mission`, and `npm run test:execution` before deployment.
 
 P2-created candidate tasks use `hq-candidate:<dedupeKey>` as `syncKey`. Repeated `POST /v1/tasks` calls with the same value return the existing record, while `candidateDedupeKey`, `candidateSourceSystemId`, `candidateSourceRef`, and `roiInputs` remain available through `raw_json` compatibility fields.
 

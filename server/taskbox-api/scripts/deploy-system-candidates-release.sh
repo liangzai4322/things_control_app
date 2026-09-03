@@ -11,6 +11,8 @@ STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 BACKUP_DIR="${TASKBOX_BACKUP_DIR:-${APP_DIR}/backups/execution-system-${STAMP}}"
 EXECUTION_TOKEN_FILE="${EXECUTION_SYSTEM_API_TOKEN_FILE:-/etc/taskbox-execution-system-token}"
 EXECUTION_DISABLE_FILE="${EXECUTION_SYSTEM_API_DISABLE_FILE:-/etc/taskbox-execution-system.disabled}"
+ASSISTANT_GATEWAY_TOKEN_FILE="${ASSISTANT_GATEWAY_API_TOKEN_FILE:-/etc/taskbox-assistant-gateway-token}"
+ASSISTANT_GATEWAY_DISABLE_FILE="${ASSISTANT_GATEWAY_API_DISABLE_FILE:-/etc/taskbox-assistant-gateway.disabled}"
 DAILY_INTAKE_TOKEN_DIR="${DAILY_INTAKE_TOKEN_DIR:-/etc/taskbox-daily-intake}"
 DAILY_INTAKE_DISABLE_FILE="${DAILY_INTAKE_DISABLE_FILE:-/etc/taskbox-daily-intake.disabled}"
 DAILY_INTAKE_ENABLE_TIMERS="${DAILY_INTAKE_ENABLE_TIMERS:-0}"
@@ -66,6 +68,8 @@ set +a
 DB_PATH="${TASKBOX_DB_PATH:-${APP_DIR}/data/taskbox.sqlite}"
 EXECUTION_TOKEN_FILE="${EXECUTION_SYSTEM_API_TOKEN_FILE:-$EXECUTION_TOKEN_FILE}"
 EXECUTION_DISABLE_FILE="${EXECUTION_SYSTEM_API_DISABLE_FILE:-$EXECUTION_DISABLE_FILE}"
+ASSISTANT_GATEWAY_TOKEN_FILE="${ASSISTANT_GATEWAY_API_TOKEN_FILE:-$ASSISTANT_GATEWAY_TOKEN_FILE}"
+ASSISTANT_GATEWAY_DISABLE_FILE="${ASSISTANT_GATEWAY_API_DISABLE_FILE:-$ASSISTANT_GATEWAY_DISABLE_FILE}"
 DAILY_INTAKE_TOKEN_DIR="${DAILY_INTAKE_TOKEN_DIR:-$DAILY_INTAKE_TOKEN_DIR}"
 DAILY_INTAKE_DISABLE_FILE="${DAILY_INTAKE_DISABLE_FILE:-$DAILY_INTAKE_DISABLE_FILE}"
 
@@ -135,6 +139,18 @@ upsert_env EXECUTION_SYSTEM_API_DISABLE_FILE "$EXECUTION_DISABLE_FILE"
 upsert_env EXECUTION_SYSTEM_API_SCOPES "$EXECUTION_SCOPES"
 upsert_env EXECUTION_SYSTEM_EXPLICIT_GRANT_IDS "$EXECUTION_GRANT_ID"
 
+if [[ ! -s "$ASSISTANT_GATEWAY_TOKEN_FILE" ]]; then
+  umask 077
+  node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex') + '\n')" > "$ASSISTANT_GATEWAY_TOKEN_FILE"
+fi
+chmod 600 "$ASSISTANT_GATEWAY_TOKEN_FILE"
+rm -f "$ASSISTANT_GATEWAY_DISABLE_FILE"
+upsert_env ASSISTANT_GATEWAY_API_ENABLED 1
+upsert_env ASSISTANT_GATEWAY_API_TOKEN_FILE "$ASSISTANT_GATEWAY_TOKEN_FILE"
+upsert_env ASSISTANT_GATEWAY_API_DISABLE_FILE "$ASSISTANT_GATEWAY_DISABLE_FILE"
+upsert_env ASSISTANT_GATEWAY_API_SCOPES "proposal-replies:write"
+upsert_env ASSISTANT_GATEWAY_REPLY_MAX_AGE_SECONDS 86400
+
 # Daily Review identities are deliberately separate from the browser and execution-system tokens.
 install -d -m 700 "$DAILY_INTAKE_TOKEN_DIR"
 create_daily_intake_token() {
@@ -188,6 +204,7 @@ cd "$APP_DIR"
 npm ci --omit=dev
 npm run init-db
 npm run test:schema
+npm run test:hq
 npm run test:execution
 npm run test:system-intake
 systemctl start "$SERVICE"
@@ -222,6 +239,25 @@ fi
 if curl --silent --show-error --fail --output /dev/null \
   --header "Authorization: Bearer $EXECUTION_TOKEN" "$HEALTH_URL" 2>/dev/null; then
   echo "execution token unexpectedly accessed generic TaskBox API" >&2
+  exit 1
+fi
+
+ASSISTANT_GATEWAY_TOKEN="$(tr -d '\r\n' < "$ASSISTANT_GATEWAY_TOKEN_FILE")"
+ASSISTANT_GATEWAY_PROBE="$API_BASE_URL/v1/hq/proposals/assistant-gateway-auth-probe/replies"
+ASSISTANT_GATEWAY_PROBE_BODY="$(node -e 'process.stdout.write(JSON.stringify({inboundMessageId:"assistant-gateway-auth-probe",replyRef:"deployment-probe",verifiedUserRef:"deployment-probe-user",expectedProposalRevision:1,decision:"expand",textHash:"0".repeat(64),receivedAt:new Date().toISOString(),verification:{verified:true,source:"notification_hub_weixin",signatureRef:"deployment-probe-signature"},clarification:"deployment probe"}))')"
+gateway_code="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  --request POST --header "Authorization: Bearer $ASSISTANT_GATEWAY_TOKEN" \
+  --header 'Content-Type: application/json' --header 'X-Idempotency-Key: assistant-gateway:deployment-probe' \
+  --data "$ASSISTANT_GATEWAY_PROBE_BODY" "$ASSISTANT_GATEWAY_PROBE")"
+[[ "$gateway_code" == "404" ]] || { echo "assistant gateway auth probe failed: $gateway_code" >&2; exit 1; }
+generic_gateway_code="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  --request POST --header "Authorization: Bearer $TASKBOX_API_TOKEN" \
+  --header 'Content-Type: application/json' --header 'X-Idempotency-Key: assistant-gateway:deployment-probe' \
+  --data "$ASSISTANT_GATEWAY_PROBE_BODY" "$ASSISTANT_GATEWAY_PROBE")"
+[[ "$generic_gateway_code" == "401" ]] || { echo "generic token unexpectedly accessed assistant gateway API: $generic_gateway_code" >&2; exit 1; }
+if curl --silent --show-error --fail --output /dev/null \
+  --header "Authorization: Bearer $ASSISTANT_GATEWAY_TOKEN" "$HEALTH_URL" 2>/dev/null; then
+  echo "assistant gateway token unexpectedly accessed generic TaskBox API" >&2
   exit 1
 fi
 
@@ -292,6 +328,8 @@ echo "deployment_ok"
 echo "rollback_snapshot=$BACKUP_DIR"
 echo "execution_token_file=$EXECUTION_TOKEN_FILE"
 echo "execution_disable_file=$EXECUTION_DISABLE_FILE"
+echo "assistant_gateway_token_file=$ASSISTANT_GATEWAY_TOKEN_FILE"
+echo "assistant_gateway_disable_file=$ASSISTANT_GATEWAY_DISABLE_FILE"
 echo "daily_intake_sender_token_file=$DAILY_SENDER_TOKEN_FILE"
 echo "daily_intake_hq_token_file=$DAILY_HQ_TOKEN_FILE"
 echo "daily_intake_token_dir=$DAILY_INTAKE_TOKEN_DIR"

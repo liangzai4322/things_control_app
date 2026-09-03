@@ -31,6 +31,8 @@ printf 'TASKBOX_API_PORT=3107\n' >> "$ENV_FILE"
 printf 'TASKBOX_API_TOKEN=release-test-token\n' >> "$ENV_FILE"
 printf 'EXECUTION_SYSTEM_API_TOKEN_FILE=%s\n' "$TMP/execution-token" >> "$ENV_FILE"
 printf 'EXECUTION_SYSTEM_API_DISABLE_FILE=%s\n' "$TMP/execution-disabled" >> "$ENV_FILE"
+printf 'ASSISTANT_GATEWAY_API_TOKEN_FILE=%s\n' "$TMP/assistant-gateway-token" >> "$ENV_FILE"
+printf 'ASSISTANT_GATEWAY_API_DISABLE_FILE=%s\n' "$TMP/assistant-gateway-disabled" >> "$ENV_FILE"
 printf 'DAILY_INTAKE_TOKEN_DIR=%s\n' "$TMP/daily-intake" >> "$ENV_FILE"
 printf 'DAILY_INTAKE_DISABLE_FILE=%s\n' "$TMP/daily-intake-disabled" >> "$ENV_FILE"
 mkdir -p "$TMP/daily-intake"
@@ -75,6 +77,10 @@ if [[ "$*" == *"http://127.0.0.1:3107/health"* ]]; then
 fi
 if [[ "$*" == *"/v1/execution/capabilities"* ]]; then
   [[ "$*" != *"Authorization: Bearer release-test-token"* ]]
+  exit
+fi
+if [[ "$*" == *"/v1/hq/proposals/assistant-gateway-auth-probe/replies"* ]]; then
+  if [[ "$*" == *"Authorization: Bearer release-test-token"* ]]; then printf '401'; else printf '404'; fi
   exit
 fi
 if [[ "$*" == *"/v1/system-candidates?"* ]]; then
@@ -133,6 +139,7 @@ grep -q 'deployment_ok' "$TMP/deploy.log"
 grep -q 'ci --omit=dev' "$TMP/npm.log"
 grep -q 'run init-db' "$TMP/npm.log"
 grep -q 'run test:schema' "$TMP/npm.log"
+grep -q 'run test:hq' "$TMP/npm.log"
 grep -q 'run test:execution' "$TMP/npm.log"
 grep -q 'run test:system-intake' "$TMP/npm.log"
 grep -q 'Authorization: Bearer release-test-token' "$CURL_CALL_LOG"
@@ -140,6 +147,9 @@ grep -q 'http://127.0.0.1:3107/health' "$CURL_CALL_LOG"
 grep -q '/v1/execution/capabilities' "$CURL_CALL_LOG"
 grep -q '^EXECUTION_SYSTEM_API_ENABLED=1$' "$ENV_FILE"
 test -s "$TMP/execution-token"
+grep -q '^ASSISTANT_GATEWAY_API_ENABLED=1$' "$ENV_FILE"
+grep -q '^ASSISTANT_GATEWAY_API_SCOPES=proposal-replies:write$' "$ENV_FILE"
+test -s "$TMP/assistant-gateway-token"
 grep -q '^DAILY_INTAKE_API_ENABLED=1$' "$ENV_FILE"
 test -s "$TMP/daily-intake/sender.token"
 test -s "$TMP/daily-intake/hq.token"
@@ -164,5 +174,6 @@ cmp -s "$APP_DIR/schema.sql" "$BACKUP_ROOT/snapshot/code/schema.sql"
 grep -qx active "$STATE_FILE"
 grep -q 'rollback_ok' "$TMP/rollback.log"
 grep -q '^EXECUTION_SYSTEM_API_ENABLED=0$' "$ENV_FILE"
+grep -q '^ASSISTANT_GATEWAY_API_ENABLED=0$' "$ENV_FILE"
 
 echo "system candidate release script tests passed"

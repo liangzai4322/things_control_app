@@ -40,6 +40,10 @@ TASKBOX_API_PORT=<loopback port>
 TASKBOX_API_TOKEN=<secret>
 TASKBOX_ALLOWED_ORIGINS=<comma-separated origins>
 HQ_PROPOSAL_PROMOTION_ENABLED=0|1
+ASSISTANT_GATEWAY_API_ENABLED=0|1
+ASSISTANT_GATEWAY_API_TOKEN_FILE=<private credential file>
+ASSISTANT_GATEWAY_API_DISABLE_FILE=<fail-closed marker file>
+ASSISTANT_GATEWAY_API_SCOPES=proposal-replies:write
 ```
 
 API 目录默认 `/opt/taskbox-api`，数据库默认 `/opt/taskbox-api/data/taskbox.sqlite`。生产进程应由 systemd 或等价守护程序管理，Nginx 把 HTTPS `/taskbox-api/` 反向代理到本地端口。
@@ -81,10 +85,11 @@ API 目录默认 `/opt/taskbox-api`，数据库默认 `/opt/taskbox-api/data/tas
 16. 使命云端Beta发布前运行`npm run test:mission`、`npm --prefix server/taskbox-api run test:mission`和`npm --prefix server/taskbox-api run test:schema`；用临时数据库验证首次同步、重复同步、revision冲突、AI发布拒绝和云端store重建。
 17. 使命先保存草稿，确认 HQ 仍只显示 unknown 或原 activeVersion；完成明确`explicit_user`或精确`standing_rule`批准后再确认 L1 更新。健康依次验证无快照、发布最小快照、冲突来源和超过 36 小时，HQ 应为 unknown/对应状态/unknown/stale，且不出现症状或医疗记录原文。
 18. 执行系统 API 发布前运行`npm --prefix server/taskbox-api run test:execution`。发布脚本会生成或复用`/etc/taskbox-execution-system-token`、登记显式授权引用和最小 scopes，并验证 execution Token 可访问 capabilities、通用 TaskBox Token 被拒绝。生产写入再验证创建幂等、`If-Match`冲突、审计与软删除恢复；不得使用通用`/v1/tasks`替代。
-18. 五系统候选 API 发布后运行 `server/taskbox-api/scripts/verify-system-candidates-production.sh`，必须依次得到认证健康`200`、未认证`401`、CORS`204`、候选路由`200`。随后重放日省候选 outbox 两次：首次只允许`created`，第二次相同候选必须全部`unchanged`；分别读取五个`systemId`，不得跨系统返回候选。
-19. 首次打开五系统时，在HQ“五系统固定入口”选择本机私有`五系统初始化包-v1.json`并发布V1基线。必须显示版本号，以及使命39、健康事实12/上下文72、时间事实22/上下文113、执行历史375/当前任务0、反馈observed 42/proposed 5。再次发布应形成下一版本且不重复健康Observation；点击“回退上一版”必须原子恢复五store和前一版本号。初始化包包含私人日省内容，禁止提交Git、部署Pages或上传到无认证位置。
-20. 生产服务器将同一私有包放在Git外路径并设置`TASKBOX_FIVE_SYSTEM_BASELINE_PATH`。带Token的新浏览器首次打开HQ时应自动显示V1版本，无需文件选择；未认证请求必须401，响应必须`Cache-Control: private, no-store`。没有Token时文件入口继续可用。
-21. P5–P6 发布后，确认唯一赌注只读取已批准月度押注；proposed/deferred/rejected月押注不得显示为正式赌注。项目资源字段与周省治理指标缺失时必须显示未知，不得换算为0。`observationDays < 14`或五项指标不全时只能显示“继续观测”；达到门槛后才显示保留、简化或停止建议，且不得产生任何TaskBox写入。
+19. Assistant Gateway 回复接口发布前运行`npm --prefix server/taskbox-api run test:hq`和`test:schema`。发布脚本生成或复用独立凭据文件并验证：Gateway 身份仅能访问 proposal replies、通用 Token 被拒绝、Gateway Token 不能访问通用 API。生产只做不存在 proposal 的认证探针，不发送真实审批；停用时创建配置中的 disable 文件。
+20. 五系统候选 API 发布后运行 `server/taskbox-api/scripts/verify-system-candidates-production.sh`，必须依次得到认证健康`200`、未认证`401`、CORS`204`、候选路由`200`。随后重放日省候选 outbox 两次：首次只允许`created`，第二次相同候选必须全部`unchanged`；分别读取五个`systemId`，不得跨系统返回候选。
+21. 首次打开五系统时，在HQ“五系统固定入口”选择本机私有`五系统初始化包-v1.json`并发布V1基线。必须显示版本号，以及使命39、健康事实12/上下文72、时间事实22/上下文113、执行历史375/当前任务0、反馈observed 42/proposed 5。再次发布应形成下一版本且不重复健康Observation；点击“回退上一版”必须原子恢复五store和前一版本号。初始化包包含私人日省内容，禁止提交Git、部署Pages或上传到无认证位置。
+22. 生产服务器将同一私有包放在Git外路径并设置`TASKBOX_FIVE_SYSTEM_BASELINE_PATH`。带Token的新浏览器首次打开HQ时应自动显示V1版本，无需文件选择；未认证请求必须401，响应必须`Cache-Control: private, no-store`。没有Token时文件入口继续可用。
+23. P5–P6 发布后，确认唯一赌注只读取已批准月度押注；proposed/deferred/rejected月押注不得显示为正式赌注。项目资源字段与周省治理指标缺失时必须显示未知，不得换算为0。`observationDays < 14`或五项指标不全时只能显示“继续观测”；达到门槛后才显示保留、简化或停止建议，且不得产生任何TaskBox写入。
 
 本地4173端口已被占用时，选择其他未占用端口（例如`npm run preview -- --port 4178`），不要把其他本地站点误认为本项目。
 
@@ -145,6 +150,8 @@ python "D:\note_new\06-日常输入_输出\.agents\skills\任务中枢\scripts\t
 - 执行系统返回`execution_api_disabled`：检查即时停用文件；先完成故障调查，不要删除 Token 或切换到通用 API 绕过。
 - 执行系统返回`task_revision_conflict`：重新读取 Task 与 ETag；同字段已有用户修改时停止并交回裁决，禁止强制覆盖。
 - 执行系统返回`possible_duplicate_task`：复用返回的真实 Task ID 或交 HQ 查重，不得换幂等键重复创建。
+- Assistant Gateway 返回`proposal_revision_conflict`：停止当前回复，不得改用通用 HQ 接口；重新读取提案并让用户针对新 revision 重新确认。
+- Assistant Gateway 返回`reply_expired`：保留 Notification Hub 原始回执和引用，重新向用户发起确认；不得重写`receivedAt`绕过有效期。
 - 任务中枢返回`skipped_duplicate`：目标日期和盒子中已有同内容任务，属于幂等成功，不再创建副本。
 
 ## 回滚
