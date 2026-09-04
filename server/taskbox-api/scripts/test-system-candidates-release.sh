@@ -60,6 +60,7 @@ case "$1" in
   is-active) grep -qx active "$SYSTEMCTL_STATE_FILE" ;;
   enable) printf 'enable %s\n' "${3:-$2}" >> "$SYSTEMCTL_CALL_LOG" ;;
   is-enabled) : ;;
+  show) printf 'ASSISTANT_GATEWAY_MODE=echo ASSISTANT_GATEWAY_MODE=decision\n' ;;
   daemon-reload|disable) printf '%s %s\n' "$1" "${2:-}" >> "$SYSTEMCTL_CALL_LOG" ;;
   *) exit 2 ;;
 esac
@@ -166,7 +167,7 @@ grep -q '/v1/execution/capabilities' "$CURL_CALL_LOG"
 grep -q '^EXECUTION_SYSTEM_API_ENABLED=1$' "$ENV_FILE"
 test -s "$TMP/execution-token"
 grep -q '^ASSISTANT_GATEWAY_API_ENABLED=1$' "$ENV_FILE"
-grep -q '^ASSISTANT_GATEWAY_API_SCOPES=proposal-replies:write$' "$ENV_FILE"
+grep -q '^ASSISTANT_GATEWAY_API_SCOPES=proposal-replies:write,proposal-auto-approve:write,proposal-promotions:write$' "$ENV_FILE"
 grep -q '^ASSISTANT_GATEWAY_READ_SCOPES=proposals:read$' "$ENV_FILE"
 test -s "$TMP/assistant-gateway-token"
 test -s "$TMP/assistant-gateway-read-token"
@@ -186,8 +187,13 @@ for system in attention execution feedback health hq mission; do
 done
 grep -q 'daily_intake_timers=enabled' "$TMP/deploy.log"
 grep -q 'assistant_gateway_worker=active' "$TMP/deploy.log"
+grep -q 'assistant_gateway_worker_mode=decision' "$TMP/deploy.log"
 test -f "$TMP/systemd/assistant-gateway.service"
 grep -q '^Environment=ASSISTANT_GATEWAY_MODE=echo$' "$TMP/systemd/assistant-gateway.service"
+test -f "$TMP/systemd/assistant-gateway.service.d/20-production-mode.conf"
+grep -q '^Environment=ASSISTANT_GATEWAY_MODE=decision$' \
+  "$TMP/systemd/assistant-gateway.service.d/20-production-mode.conf"
+test -x "$TMP/assistant-gateway-app/status.py"
 grep -q '^LoadCredential=hq-read.token:' "$TMP/systemd/assistant-gateway.service"
 grep -q '^StateDirectory=taskbox-assistant-gateway$' "$TMP/systemd/assistant-gateway.service"
 ! grep -q '/v1/tasks' "$TMP/assistant-gateway-app/worker.py"
@@ -201,5 +207,6 @@ grep -qx active "$STATE_FILE"
 grep -q 'rollback_ok' "$TMP/rollback.log"
 grep -q '^EXECUTION_SYSTEM_API_ENABLED=0$' "$ENV_FILE"
 grep -q '^ASSISTANT_GATEWAY_API_ENABLED=0$' "$ENV_FILE"
+test ! -f "$TMP/systemd/assistant-gateway.service.d/20-production-mode.conf"
 
 echo "system candidate release script tests passed"

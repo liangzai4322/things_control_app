@@ -13,6 +13,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -111,6 +112,92 @@ class DecisionStore:
         os.chmod(temporary, 0o600)
         temporary.replace(self.path)
 
+    def count_promotion_pending(self) -> int:
+        return sum(
+            1 for record in self._read().values()
+            if isinstance(record, Mapping) and record.get("promotionPending") is True
+        )
+
+
+STATUS_FIELDS = (
+    "lastClaimAt", "lastReplyAt", "pendingCount", "automationCount",
+    "promotionPendingCount", "retryCount", "deadLetterCount",
+)
+
+
+def utc_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+class GatewayStatus:
+    """Persist only the operational fields safe for local health aggregation."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        self.value = self._read()
+
+    def _read(self) -> dict[str, Any]:
+        try:
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            raw = {}
+        if not isinstance(raw, dict):
+            raw = {}
+        def count(name: str) -> int:
+            try:
+                return max(0, int(raw.get(name) or 0))
+            except (TypeError, ValueError):
+                return 0
+
+        return {
+            "lastClaimAt": raw.get("lastClaimAt") if isinstance(raw.get("lastClaimAt"), str) else None,
+            "lastReplyAt": raw.get("lastReplyAt") if isinstance(raw.get("lastReplyAt"), str) else None,
+            "pendingCount": count("pendingCount"),
+            "automationCount": count("automationCount"),
+            "promotionPendingCount": count("promotionPendingCount"),
+            "retryCount": count("retryCount"),
+            "deadLetterCount": count("deadLetterCount"),
+        }
+
+    def snapshot(self) -> dict[str, Any]:
+        return {field: self.value[field] for field in STATUS_FIELDS}
+
+    def _write(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.path.with_name(f".{self.path.name}.{os.getpid()}.tmp")
+        temporary.write_text(
+            json.dumps(self.snapshot(), ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        os.chmod(temporary, 0o600)
+        temporary.replace(self.path)
+
+    def record_claim(self, pending_count: int) -> None:
+        self.value["lastClaimAt"] = utc_timestamp()
+        self.value["pendingCount"] = max(0, int(pending_count))
+        self._write()
+
+    def record_automation_count(self, automation_count: int) -> None:
+        self.value["automationCount"] = max(0, int(automation_count))
+        self._write()
+
+    def record_reply(self) -> None:
+        self.value["lastReplyAt"] = utc_timestamp()
+        self._write()
+
+    def record_outcome(self, outcome: str) -> None:
+        if outcome == "retry":
+            self.value["retryCount"] += 1
+        elif outcome == "dead_letter":
+            self.value["deadLetterCount"] += 1
+        else:
+            return
+        self._write()
+
+    def sync_promotion_pending(self, store: DecisionStore) -> None:
+        self.value["promotionPendingCount"] = store.count_promotion_pending()
+        self._write()
+
 
 def verify_message(message: Mapping[str, Any]) -> str:
     verification = message.get("authVerification") or {}
@@ -140,7 +227,8 @@ def claim(client: JsonClient) -> list[dict[str, Any]]:
     return [dict(item) for item in messages if isinstance(item, Mapping)]
 
 
-def acknowledge(client: JsonClient, message: Mapping[str, Any], outcome: str, error: str | None = None) -> None:
+def acknowledge(client: JsonClient, message: Mapping[str, Any], outcome: str, error: str | None = None,
+                status: GatewayStatus | None = None) -> None:
     inbound_id = urllib.parse.quote(str(message["inboundMessageId"]), safe="")
     payload: dict[str, Any] = {
         "consumerId": "assistant-gateway",
@@ -152,9 +240,11 @@ def acknowledge(client: JsonClient, message: Mapping[str, Any], outcome: str, er
     if error:
         payload["error"] = error[:240]
     client.post(f"/v1/weixin-inbound/{inbound_id}/ack", payload)
+    if status:
+        status.record_outcome(outcome)
 
 
-def send_echo(client: JsonClient, message: Mapping[str, Any]) -> None:
+def send_echo(client: JsonClient, message: Mapping[str, Any], status: GatewayStatus | None = None) -> None:
     inbound_id = urllib.parse.quote(str(message["inboundMessageId"]), safe="")
     client.post(f"/v1/weixin-inbound/{inbound_id}/reply", {
         "consumerId": "assistant-gateway",
@@ -162,6 +252,8 @@ def send_echo(client: JsonClient, message: Mapping[str, Any]) -> None:
         "replyKey": f"echo:{message['inboundMessageId']}",
         "text": "已收到，微信助手通路正常",
     })
+    if status:
+        status.record_reply()
 
 
 def verified_user_ref(message: Mapping[str, Any]) -> str:
@@ -260,8 +352,12 @@ def validate_auto_promotion(proposal: Mapping[str, Any]) -> tuple[str, int]:
     return rule_id, rule_version
 
 
-def process_automation_queue(reader: JsonClient, writer: JsonClient, store: DecisionStore) -> None:
-    for proposal in automation_queue(reader):
+def process_automation_queue(reader: JsonClient, writer: JsonClient, store: DecisionStore,
+                             status: GatewayStatus | None = None) -> None:
+    proposals = automation_queue(reader)
+    if status:
+        status.record_automation_count(len(proposals))
+    for proposal in proposals:
         proposal_id = str(proposal.get("proposalId") or "")
         revision = int(proposal.get("revision") or 0)
         rule_id, rule_version = validate_auto_promotion(proposal)
@@ -376,18 +472,19 @@ def build_decision_record(message: Mapping[str, Any], proposal: Mapping[str, Any
 
 
 def process_decision(hub: JsonClient, hq_reader: JsonClient, hq_writer: JsonClient,
-                     store: DecisionStore, message: Mapping[str, Any]) -> None:
+                     store: DecisionStore, message: Mapping[str, Any],
+                     status: GatewayStatus | None = None) -> None:
     inbound_id = str(message.get("inboundMessageId") or "")
     try:
         text = verify_message(message)
         if text == "测试" or text.startswith("测试-"):
-            send_echo(hub, message)
-            acknowledge(hub, message, "processed")
+            send_echo(hub, message, status)
+            acknowledge(hub, message, "processed", status=status)
             emit("echo_processed", inboundMessageId=inbound_id, outcome="processed", mode="decision")
             return
         parsed = parse_decision(text)
         if not parsed:
-            acknowledge(hub, message, "retry", "decision_not_explicit")
+            acknowledge(hub, message, "retry", "decision_not_explicit", status)
             emit("message_deferred", inboundMessageId=inbound_id, attemptCount=message.get("attemptCount"), mode="decision")
             return
         decision, patch = parsed
@@ -398,7 +495,7 @@ def process_decision(hub: JsonClient, hq_reader: JsonClient, hq_writer: JsonClie
             proposals = pending_proposals(hq_reader, message)
             if len(proposals) != 1:
                 reason = "no_pending_proposal" if not proposals else "ambiguous_pending_proposals"
-                acknowledge(hub, message, "retry", reason)
+                acknowledge(hub, message, "retry", reason, status)
                 emit("message_deferred", inboundMessageId=inbound_id, attemptCount=message.get("attemptCount"), mode="decision")
                 return
             record = build_decision_record(message, proposals[0], decision, patch)
@@ -467,15 +564,17 @@ def process_decision(hub: JsonClient, hq_reader: JsonClient, hq_writer: JsonClie
                 "replyKey": f"decision:{hashlib.sha256(inbound_id.encode('utf-8')).hexdigest()}",
                 "text": str(record["confirmation"]),
             })
+            if status:
+                status.record_reply()
             record["replySent"] = True
             store.put(inbound_id, record)
-        acknowledge(hub, message, "processed")
+        acknowledge(hub, message, "processed", status=status)
         store.remove(inbound_id)
         emit("decision_processed", inboundMessageId=inbound_id, outcome="processed", mode="decision")
     except GatewayError as error:
         permanent = error.status in {400, 401, 403, 409} or error.code.startswith("inbound_")
         try:
-            acknowledge(hub, message, "dead_letter" if permanent else "retry", error.code)
+            acknowledge(hub, message, "dead_letter" if permanent else "retry", error.code, status)
             if permanent:
                 store.remove(inbound_id)
         except GatewayError:
@@ -490,21 +589,21 @@ def emit(event: str, **fields: Any) -> None:
     print(json.dumps({"event": event, **safe}, ensure_ascii=False, separators=(",", ":")), flush=True)
 
 
-def process_echo(client: JsonClient, message: Mapping[str, Any]) -> None:
+def process_echo(client: JsonClient, message: Mapping[str, Any], status: GatewayStatus | None = None) -> None:
     inbound_id = str(message.get("inboundMessageId") or "")
     try:
         text = verify_message(message)
         if text != "测试" and not text.startswith("测试-"):
-            acknowledge(client, message, "retry", "echo_mode_only")
+            acknowledge(client, message, "retry", "echo_mode_only", status)
             emit("message_deferred", inboundMessageId=inbound_id, attemptCount=message.get("attemptCount"), mode="echo")
             return
-        send_echo(client, message)
-        acknowledge(client, message, "processed")
+        send_echo(client, message, status)
+        acknowledge(client, message, "processed", status=status)
         emit("echo_processed", inboundMessageId=inbound_id, outcome="processed", mode="echo")
     except GatewayError as error:
         permanent = error.status in {400, 401, 403, 409} or error.code.startswith("inbound_")
         try:
-            acknowledge(client, message, "dead_letter" if permanent else "retry", error.code)
+            acknowledge(client, message, "dead_letter" if permanent else "retry", error.code, status)
         except GatewayError:
             pass
         emit("message_failed", inboundMessageId=inbound_id, error=error.code, mode="echo")
@@ -534,6 +633,10 @@ def main() -> int:
     store = DecisionStore(Path(os.environ.get(
         "ASSISTANT_GATEWAY_STATE_FILE", "/var/lib/taskbox-assistant-gateway/decision-state.json",
     )))
+    status = GatewayStatus(Path(os.environ.get(
+        "ASSISTANT_GATEWAY_STATUS_FILE", "/var/lib/taskbox-assistant-gateway/status.json",
+    )))
+    status.sync_promotion_pending(store)
     disable_file = Path(os.environ.get("ASSISTANT_GATEWAY_WORKER_DISABLE_FILE", "/etc/taskbox-assistant-gateway-worker.disabled"))
     running = True
 
@@ -550,18 +653,21 @@ def main() -> int:
             continue
         try:
             if mode == "decision":
-                process_automation_queue(hq_reader, hq_writer, store)
+                process_automation_queue(hq_reader, hq_writer, store, status)
             messages = claim(hub)
+            status.record_claim(len(messages))
             for message in messages:
                 if mode == "decision":
-                    process_decision(hub, hq_reader, hq_writer, store, message)
+                    process_decision(hub, hq_reader, hq_writer, store, message, status)
                 else:
-                    process_echo(hub, message)
+                    process_echo(hub, message, status)
         except GatewayError as error:
             emit("claim_failed", error=error.code, mode=mode)
             if error.status in {401, 403}:
                 return 1
             time.sleep(10)
+        finally:
+            status.sync_promotion_pending(store)
     emit("worker_stopped", mode=mode)
     return 0
 
