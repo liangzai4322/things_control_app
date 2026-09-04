@@ -29,7 +29,7 @@ ASSISTANT_GATEWAY_API_TOKEN_FILE=/etc/taskbox-assistant-gateway-token
 ASSISTANT_GATEWAY_API_DISABLE_FILE=/etc/taskbox-assistant-gateway.disabled
 ASSISTANT_GATEWAY_API_SCOPES=proposal-replies:write
 ASSISTANT_GATEWAY_READ_TOKEN_FILE=/etc/taskbox-assistant-gateway-read-token
-ASSISTANT_GATEWAY_READ_SCOPES=proposals:read
+ASSISTANT_GATEWAY_READ_SCOPES=proposal-decisions:read
 ASSISTANT_GATEWAY_REPLY_MAX_AGE_SECONDS=86400
 ```
 
