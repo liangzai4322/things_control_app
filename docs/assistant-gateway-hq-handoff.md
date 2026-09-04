@@ -21,12 +21,17 @@
 - 合同测试覆盖 eligible daily、provisional monthly（可见但无 approve）、字段缺失、确认重复、字段脱敏和 replyBinding。
 - 当前草案要求显式 `automationAuthorization`：`source=standing_rule`、`ruleId`匹配、`exact/enabled/revocable=true`；要求唯一 `box_type=task`、`taskSpec.content===clearAction`、无 `existingTaskId`、任务字段在 allowlist 内。
 
+## 当前状态与部署
+
+- Gateway writer 已合并提交 `c41dfd3`；automation queue 与 canonical read scope 修复提交为 `6420b4c`、`b0fa06a`，部署探针兼容修复为 `432f539`。
+- 生产 workflow `33895481145` 已成功，head SHA 为 `432f539ce8289c44409812ce0d9096f1c10146ea`。部署脚本完成 schema/HQ/reply/执行测试、Gateway worker 测试与认证探针；未创建业务测试数据。
+- 生产 decision mode 仍由 systemd drop-in 维护，TaskBox 写路径不变。回滚点仍以服务器部署脚本输出为准。
+
 ## 未完成与关键阻塞
 
-- 盒子 APP 正在基于 `3f1155d` 单独实现 Gateway writer：promote 专属 scope、proposal/revision/session/idempotency 绑定、durable `promotion_pending` 与恢复。HQ 必须等待其可 cherry-pick 提交，避免双改。
+- 后续若继续优化，需补一条独立的生产 authenticated 读取探针，确认真实 read token 返回三分流投影；本轮部署脚本已完成空数据与权限探针。
 - 需要正式登记窄规则 `execution.daily_action_proposal.auto_approve`，包含 ruleId、version、scope、allowlist、enabled、revocable、授权来源和撤销时间；旧规则不能替代。
-- `3f1155d` 的部署 workflow `33887645528` 收到取消时 deploy 步骤已经完成，因此该只读三分流曾/可能已上线；workflow 最终状态为 cancelled。它没有新增 writer 或数据库写行为。生产运行 SHA 仍需下一轮探针确认。
-- 自动 approve/promote 尚未完成端到端验收；在 writer 合并与规则登记前不得宣称闭环完成。
+- 自动 approve/promote 已有合成 Worker 测试和生产开关，但真实业务 proposal 仍未处理；不得把空队列探针当成真实业务闭环证明。
 
 ## 下一位 Agent 直接执行
 
