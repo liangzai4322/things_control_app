@@ -1873,21 +1873,100 @@ app.get('/v1/hq/proposals', (req, res) => {
   });
 });
 
+const ASSISTANT_GATEWAY_TASK_SPEC_FIELDS = new Set([
+  'boxId', 'content', 'clearAction', 'boxReason', 'note', 'scheduledAt', 'dueDate',
+  'visibleAfter', 'deviceContext', 'executionMode',
+]);
+const ASSISTANT_GATEWAY_DEVICE_CONTEXTS = new Set(['desktop', 'mobile', 'universal']);
+const ASSISTANT_GATEWAY_EXECUTION_MODES = new Set(['self', 'ai', 'hybrid']);
+const validOptionalGatewayDate = (value) => value == null || value === '' || !Number.isNaN(Date.parse(String(value)));
+
+function assistantGatewayProposalEligibility(row) {
+  const raw = parseJson(row.raw_json, {});
+  const content = raw.content && typeof raw.content === 'object' ? raw.content : {};
+  const taskSpec = raw.taskSpec && typeof raw.taskSpec === 'object' ? raw.taskSpec : {};
+  const evidence = raw.evidence && typeof raw.evidence === 'object' ? raw.evidence : {};
+  const binding = raw.replyBinding && typeof raw.replyBinding === 'object' ? raw.replyBinding : {};
+  const automationAuthorization = raw.automationAuthorization && typeof raw.automationAuthorization === 'object'
+    ? raw.automationAuthorization : {};
+  const decisionClass = String(raw.decisionClass || (row.source_authority === 'ai_derived' ? 'user_required' : '')).trim();
+  const evidenceStatus = String(raw.evidenceStatus || evidence.status || 'unknown').trim();
+  const boxId = String(taskSpec.boxId || '').trim();
+  const boxReason = String(taskSpec.boxReason || content.boxReason || '').trim();
+  const clearAction = String(taskSpec.clearAction || content.clearAction || '').trim();
+  const taskContent = String(taskSpec.content || '').trim();
+  const taskSpecFieldsAllowed = Object.keys(taskSpec).every((key) => ASSISTANT_GATEWAY_TASK_SPEC_FIELDS.has(key));
+  const boxCount = boxId ? Number(db.prepare("SELECT COUNT(*) AS count FROM boxes WHERE id=? AND box_type='task'").get(boxId)?.count || 0) : 0;
+  const bindingMatches = String(binding.proposalId || '') === String(row.decision_id)
+    && Number(binding.revision) === Number(row.revision || 1)
+    && Boolean(String(binding.sessionRef || '').trim())
+    && Boolean(String(binding.verifiedUserRef || '').trim());
+  const autoRejectReasons = [];
+  if (['completed', 'confirmed'].includes(String(content.duplicateStatus || '').trim())) autoRejectReasons.push('confirmed_duplicate');
+  if (String(content.taskKind || '').trim() === 'behavior_rule') autoRejectReasons.push('principle_only');
+  if (content.actionable === false) autoRejectReasons.push('not_actionable');
+  const eligibilityReasons = [];
+  if (row.proposal_type !== 'daily_action_proposal') eligibilityReasons.push('non_daily_proposal');
+  if (evidenceStatus === 'provisional') eligibilityReasons.push('provisional_evidence');
+  if (boxCount !== 1) eligibilityReasons.push(boxCount === 0 ? 'target_box_missing' : 'target_box_not_unique');
+  if (!boxReason) eligibilityReasons.push('box_reason_missing');
+  if (!clearAction || !taskContent || taskContent !== clearAction) eligibilityReasons.push('clear_action_incomplete');
+  if (!taskSpecFieldsAllowed) eligibilityReasons.push('task_spec_outside_allowlist');
+  if (raw.existingTaskId) eligibilityReasons.push('existing_task_mutation_forbidden');
+  if (String(content.duplicateStatus || '').trim() !== 'none') eligibilityReasons.push('duplicate_status_unresolved');
+  const standingRuleMatched = automationAuthorization.source === 'standing_rule'
+    && automationAuthorization.exact === true
+    && automationAuthorization.enabled === true
+    && automationAuthorization.revocable === true
+    && Boolean(String(row.standing_rule_id || '').trim())
+    && String(automationAuthorization.ruleId || '') === String(row.standing_rule_id || '');
+  if (!standingRuleMatched) eligibilityReasons.push('standing_rule_required');
+  if (!bindingMatches) eligibilityReasons.push('reply_binding_invalid');
+  const lowRiskFieldsValid = (!taskSpec.deviceContext || ASSISTANT_GATEWAY_DEVICE_CONTEXTS.has(taskSpec.deviceContext))
+    && (!taskSpec.executionMode || ASSISTANT_GATEWAY_EXECUTION_MODES.has(taskSpec.executionMode))
+    && validOptionalGatewayDate(taskSpec.scheduledAt)
+    && validOptionalGatewayDate(taskSpec.dueDate)
+    && validOptionalGatewayDate(taskSpec.visibleAfter);
+  if (!lowRiskFieldsValid) eligibilityReasons.push('low_risk_fields_invalid');
+  const eligible = row.status === 'proposed'
+      && row.proposal_type === 'daily_action_proposal'
+      && decisionClass === 'user_required'
+      && standingRuleMatched
+      && evidenceStatus !== 'provisional'
+      && boxCount === 1
+      && Boolean(boxReason)
+      && Boolean(clearAction)
+      && taskContent === clearAction
+      && taskSpecFieldsAllowed
+      && !raw.existingTaskId
+      && (!taskSpec.deviceContext || ASSISTANT_GATEWAY_DEVICE_CONTEXTS.has(taskSpec.deviceContext))
+      && (!taskSpec.executionMode || ASSISTANT_GATEWAY_EXECUTION_MODES.has(taskSpec.executionMode))
+      && validOptionalGatewayDate(taskSpec.scheduledAt)
+      && validOptionalGatewayDate(taskSpec.dueDate)
+      && validOptionalGatewayDate(taskSpec.visibleAfter)
+      && bindingMatches
+      && String(content.duplicateStatus || '').trim() === 'none';
+  return {
+    eligible,
+    disposition: autoRejectReasons.length ? 'auto_reject' : (eligible ? 'auto_eligible' : 'confirmation_required'),
+    reasonCodes: autoRejectReasons.length ? autoRejectReasons : eligibilityReasons,
+    raw,
+    evidenceStatus,
+    decisionClass,
+  };
+}
+
 app.get('/v1/assistant-gateway/proposals/pending-user-decision', (req, res) => {
   const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 20));
   const rows = db.prepare(`
     SELECT * FROM hq_proposals
     WHERE status='proposed'
     ORDER BY updated_at DESC
-    LIMIT ?
-  `).all(limit);
+    LIMIT 500
+  `).all();
   const proposals = rows.map((row) => {
-    const raw = parseJson(row.raw_json, {});
-    const decisionClass = String(raw.decisionClass || (row.source_authority === 'ai_derived' ? 'user_required' : '')).trim();
-    if (decisionClass !== 'user_required' || row.source_authority === 'standing_rule') return null;
-    const evidence = raw.evidence && typeof raw.evidence === 'object' ? raw.evidence : {};
+    const { disposition, reasonCodes, raw, evidenceStatus, decisionClass } = assistantGatewayProposalEligibility(row);
     const summary = String(raw.summary || raw.content?.summary || raw.content?.description || row.title || '').trim().slice(0, 500);
-    const allowedReplies = Array.isArray(raw.allowedReplies) ? raw.allowedReplies.filter((item) => ['approve', 'reject', 'defer', 'expand'].includes(item)) : ['approve', 'reject', 'defer', 'expand'];
     return {
       proposalId: row.decision_id,
       revision: Number(row.revision || 1),
@@ -1896,13 +1975,22 @@ app.get('/v1/assistant-gateway/proposals/pending-user-decision', (req, res) => {
       decisionClass,
       title: String(row.title || '').slice(0, 200),
       summary,
-      evidenceStatus: ['confirmed', 'provisional', 'unknown'].includes(raw.evidenceStatus) ? raw.evidenceStatus : (evidence.status || 'unknown'),
-      allowedReplies,
+      evidenceStatus,
+      disposition,
+      reasonCodes,
+      allowedReplies: disposition === 'auto_eligible'
+        ? ['approve', 'reject', 'defer', 'expand']
+        : (disposition === 'confirmation_required' ? ['expand', 'defer', 'reject'] : []),
       updatedAt: row.updated_at,
       expiresAt: raw.expiresAt || null,
-      replyBinding: { proposalId: row.decision_id, revision: Number(row.revision || 1) },
+      replyBinding: {
+        proposalId: row.decision_id,
+        revision: Number(row.revision || 1),
+        sessionRef: raw.replyBinding.sessionRef,
+        verifiedUserRef: raw.replyBinding.verifiedUserRef,
+      },
     };
-  }).filter(Boolean);
+  }).filter(Boolean).slice(0, limit);
   return res.json({ contractVersion: '2026-09-04', generatedAt: now(), proposals });
 });
 

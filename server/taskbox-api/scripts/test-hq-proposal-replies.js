@@ -10,9 +10,11 @@ const root = path.resolve(__dirname, '..');
 const prefix = path.join(os.tmpdir(), `taskbox-hq-replies-${process.pid}-${Date.now()}`);
 const dbPath = `${prefix}.sqlite`;
 const gatewayTokenFile = `${prefix}.token`;
+const gatewayReadTokenFile = `${prefix}.read-token`;
 const port = 3900 + (process.pid % 100);
 const genericToken = 'generic-test-token';
 const gatewayToken = 'assistant-gateway-test-token';
+const gatewayReadToken = 'assistant-gateway-read-test-token';
 let serverError = '';
 
 function request(route, { method = 'GET', payload = null, token = genericToken, headers = {}, expected = 200 } = {}) {
@@ -93,6 +95,7 @@ async function createProposal(suffix) {
 }
 
 fs.writeFileSync(gatewayTokenFile, `${gatewayToken}\n`, { mode: 0o600 });
+fs.writeFileSync(gatewayReadTokenFile, `${gatewayReadToken}\n`, { mode: 0o600 });
 const child = spawn(process.execPath, [path.join(root, 'src', 'server.js')], {
   cwd: root,
   env: {
@@ -103,6 +106,8 @@ const child = spawn(process.execPath, [path.join(root, 'src', 'server.js')], {
     ASSISTANT_GATEWAY_API_ENABLED: '1',
     ASSISTANT_GATEWAY_API_TOKEN_FILE: gatewayTokenFile,
     ASSISTANT_GATEWAY_API_SCOPES: 'proposal-replies:write',
+    ASSISTANT_GATEWAY_READ_API_TOKEN_FILE: gatewayReadTokenFile,
+    ASSISTANT_GATEWAY_READ_API_SCOPES: 'proposal-decisions:read',
     ASSISTANT_GATEWAY_REPLY_MAX_AGE_SECONDS: '86400',
     HQ_PROPOSAL_PROMOTION_ENABLED: '1',
   },
@@ -114,6 +119,51 @@ child.stderr.on('data', (chunk) => { serverError += chunk.toString('utf8'); });
   try {
     await waitForServer();
     await request('/v1/boxes', { method: 'POST', expected: 201, payload: { id: 'gateway-box', name: 'Gateway Box' } });
+
+    const pendingRoute = '/v1/assistant-gateway/proposals/pending-user-decision?limit=20';
+    await request(pendingRoute, { token: '', expected: 401 });
+    await request(pendingRoute, { token: gatewayToken, expected: 401 });
+    await request('/health', { token: gatewayReadToken, expected: 401 });
+    const eligiblePayload = {
+      decisionId: 'gateway-pending-eligible',
+      proposalType: 'daily_action_proposal', sourceAuthority: 'ai_derived',
+      standingRuleId: 'standing-rule:daily-low-risk-v1',
+      title: 'Eligible daily action', idempotencyKey: 'gateway-pending:eligible',
+      decisionClass: 'user_required', evidenceStatus: 'confirmed',
+      content: { summary: 'Safe summary', boxReason: 'Highest ROI action', duplicateStatus: 'none' },
+      taskSpec: { boxId: 'gateway-box', content: 'Publish the verified artifact', clearAction: 'Publish the verified artifact', boxReason: 'Highest ROI action', deviceContext: 'universal', executionMode: 'self' },
+      replyBinding: { proposalId: 'gateway-pending-eligible', revision: 1, sessionRef: 'session:owner', verifiedUserRef: 'verified-user:owner' },
+      automationAuthorization: { source: 'standing_rule', ruleId: 'standing-rule:daily-low-risk-v1', exact: true, enabled: true, revocable: true },
+    };
+    const eligible = (await request('/v1/hq/proposals', { method: 'POST', expected: 201, payload: eligiblePayload })).data;
+    const monthly = (await request('/v1/hq/proposals', { method: 'POST', expected: 201, payload: {
+      ...eligiblePayload, decisionId: 'gateway-pending-monthly', proposalType: 'monthly_bet_proposal', evidenceStatus: 'provisional',
+      title: 'Provisional monthly bet', idempotencyKey: 'gateway-pending:monthly',
+      replyBinding: { ...eligiblePayload.replyBinding, proposalId: 'gateway-pending-monthly' },
+    } })).data;
+    const missingFields = (await request('/v1/hq/proposals', { method: 'POST', expected: 201, payload: {
+      ...eligiblePayload, decisionId: 'gateway-pending-missing', title: 'Missing fields', idempotencyKey: 'gateway-pending:missing',
+      taskSpec: { boxId: 'missing-box', content: 'Mismatch', clearAction: '', boxReason: 'Reason only', priority: 1 },
+      replyBinding: { ...eligiblePayload.replyBinding, proposalId: 'gateway-pending-missing' },
+    } })).data;
+    const duplicate = (await request('/v1/hq/proposals', { method: 'POST', expected: 201, payload: {
+      ...eligiblePayload, decisionId: 'gateway-pending-duplicate', title: 'Confirmed duplicate', idempotencyKey: 'gateway-pending:duplicate',
+      content: { ...eligiblePayload.content, duplicateStatus: 'confirmed' },
+      replyBinding: { ...eligiblePayload.replyBinding, proposalId: 'gateway-pending-duplicate' },
+    } })).data;
+    const pending = (await request(pendingRoute, { token: gatewayReadToken })).data;
+    if (pending.proposals.length !== 4) throw new Error('pending three-way routing lost proposals');
+    const eligibleItem = pending.proposals.find((item) => item.proposalId === eligible.decisionId);
+    const monthlyItem = pending.proposals.find((item) => item.proposalId === monthly.decisionId);
+    const missingItem = pending.proposals.find((item) => item.proposalId === missingFields.decisionId);
+    const duplicateItem = pending.proposals.find((item) => item.proposalId === duplicate.decisionId);
+    if (eligibleItem?.disposition !== 'auto_eligible' || !eligibleItem.allowedReplies.includes('approve')) throw new Error('eligible approve missing');
+    if (monthlyItem?.disposition !== 'confirmation_required' || monthlyItem.allowedReplies.includes('approve')) throw new Error('provisional monthly proposal became approvable');
+    if (missingItem?.disposition !== 'confirmation_required' || missingItem.allowedReplies.includes('approve')) throw new Error('incomplete proposal became approvable');
+    if (duplicateItem?.disposition !== 'auto_reject' || duplicateItem.allowedReplies.length !== 0 || !duplicateItem.reasonCodes.includes('confirmed_duplicate')) throw new Error('confirmed duplicate was not safely routed');
+    const allowedKeys = new Set(['proposalId', 'revision', 'proposalType', 'status', 'decisionClass', 'title', 'summary', 'evidenceStatus', 'disposition', 'reasonCodes', 'allowedReplies', 'updatedAt', 'expiresAt', 'replyBinding']);
+    if (pending.proposals.some((item) => Object.keys(item).some((key) => !allowedKeys.has(key)))) throw new Error('pending projection leaked fields');
+    if (eligibleItem.replyBinding.proposalId !== eligible.decisionId || eligibleItem.replyBinding.revision !== eligible.revision) throw new Error('reply binding mismatch');
 
     const approveProposal = await createProposal('approve');
     const approveRoute = `/v1/hq/proposals/${approveProposal.decisionId}/replies`;
@@ -213,7 +263,7 @@ child.stderr.on('data', (chunk) => { serverError += chunk.toString('utf8'); });
     process.exitCode = 1;
   } finally {
     child.kill();
-    for (const file of [gatewayTokenFile, dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+    for (const file of [gatewayTokenFile, gatewayReadTokenFile, dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
       try { fs.rmSync(file, { force: true }); } catch {}
     }
   }
