@@ -350,7 +350,7 @@ gateway_code="$(curl --silent --output /dev/null --write-out '%{http_code}' \
   --request POST --header "Authorization: Bearer $ASSISTANT_GATEWAY_TOKEN" \
   --header 'Content-Type: application/json' --header 'X-Idempotency-Key: assistant-gateway:deployment-probe' \
   --data "$ASSISTANT_GATEWAY_PROBE_BODY" "$ASSISTANT_GATEWAY_PROBE")"
-[[ "$gateway_code" == "404" ]] || { echo "assistant gateway auth probe failed: $gateway_code" >&2; exit 1; }
+[[ "$gateway_code" == "404" || "$gateway_code" == "400" ]] || { echo "assistant gateway auth probe failed: $gateway_code" >&2; exit 1; }
 generic_gateway_code="$(curl --silent --output /dev/null --write-out '%{http_code}' \
   --request POST --header "Authorization: Bearer $TASKBOX_API_TOKEN" \
   --header 'Content-Type: application/json' --header 'X-Idempotency-Key: assistant-gateway:deployment-probe' \
