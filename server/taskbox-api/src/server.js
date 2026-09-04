@@ -180,7 +180,8 @@ app.use((req, res, next) => {
       || req.path === '/v1/mission/state') return next();
     return res.status(403).json({ error: 'daily_intake_route_denied' });
   }
-  if (req.path === '/v1/assistant-gateway/proposals/pending-user-decision') {
+  if (req.path === '/v1/assistant-gateway/proposals/pending-user-decision'
+    || req.path === '/v1/assistant-gateway/proposals/automation-queue') {
     if (!assistantGatewayApiEnabled
       || (assistantGatewayDisableFile && fs.existsSync(assistantGatewayDisableFile))) {
       return res.status(503).json({ error: 'assistant_gateway_api_disabled' });
@@ -190,7 +191,7 @@ app.use((req, res, next) => {
     if (!secretMatches(bearerToken(req), readToken)) {
       return res.status(401).json({ error: 'assistant_gateway_read_unauthorized' });
     }
-    if (!assistantGatewayReadScopes.has('proposals:read')) {
+    if (!assistantGatewayReadScopes.has('proposal-decisions:read')) {
       return res.status(403).json({ error: 'assistant_gateway_read_scope_denied' });
     }
     req.assistantGatewayIdentity = { system: 'assistant-gateway-reader', scopes: assistantGatewayReadScopes };
@@ -2166,6 +2167,28 @@ app.get('/v1/assistant-gateway/proposals/pending-user-decision', (req, res) => {
       expiresAt: proposal.replyBinding.expiresAt,
     },
   }));
+  return res.json({ contractVersion: ASSISTANT_GATEWAY_REPLY_CONTRACT, items, count: items.length });
+});
+
+app.get('/v1/assistant-gateway/proposals/automation-queue', (req, res) => {
+  const limit = Math.max(1, Math.min(20, Number(req.query.limit) || 20));
+  const items = db.prepare("SELECT * FROM hq_proposals WHERE status='proposed' ORDER BY updated_at DESC LIMIT 200").all()
+    .map(rowToProposal).filter((proposal) => {
+      if (proposal.proposalType !== 'daily_action_proposal' || proposal.evidenceStatus === 'provisional') return false;
+      const raw = proposal;
+      const rule = readGatewayStandingRule(raw.standingRuleId, Number(raw.standingRuleVersion));
+      return Boolean(rule && raw.sourceAuthority === 'standing_rule' && gatewayPromotionEligibilityError(proposal) === '');
+    }).slice(0, limit).map((proposal) => ({
+      proposalId: proposal.decisionId,
+      revision: proposal.revision,
+      proposalType: proposal.proposalType,
+      disposition: 'auto_eligible',
+      promotionEligible: true,
+      standingRuleId: proposal.standingRuleId,
+      standingRuleVersion: Number(proposal.standingRuleVersion),
+      taskSpec: proposal.taskSpec,
+      replyBinding: proposal.replyBinding,
+    }));
   return res.json({ contractVersion: ASSISTANT_GATEWAY_REPLY_CONTRACT, items, count: items.length });
 });
 
