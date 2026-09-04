@@ -29,6 +29,14 @@
 
 ## 未完成与关键阻塞
 
+### 普通微信自然语言会话
+
+- 2026-09-05 已确认：`decision` worker 只处理测试 echo 与显式审批 grammar；普通文本在 `parse_decision` 返回空后以 `decision_not_explicit` retry，因此“你好”没有回复。它没有 generic conversation handler。
+- 普通聊天不得复用 proposal 的 `sessionRef`，也不得在服务器硬编码 Mac Codex task ID。服务器当前没有到 Mac app-server 的已验证安全调用入口。
+- 最小安全架构是两段式：服务器 Gateway 仅验证、分流并写 durable conversation outbox；Mac 上独立最小权限 runner 按 `verifiedUserRef + conversationRefHash` 串行 claim，调用专用 Codex 会话取得真实结果，再回传 reply 并 ack。
+- 必须先实现并测试 authenticated claim/reply/ack、稳定幂等键、每会话单飞、超时/重试/dead-letter、停用开关与正文脱敏日志。审批 grammar 继续走现有 HQ 路径；普通聊天永远不进入 approve/promote。
+- 在该跨机通道落地前，不得用固定字符串冒充自然语言结果，也不得宣称微信通用助理已可用。
+
 - 后续若继续优化，需补一条独立的生产 authenticated 读取探针，确认真实 read token 返回三分流投影；本轮部署脚本已完成空数据与权限探针。
 - 需要正式登记窄规则 `execution.daily_action_proposal.auto_approve`，包含 ruleId、version、scope、allowlist、enabled、revocable、授权来源和撤销时间；旧规则不能替代。
 - 自动 approve/promote 已有合成 Worker 测试和生产开关，但真实业务 proposal 仍未处理；不得把空队列探针当成真实业务闭环证明。
