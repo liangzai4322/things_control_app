@@ -1,5 +1,10 @@
 # Assistant Gateway → HQ Proposal Reply Contract
 
+> 2026-09-04 的三分流、唯一晋升路径与未完成 writer 状态见
+> [`assistant-gateway-hq-handoff.md`](assistant-gateway-hq-handoff.md)。在该交接列出的
+> standing rule、Gateway promote scope 与 `promotion_pending` 验收完成前，不应把
+> decision mode 等同于自动晋升闭环。
+
 Contract version: `2026-09-03`
 
 The Assistant Gateway may deliver a verified personal-WeChat reply to one existing HQ proposal. It cannot create proposals, promote approved proposals, or call TaskBox task routes.

@@ -1,5 +1,9 @@
 # TaskBox 运维手册
 
+> Assistant Gateway decision mode 的生产事实、回滚点、未完成安全门槛与下一步命令见
+> [`assistant-gateway-hq-handoff.md`](assistant-gateway-hq-handoff.md)。部署前必须完成
+> standing rule、专属 promote scope、会话/revision/幂等绑定和 `promotion_pending` 恢复测试。
+
 最后核对：2026-08-23。
 
 ## 本地验证
