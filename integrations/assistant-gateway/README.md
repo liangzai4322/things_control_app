@@ -4,7 +4,7 @@ This integration runs on the shared server as `assistant-gateway.service`. Notif
 
 ## Echo gate
 
-The initial production mode is `ASSISTANT_GATEWAY_MODE=echo`:
+The production mode is `ASSISTANT_GATEWAY_MODE=decision`:
 
 - A verified bound-user message whose trimmed text is `测试` or starts with `测试-` receives `已收到，微信助手通路正常` through the lease-bound Notification Hub reply route, then receives a `processed` acknowledgement.
 - Every other valid message receives a one-hour `retry` acknowledgement with `echo_mode_only`; echo mode never parses or submits an HQ decision.
