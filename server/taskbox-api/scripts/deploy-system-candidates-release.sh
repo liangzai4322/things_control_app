@@ -7,6 +7,7 @@ ASSISTANT_GATEWAY_APP_DIR="${ASSISTANT_GATEWAY_APP_DIR:-/opt/taskbox-assistant-g
 SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
 SERVICE="${TASKBOX_SERVICE:-taskbox-api.service}"
 ASSISTANT_GATEWAY_SERVICE="${ASSISTANT_GATEWAY_SERVICE:-assistant-gateway.service}"
+ASSISTANT_GATEWAY_MODE_DROPIN="20-production-mode.conf"
 ENV_FILE="${TASKBOX_ENV_FILE:-/etc/taskbox-api.env}"
 RELEASE_DIR="${1:-}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -60,7 +61,8 @@ if [[ "$API_RELEASE_DIR" != "$RELEASE_DIR" ]]; then
       exit 2
     fi
   done
-  for file in worker.py systemd/assistant-gateway.service tests/test_worker.py; do
+  for file in worker.py status.py systemd/assistant-gateway.service \
+    "systemd/assistant-gateway.service.d/$ASSISTANT_GATEWAY_MODE_DROPIN" tests/test_worker.py; do
     if [[ ! -f "$ASSISTANT_GATEWAY_RELEASE_DIR/$file" ]]; then
       echo "assistant gateway release missing $file" >&2
       exit 2
@@ -103,6 +105,12 @@ if [[ -d "$ASSISTANT_GATEWAY_APP_DIR" ]]; then
 fi
 if [[ -f "$SYSTEMD_DIR/$ASSISTANT_GATEWAY_SERVICE" ]]; then
   cp -a "$SYSTEMD_DIR/$ASSISTANT_GATEWAY_SERVICE" "$BACKUP_DIR/config/"
+fi
+assistant_gateway_dropin_dir="$SYSTEMD_DIR/$ASSISTANT_GATEWAY_SERVICE.d"
+if [[ -f "$assistant_gateway_dropin_dir/$ASSISTANT_GATEWAY_MODE_DROPIN" ]]; then
+  cp -a "$assistant_gateway_dropin_dir/$ASSISTANT_GATEWAY_MODE_DROPIN" "$BACKUP_DIR/config/"
+else
+  : > "$BACKUP_DIR/config/$ASSISTANT_GATEWAY_MODE_DROPIN.absent"
 fi
 for unit in taskbox-{attention,execution,feedback,health,hq,mission}-daily-intake.{service,timer}; do
   if [[ -f "$SYSTEMD_DIR/$unit" ]]; then cp -a "$SYSTEMD_DIR/$unit" "$BACKUP_DIR/config/"; fi
@@ -182,7 +190,7 @@ upsert_env ASSISTANT_GATEWAY_API_TOKEN_FILE "$ASSISTANT_GATEWAY_TOKEN_FILE"
 upsert_env ASSISTANT_GATEWAY_API_DISABLE_FILE "$ASSISTANT_GATEWAY_DISABLE_FILE"
 upsert_env ASSISTANT_GATEWAY_API_SCOPES "proposal-replies:write,proposal-auto-approve:write,proposal-promotions:write"
 upsert_env ASSISTANT_GATEWAY_READ_TOKEN_FILE "$ASSISTANT_GATEWAY_READ_TOKEN_FILE"
-upsert_env ASSISTANT_GATEWAY_READ_SCOPES "proposal-decisions:read"
+upsert_env ASSISTANT_GATEWAY_READ_SCOPES "proposals:read"
 upsert_env ASSISTANT_GATEWAY_REPLY_MAX_AGE_SECONDS 86400
 
 # Daily Review identities are deliberately separate from the browser and execution-system tokens.
@@ -246,7 +254,12 @@ if [[ -f "$ASSISTANT_GATEWAY_RELEASE_DIR/worker.py" ]]; then
   rm -rf "$ASSISTANT_GATEWAY_APP_DIR"
   install -d -m 0755 "$ASSISTANT_GATEWAY_APP_DIR"
   install -m 0755 "$ASSISTANT_GATEWAY_RELEASE_DIR/worker.py" "$ASSISTANT_GATEWAY_APP_DIR/worker.py"
+  install -m 0755 "$ASSISTANT_GATEWAY_RELEASE_DIR/status.py" "$ASSISTANT_GATEWAY_APP_DIR/status.py"
   install -m 0644 "$ASSISTANT_GATEWAY_RELEASE_DIR/systemd/assistant-gateway.service" "$SYSTEMD_DIR/$ASSISTANT_GATEWAY_SERVICE"
+  install -d -m 0755 "$assistant_gateway_dropin_dir"
+  install -m 0644 \
+    "$ASSISTANT_GATEWAY_RELEASE_DIR/systemd/assistant-gateway.service.d/$ASSISTANT_GATEWAY_MODE_DROPIN" \
+    "$assistant_gateway_dropin_dir/$ASSISTANT_GATEWAY_MODE_DROPIN"
 fi
 
 cd "$APP_DIR"
@@ -337,7 +350,7 @@ gateway_code="$(curl --silent --output /dev/null --write-out '%{http_code}' \
   --request POST --header "Authorization: Bearer $ASSISTANT_GATEWAY_TOKEN" \
   --header 'Content-Type: application/json' --header 'X-Idempotency-Key: assistant-gateway:deployment-probe' \
   --data "$ASSISTANT_GATEWAY_PROBE_BODY" "$ASSISTANT_GATEWAY_PROBE")"
-[[ "$gateway_code" == "404" || "$gateway_code" == "400" ]] || { echo "assistant gateway auth probe failed: $gateway_code" >&2; exit 1; }
+[[ "$gateway_code" == "404" ]] || { echo "assistant gateway auth probe failed: $gateway_code" >&2; exit 1; }
 generic_gateway_code="$(curl --silent --output /dev/null --write-out '%{http_code}' \
   --request POST --header "Authorization: Bearer $TASKBOX_API_TOKEN" \
   --header 'Content-Type: application/json' --header 'X-Idempotency-Key: assistant-gateway:deployment-probe' \
@@ -424,6 +437,11 @@ systemctl daemon-reload
 systemctl enable --now "$ASSISTANT_GATEWAY_SERVICE"
 systemctl is-enabled --quiet "$ASSISTANT_GATEWAY_SERVICE"
 systemctl is-active --quiet "$ASSISTANT_GATEWAY_SERVICE"
+effective_gateway_environment="$(systemctl show "$ASSISTANT_GATEWAY_SERVICE" --property=Environment --value)"
+[[ " $effective_gateway_environment " == *" ASSISTANT_GATEWAY_MODE=decision "* ]] || {
+  echo "assistant gateway effective mode is not decision" >&2
+  exit 1
+}
 trap - ERR
 
 echo "deployment_ok"
@@ -434,9 +452,8 @@ echo "assistant_gateway_token_file=$ASSISTANT_GATEWAY_TOKEN_FILE"
 echo "assistant_gateway_read_token_file=$ASSISTANT_GATEWAY_READ_TOKEN_FILE"
 echo "assistant_gateway_disable_file=$ASSISTANT_GATEWAY_DISABLE_FILE"
 echo "assistant_gateway_worker=active"
-gateway_environment="$(systemctl show "$ASSISTANT_GATEWAY_SERVICE" --property=Environment --value 2>/dev/null || true)"
-gateway_mode="$(printf '%s\n' "$gateway_environment" | grep -o 'ASSISTANT_GATEWAY_MODE=[^ ]*' | tail -1 | cut -d= -f2-)"
-echo "assistant_gateway_worker_mode=${gateway_mode:-unknown}"
+echo "assistant_gateway_worker_mode=decision"
+echo "assistant_gateway_status_file=/var/lib/taskbox-assistant-gateway/status.json"
 echo "daily_intake_sender_token_file=$DAILY_SENDER_TOKEN_FILE"
 echo "daily_intake_hq_token_file=$DAILY_HQ_TOKEN_FILE"
 echo "daily_intake_token_dir=$DAILY_INTAKE_TOKEN_DIR"

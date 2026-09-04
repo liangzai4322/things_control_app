@@ -12,8 +12,10 @@ sys.path.insert(0, str(ROOT))
 
 from worker import (  # noqa: E402
     DecisionStore,
+    GatewayStatus,
     GatewayError,
     JsonClient,
+    STATUS_FIELDS,
     parse_decision,
     process_automation_queue,
     process_decision,
@@ -68,6 +70,7 @@ class WorkerTests(unittest.TestCase):
         self.token.write_text("secret\n", encoding="utf-8")
         self.client = JsonClient(f"http://127.0.0.1:{self.server.server_port}", self.token)
         self.state_path = Path(self.temp.name) / "decision-state.json"
+        self.status_path = Path(self.temp.name) / "status.json"
 
     def tearDown(self):
         self.server.shutdown()
@@ -122,6 +125,36 @@ class WorkerTests(unittest.TestCase):
     def test_verify_requires_complete_bound_message(self):
         with self.assertRaises(GatewayError):
             verify_message(self.message(conversationRef=""))
+
+    def test_status_aggregation_is_atomic_and_sanitized(self):
+        self.status_path.write_text(json.dumps({"messageText": "secret", "retryCount": "bad"}), encoding="utf-8")
+        status = GatewayStatus(self.status_path)
+        store = DecisionStore(self.state_path)
+        store.put("pending", {"promotionPending": True, "taskId": "private-task"})
+        status.record_claim(1)
+        status.record_automation_count(2)
+        status.record_reply()
+        status.record_outcome("retry")
+        status.record_outcome("dead_letter")
+        status.sync_promotion_pending(store)
+
+        saved = json.loads(self.status_path.read_text(encoding="utf-8"))
+        self.assertEqual(tuple(saved), STATUS_FIELDS)
+        self.assertEqual(saved["pendingCount"], 1)
+        self.assertEqual(saved["automationCount"], 2)
+        self.assertEqual(saved["promotionPendingCount"], 1)
+        self.assertEqual(saved["retryCount"], 1)
+        self.assertEqual(saved["deadLetterCount"], 1)
+        self.assertRegex(saved["lastClaimAt"], r"Z$")
+        self.assertRegex(saved["lastReplyAt"], r"Z$")
+        self.assertNotIn("messageText", saved)
+
+    def test_echo_updates_status_without_persisting_message_content(self):
+        status = GatewayStatus(self.status_path)
+        process_echo(self.client, self.message("测试-私密原文"), status)
+        saved_text = self.status_path.read_text(encoding="utf-8")
+        self.assertNotIn("私密原文", saved_text)
+        self.assertIsNotNone(json.loads(saved_text)["lastReplyAt"])
 
     @staticmethod
     def pending_proposal(**changes):
