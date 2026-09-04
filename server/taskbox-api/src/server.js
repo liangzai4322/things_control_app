@@ -17,8 +17,11 @@ const executionTokenFile = String(process.env.EXECUTION_SYSTEM_API_TOKEN_FILE ||
 const executionDisableFile = String(process.env.EXECUTION_SYSTEM_API_DISABLE_FILE || '/etc/taskbox-execution-system.disabled').trim();
 const assistantGatewayApiEnabled = String(process.env.ASSISTANT_GATEWAY_API_ENABLED || '') === '1';
 const assistantGatewayTokenFile = String(process.env.ASSISTANT_GATEWAY_API_TOKEN_FILE || '').trim();
+const assistantGatewayReadTokenFile = String(process.env.ASSISTANT_GATEWAY_READ_TOKEN_FILE || '').trim();
 const assistantGatewayDisableFile = String(process.env.ASSISTANT_GATEWAY_API_DISABLE_FILE || '/etc/taskbox-assistant-gateway.disabled').trim();
 const assistantGatewayScopes = new Set(String(process.env.ASSISTANT_GATEWAY_API_SCOPES || '')
+  .split(',').map((item) => item.trim()).filter(Boolean));
+const assistantGatewayReadScopes = new Set(String(process.env.ASSISTANT_GATEWAY_READ_SCOPES || '')
   .split(',').map((item) => item.trim()).filter(Boolean));
 const dailyIntakeApiEnabled = String(process.env.DAILY_INTAKE_API_ENABLED || '') === '1';
 const dailyIntakeDisableFile = String(process.env.DAILY_INTAKE_DISABLE_FILE || '/etc/taskbox-daily-intake.disabled').trim();
@@ -152,7 +155,7 @@ app.use((req, res, next) => {
     res.setHeader('Vary', 'Origin');
   }
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Taskbox-Token,If-Match,X-Idempotency-Key');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Taskbox-Token,If-Match,X-Idempotency-Key,X-Assistant-Verified-User-Ref,X-Assistant-Conversation-Ref-Hash');
   if (req.method === 'OPTIONS') return res.status(204).end();
   return next();
 });
@@ -176,6 +179,22 @@ app.use((req, res, next) => {
       || req.path === '/v1/health/observations' || req.path === '/v1/health/observations/batch'
       || req.path === '/v1/mission/state') return next();
     return res.status(403).json({ error: 'daily_intake_route_denied' });
+  }
+  if (req.path === '/v1/assistant-gateway/proposals/pending-user-decision') {
+    if (!assistantGatewayApiEnabled
+      || (assistantGatewayDisableFile && fs.existsSync(assistantGatewayDisableFile))) {
+      return res.status(503).json({ error: 'assistant_gateway_api_disabled' });
+    }
+    const readToken = readSecretFile(assistantGatewayReadTokenFile);
+    if (!readToken) return res.status(503).json({ error: 'assistant_gateway_read_api_not_configured' });
+    if (!secretMatches(bearerToken(req), readToken)) {
+      return res.status(401).json({ error: 'assistant_gateway_read_unauthorized' });
+    }
+    if (!assistantGatewayReadScopes.has('proposals:read')) {
+      return res.status(403).json({ error: 'assistant_gateway_read_scope_denied' });
+    }
+    req.assistantGatewayIdentity = { system: 'assistant-gateway-reader', scopes: assistantGatewayReadScopes };
+    return next();
   }
   if (/^\/v1\/hq\/proposals\/[^/]+\/replies$/.test(req.path)) {
     if (!assistantGatewayApiEnabled
@@ -529,6 +548,7 @@ const HQ_PROPOSAL_TYPES = new Set([
 const HQ_SOURCE_AUTHORITIES = new Set(['explicit_user', 'standing_rule', 'ai_derived']);
 const HQ_PROPOSAL_STATUSES = new Set(['proposed', 'approved', 'rejected', 'deferred', 'promoted']);
 const HQ_PROPOSAL_TERMINAL_SYNC_STATUSES = new Set(['rejected', 'deferred', 'promoted']);
+const ASSISTANT_GATEWAY_DECISIONS = new Set(['approve', 'reject', 'defer', 'expand']);
 
 function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
@@ -554,8 +574,44 @@ function proposalRevisionHash(input = {}) {
     sourceRef: input.sourceRef || {},
     taskSpec: input.taskSpec || {},
     existingTaskId: input.existingTaskId || null,
+    replyBinding: input.replyBinding || null,
   };
   return crypto.createHash('sha256').update(stableJson(revisionInput)).digest('hex');
+}
+
+function normalizeProposalReplyBinding(value, proposalRevision) {
+  if (value === undefined || value === null) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw proposalError('invalid_reply_binding');
+  }
+  const verifiedSource = String(value.verifiedSource || '').trim();
+  const verifiedUserRef = String(value.verifiedUserRef || '').trim();
+  const conversationRefHash = String(value.conversationRefHash || '').trim().toLowerCase();
+  const signatureRef = String(value.signatureRef || '').trim();
+  const bindingRef = String(value.bindingRef || '').trim();
+  const expiresAt = String(value.expiresAt || '').trim();
+  const allowedDecisions = [...new Set(Array.isArray(value.allowedDecisions)
+    ? value.allowedDecisions.map((item) => String(item || '').trim()).filter(Boolean)
+    : [...ASSISTANT_GATEWAY_DECISIONS])];
+  if (verifiedSource !== 'notification_hub_weixin') throw proposalError('invalid_reply_binding_source');
+  if (!verifiedUserRef || verifiedUserRef.length > 500) throw proposalError('invalid_reply_binding_user');
+  if (!/^[a-f0-9]{64}$/.test(conversationRefHash)) throw proposalError('invalid_reply_binding_conversation');
+  if (!signatureRef || signatureRef.length > 500) throw proposalError('invalid_reply_binding_signature');
+  if (!bindingRef || bindingRef.length > 120) throw proposalError('invalid_reply_binding_ref');
+  if (!expiresAt || Number.isNaN(new Date(expiresAt).getTime())) throw proposalError('invalid_reply_binding_expiry');
+  if (!allowedDecisions.length || allowedDecisions.some((item) => !ASSISTANT_GATEWAY_DECISIONS.has(item))) {
+    throw proposalError('invalid_reply_binding_decisions');
+  }
+  return {
+    verifiedSource,
+    verifiedUserRef,
+    conversationRefHash,
+    signatureRef,
+    bindingRef,
+    proposalRevision,
+    allowedDecisions,
+    expiresAt,
+  };
 }
 
 function proposalEvidenceStatus(input = {}) {
@@ -683,6 +739,7 @@ function upsertProposal(input = {}) {
       createdAt: timestamp,
       decidedAt: normalized.sourceAuthority === 'ai_derived' ? null : timestamp,
       promotedAt: null,
+      replyBinding: normalizeProposalReplyBinding(input.replyBinding, 1),
       updatedAt: timestamp,
     });
     recordProposalEvent(proposal, 'created', input.actor, '', {
@@ -709,6 +766,7 @@ function upsertProposal(input = {}) {
     createdAt: existing.createdAt,
     decidedAt: existing.decidedAt || null,
     promotedAt: existing.promotedAt || null,
+    replyBinding: normalizeProposalReplyBinding(input.replyBinding, existing.revision + 1),
     updatedAt: timestamp,
   });
   recordProposalEvent(proposal, 'revised', input.actor, '', { previousRevision: existing.revision });
@@ -1724,17 +1782,36 @@ function normalizeGatewayReply(req) {
   const signatureRef = boundedReplyText(verification.signatureRef || body.signatureRef, 500, 'signature_ref', true);
   const replyRef = boundedReplyText(body.replyRef, 500, 'reply_ref', true);
   const verifiedUserRef = boundedReplyText(body.verifiedUserRef, 500, 'verified_user_ref', true);
+  const conversationRefHash = boundedReplyText(body.conversationRefHash, 64, 'conversation_ref_hash', true).toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(conversationRefHash)) throw proposalError('invalid_conversation_ref_hash');
   const note = boundedReplyText(body.note, 2000, 'note');
   const clarification = boundedReplyText(body.clarification || body.note, 2000, 'clarification', decision === 'expand');
   const deferUntil = body.deferUntil ? boundedReplyText(body.deferUntil, 10, 'defer_until') : '';
   return {
     proposalId, idempotencyKey, inboundMessageId, decision, expectedProposalRevision,
-    textHash, receivedAt, source, signatureRef, replyRef, verifiedUserRef, note,
+    textHash, receivedAt, source, signatureRef, replyRef, verifiedUserRef, conversationRefHash, note,
     clarification, deferUntil,
     reasonCode: boundedReplyText(body.reasonCode, 120, 'reason_code'),
     scopeKey: boundedReplyText(body.scopeKey, 120, 'scope_key'),
     fingerprint: boundedReplyText(body.fingerprint, 300, 'fingerprint'),
   };
+}
+
+function proposalReplyBindingError(proposal, input) {
+  const binding = proposal.replyBinding;
+  if (!binding || typeof binding !== 'object') return 'proposal_reply_binding_missing';
+  if (Number(binding.proposalRevision) !== input.expectedProposalRevision) return 'proposal_reply_binding_revision_conflict';
+  if (binding.verifiedSource !== input.source) return 'proposal_reply_binding_source_conflict';
+  if (binding.verifiedUserRef !== input.verifiedUserRef) return 'proposal_reply_binding_user_conflict';
+  if (binding.conversationRefHash !== input.conversationRefHash) return 'proposal_reply_binding_conversation_conflict';
+  if (binding.signatureRef !== input.signatureRef) return 'proposal_reply_binding_signature_conflict';
+  if (binding.bindingRef !== input.scopeKey) return 'proposal_reply_binding_ref_conflict';
+  if (!Array.isArray(binding.allowedDecisions) || !binding.allowedDecisions.includes(input.decision)) {
+    return 'proposal_reply_decision_not_allowed';
+  }
+  const expiry = new Date(binding.expiresAt).getTime();
+  if (Number.isNaN(expiry) || expiry <= Date.now()) return 'proposal_reply_binding_expired';
+  return '';
 }
 
 function rowToGatewayReply(row) {
@@ -1854,6 +1931,47 @@ app.get('/v1/hq/proposals', (req, res) => {
   });
 });
 
+app.get('/v1/assistant-gateway/proposals/pending-user-decision', (req, res) => {
+  const verifiedUserRef = String(req.headers['x-assistant-verified-user-ref'] || '').trim();
+  const conversationRefHash = String(req.headers['x-assistant-conversation-ref-hash'] || '').trim().toLowerCase();
+  if (!verifiedUserRef || verifiedUserRef.length > 500 || !/^[a-f0-9]{64}$/.test(conversationRefHash)) {
+    return res.status(400).json({ error: 'pending_binding_context_required' });
+  }
+  const limit = Math.max(1, Math.min(20, Number(req.query.limit) || 20));
+  const currentTime = Date.now();
+  const items = db.prepare(`
+    SELECT * FROM hq_proposals
+    WHERE status='proposed'
+    ORDER BY updated_at DESC
+    LIMIT 200
+  `).all().map(rowToProposal).filter((proposal) => {
+    const binding = proposal.replyBinding;
+    if (!binding || typeof binding !== 'object') return false;
+    if (proposal.proposalType === 'monthly_bet_proposal' && proposal.evidenceStatus === 'provisional') return false;
+    if (binding.verifiedSource !== 'notification_hub_weixin') return false;
+    if (binding.verifiedUserRef !== verifiedUserRef || binding.conversationRefHash !== conversationRefHash) return false;
+    if (Number(binding.proposalRevision) !== proposal.revision) return false;
+    if (Number.isNaN(new Date(binding.expiresAt).getTime()) || new Date(binding.expiresAt).getTime() <= currentTime) return false;
+    return Array.isArray(binding.allowedDecisions)
+      && binding.allowedDecisions.length > 0
+      && binding.allowedDecisions.every((decision) => ASSISTANT_GATEWAY_DECISIONS.has(decision));
+  }).slice(0, limit).map((proposal) => ({
+    proposalId: proposal.decisionId,
+    revision: proposal.revision,
+    proposalType: proposal.proposalType,
+    title: proposal.title,
+    evidenceStatus: proposal.evidenceStatus,
+    allowedDecisions: proposal.replyBinding.allowedDecisions,
+    replyBinding: {
+      bindingRef: proposal.replyBinding.bindingRef,
+      verifiedSource: proposal.replyBinding.verifiedSource,
+      signatureRef: proposal.replyBinding.signatureRef,
+      expiresAt: proposal.replyBinding.expiresAt,
+    },
+  }));
+  return res.json({ contractVersion: ASSISTANT_GATEWAY_REPLY_CONTRACT, items, count: items.length });
+});
+
 app.get('/v1/hq/proposals/:id', (req, res) => {
   try {
     const proposal = getProposalOrThrow(req.params.id);
@@ -1965,6 +2083,8 @@ app.post('/v1/hq/proposals/:proposalId/replies', (req, res) => {
       updatedAt: proposal.updatedAt,
     });
   }
+  const bindingError = proposalReplyBindingError(proposal, input);
+  if (bindingError) return rejectReply(bindingError);
 
   try {
     const result = db.transaction(() => {

@@ -11,16 +11,21 @@ The initial production mode is `ASSISTANT_GATEWAY_MODE=echo`:
 - Unverified identity or a changed text hash is dead-lettered.
 - The reply uses a stable key derived from `inboundMessageId`, so retrying after a network failure cannot send a second echo.
 
-The next decision-processing mode must not be enabled until the Assistant Gateway owning system supplies an authoritative pending-proposal projection and the full proposal/revision binding tests pass. The HQ credential is loaded now but deliberately unused in echo mode.
+`ASSISTANT_GATEWAY_MODE=decision` is implemented behind the systemd feature flag but is not the production default. It preserves the echo health command, and otherwise accepts only exact `同意`/`批准`/`approve`, `拒绝`/`不同意`/`reject`, `展开`/`补充说明`/`expand`, or `延期到YYYY-MM-DD`/`defer YYYY-MM-DD`. Unknown text, no matching proposal, and multiple matching proposals are retried without an HQ write.
+
+Decision mode reads only the dedicated pending projection for the hashed bound conversation. Exactly one unexpired, revision-matched `replyBinding` must exist. It writes only the existing HQ proposal reply endpoint, sends a confirmation through Notification Hub, then acknowledges the inbound message. A private state file records only IDs, hashes, binding references and processing flags so an HQ success followed by a Hub failure can resume with the same idempotency key. It never stores the Weixin text or a credential.
 
 ## Credentials and stop controls
 
-systemd exposes two unrelated root-owned source files through `LoadCredential`:
+systemd exposes three unrelated root-owned source files through `LoadCredential`:
 
 - `weixin-ingress.token` from `/etc/notification-ingress/weixin-ingress.token`: Notification Hub claim/reply/ack only.
 - `hq-reply.token` from `/etc/taskbox-assistant-gateway-token`: HQ proposal replies only.
+- `hq-read.token` from `/etc/taskbox-assistant-gateway-read-token`: bound pending-proposal projection only.
 
-Neither value may enter environment variables, command-line arguments, logs, Git, or TaskBox. The worker runs as the no-login `taskbox-assistant-gateway` user.
+No credential value may enter environment variables, command-line arguments, logs, Git, or TaskBox. The worker runs as the no-login `taskbox-assistant-gateway` user.
+
+The decision recovery file is `/var/lib/taskbox-assistant-gateway/decision-state.json`, owned through systemd `StateDirectory`. Production remains `echo` until a separate release explicitly changes the unit feature flag after bound-proposal probes pass.
 
 Stop only worker consumption by stopping/disabling `assistant-gateway.service` or creating `/etc/taskbox-assistant-gateway-worker.disabled`. Disable the HQ reply endpoint separately with `/etc/taskbox-assistant-gateway.disabled`. Notification Hub retains unprocessed messages and owns lease retry/dead-letter behavior.
 

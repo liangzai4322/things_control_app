@@ -6,10 +6,39 @@ The Assistant Gateway may deliver a verified personal-WeChat reply to one existi
 
 ## Authentication and shutdown
 
-- Authentication: `Authorization: Bearer <assistant-gateway-token>`.
-- The token is loaded only from `ASSISTANT_GATEWAY_API_TOKEN_FILE` and has the single scope `proposal-replies:write`.
-- The generic browser, HQ, execution-system and Daily Intake tokens cannot use this route. The Assistant Gateway token cannot use generic TaskBox or other HQ routes.
+- Reply authentication: `ASSISTANT_GATEWAY_API_TOKEN_FILE`, scope `proposal-replies:write`.
+- Pending-read authentication: independent `ASSISTANT_GATEWAY_READ_TOKEN_FILE`, scope `proposals:read`.
+- The read and reply tokens reject each other's routes. Generic browser, HQ, execution-system and Daily Intake tokens cannot use either route; neither Gateway token can use generic TaskBox or other HQ routes.
 - Creating `ASSISTANT_GATEWAY_API_DISABLE_FILE` immediately makes the route fail closed with `503 assistant_gateway_api_disabled`.
+
+## Pending decision projection
+
+```http
+GET /v1/assistant-gateway/proposals/pending-user-decision?limit=20
+Authorization: Bearer <assistant-gateway-read-token>
+X-Assistant-Verified-User-Ref: notification-hub-user:<sha256-sender>
+X-Assistant-Conversation-Ref-Hash: <sha256-conversation-ref>
+```
+
+Only `proposed` records with exactly matching, unexpired bindings are returned. A proposal revision invalidates its previous binding unless HQ supplies a new binding for the new revision. Provisional monthly-bet evidence is never returned. The projection contains only `proposalId`, `revision`, `proposalType`, `title`, `evidenceStatus`, `allowedDecisions`, and non-secret binding references.
+
+HQ supplies this optional proposal field when a decision really belongs to the verified personal-Weixin conversation:
+
+```json
+{
+  "replyBinding": {
+    "bindingRef": "stable-hq-binding-reference",
+    "verifiedSource": "notification_hub_weixin",
+    "verifiedUserRef": "notification-hub-user:<sha256-sender>",
+    "conversationRefHash": "64-character-sha256-hex",
+    "signatureRef": "non-secret-verification-reference",
+    "allowedDecisions": ["approve", "reject", "defer", "expand"],
+    "expiresAt": "2026-09-05T12:00:00.000Z"
+  }
+}
+```
+
+Missing, expired, stale-revision, wrong-user, wrong-conversation, wrong-source, or ambiguous bindings authorize nothing. The Gateway must require exactly one returned item and must fail closed on every `409`.
 
 ## Endpoint
 
@@ -27,6 +56,7 @@ If-Match: "proposal-revision-<expectedProposalRevision>"
   "inboundMessageId": "durable-inbound-message-id",
   "replyRef": "notification-outbox:reply-id",
   "verifiedUserRef": "verified-user-reference",
+  "conversationRefHash": "64-character-sha256-hex",
   "expectedProposalRevision": 2,
   "decision": "approve",
   "textHash": "64-character-sha256-hex",
@@ -48,7 +78,7 @@ If-Match: "proposal-revision-<expectedProposalRevision>"
 - `reject` and `defer` reuse the existing HQ proposal state machine. `defer` requires `deferUntil`.
 - `expand` appends a clarification audit event and leaves proposal status and revision unchanged.
 
-The path and optional body `proposalId` must match. `expectedProposalRevision` is mandatory; an optional `If-Match` header must use the exact `"proposal-revision-N"` form and match the body. The default accepted message age is 24 hours and is configurable with `ASSISTANT_GATEWAY_REPLY_MAX_AGE_SECONDS`.
+The path and optional body `proposalId` must match. `expectedProposalRevision` is mandatory; an optional `If-Match` header must use the exact `"proposal-revision-N"` form and match the body. The server also matches the write against the proposal's current `replyBinding`: revision, source, verified user, conversation hash, signature reference, binding reference (`scopeKey`), expiry, and allowed decision must all agree. The default accepted message age is 24 hours and is configurable with `ASSISTANT_GATEWAY_REPLY_MAX_AGE_SECONDS`.
 
 ## Idempotency and audit
 
@@ -82,5 +112,7 @@ Success returns the canonical proposal and `ETag: "proposal-revision-N"`:
 - `409 reply_expired|reply_timestamp_in_future`: reply is outside the accepted time window.
 - `409 reply_idempotency_conflict`: a stable identifier was reused with different content.
 - `503 assistant_gateway_api_disabled|assistant_gateway_api_not_configured`: fail-closed shutdown or missing credential.
+
+Pending-read-specific failures are `401 assistant_gateway_read_unauthorized`, `403 assistant_gateway_read_scope_denied`, `400 pending_binding_context_required`, and `503 assistant_gateway_read_api_not_configured`.
 
 The WeChat/Notification Hub bridge must stop on conflicts and return them to HQ. It must never fall back to generic HQ or TaskBox write routes.

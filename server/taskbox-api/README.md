@@ -28,6 +28,8 @@ ASSISTANT_GATEWAY_API_ENABLED=1
 ASSISTANT_GATEWAY_API_TOKEN_FILE=/etc/taskbox-assistant-gateway-token
 ASSISTANT_GATEWAY_API_DISABLE_FILE=/etc/taskbox-assistant-gateway.disabled
 ASSISTANT_GATEWAY_API_SCOPES=proposal-replies:write
+ASSISTANT_GATEWAY_READ_TOKEN_FILE=/etc/taskbox-assistant-gateway-read-token
+ASSISTANT_GATEWAY_READ_SCOPES=proposals:read
 ASSISTANT_GATEWAY_REPLY_MAX_AGE_SECONDS=86400
 ```
 
@@ -58,6 +60,7 @@ npm run import-json -- /opt/taskbox-api/seed
 - `/v1/hq/decisions`: decision queue record-level CRUD.
 - `GET/POST /v1/hq/proposals`, `GET /v1/hq/proposals/:id`, and proposal `approve/reject/defer/promote` actions. Only approved daily proposals can promote to TaskBox; weekly/monthly proposals remain strategic records.
 - `POST /v1/hq/proposals/:proposalId/replies`: Assistant Gateway-only verified reply intake with revision binding, durable idempotency and audit. It can approve/reject/defer or record clarification, but never promotes or writes TaskBox. See `../../docs/hq-proposal-reply-api.md`.
+- `GET /v1/assistant-gateway/proposals/pending-user-decision?limit=20`: a separate read-token-only projection of unexpired, revision-bound `proposed` items for one hashed verified Weixin conversation. It excludes provisional monthly evidence and never exposes proposal content, evidence, task specifications or audit details.
 - `assistant-gateway.service`: isolated personal-Weixin lease consumer under `../../integrations/assistant-gateway/`. Its initial echo gate handles `测试` and timestamped `测试-...`, replies through Notification Hub, then acknowledges; it never calls HQ or TaskBox in this mode.
 - `POST /v1/system-candidates/batch`, `GET /v1/system-candidates?systemId=...`, and `PATCH /v1/system-candidates/:id`: idempotent daily-review candidate inboxes isolated by system. Candidates can only become `kept` or `dismissed`; this API cannot publish mission versions, health/time facts, TaskBox tasks, experiments, or rules.
 - `POST /v1/mission/sync` and `GET /v1/mission/state`: Mission OS Beta record sync for drafts, immutable published versions, candidates, and audit events. Mutable records require `expectedRevision`; stale writes return `409`. Published versions require valid `explicit_user` or exact Mission HQ `standing_rule` authority and never write TaskBox records.
