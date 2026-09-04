@@ -14,6 +14,7 @@ BACKUP_DIR="${TASKBOX_BACKUP_DIR:-${APP_DIR}/backups/execution-system-${STAMP}}"
 EXECUTION_TOKEN_FILE="${EXECUTION_SYSTEM_API_TOKEN_FILE:-/etc/taskbox-execution-system-token}"
 EXECUTION_DISABLE_FILE="${EXECUTION_SYSTEM_API_DISABLE_FILE:-/etc/taskbox-execution-system.disabled}"
 ASSISTANT_GATEWAY_TOKEN_FILE="${ASSISTANT_GATEWAY_API_TOKEN_FILE:-/etc/taskbox-assistant-gateway-token}"
+ASSISTANT_GATEWAY_READ_TOKEN_FILE="${ASSISTANT_GATEWAY_READ_TOKEN_FILE:-/etc/taskbox-assistant-gateway-read-token}"
 ASSISTANT_GATEWAY_DISABLE_FILE="${ASSISTANT_GATEWAY_API_DISABLE_FILE:-/etc/taskbox-assistant-gateway.disabled}"
 WEIXIN_INGRESS_TOKEN_FILE="${WEIXIN_INGRESS_TOKEN_FILE:-/etc/notification-ingress/weixin-ingress.token}"
 DAILY_INTAKE_TOKEN_DIR="${DAILY_INTAKE_TOKEN_DIR:-/etc/taskbox-daily-intake}"
@@ -79,6 +80,7 @@ DB_PATH="${TASKBOX_DB_PATH:-${APP_DIR}/data/taskbox.sqlite}"
 EXECUTION_TOKEN_FILE="${EXECUTION_SYSTEM_API_TOKEN_FILE:-$EXECUTION_TOKEN_FILE}"
 EXECUTION_DISABLE_FILE="${EXECUTION_SYSTEM_API_DISABLE_FILE:-$EXECUTION_DISABLE_FILE}"
 ASSISTANT_GATEWAY_TOKEN_FILE="${ASSISTANT_GATEWAY_API_TOKEN_FILE:-$ASSISTANT_GATEWAY_TOKEN_FILE}"
+ASSISTANT_GATEWAY_READ_TOKEN_FILE="${ASSISTANT_GATEWAY_READ_TOKEN_FILE:-$ASSISTANT_GATEWAY_READ_TOKEN_FILE}"
 ASSISTANT_GATEWAY_DISABLE_FILE="${ASSISTANT_GATEWAY_API_DISABLE_FILE:-$ASSISTANT_GATEWAY_DISABLE_FILE}"
 DAILY_INTAKE_TOKEN_DIR="${DAILY_INTAKE_TOKEN_DIR:-$DAILY_INTAKE_TOKEN_DIR}"
 DAILY_INTAKE_DISABLE_FILE="${DAILY_INTAKE_DISABLE_FILE:-$DAILY_INTAKE_DISABLE_FILE}"
@@ -169,11 +171,18 @@ if [[ ! -s "$ASSISTANT_GATEWAY_TOKEN_FILE" ]]; then
   node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex') + '\n')" > "$ASSISTANT_GATEWAY_TOKEN_FILE"
 fi
 chmod 600 "$ASSISTANT_GATEWAY_TOKEN_FILE"
+if [[ ! -s "$ASSISTANT_GATEWAY_READ_TOKEN_FILE" ]]; then
+  umask 077
+  node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex') + '\n')" > "$ASSISTANT_GATEWAY_READ_TOKEN_FILE"
+fi
+chmod 600 "$ASSISTANT_GATEWAY_READ_TOKEN_FILE"
 rm -f "$ASSISTANT_GATEWAY_DISABLE_FILE"
 upsert_env ASSISTANT_GATEWAY_API_ENABLED 1
 upsert_env ASSISTANT_GATEWAY_API_TOKEN_FILE "$ASSISTANT_GATEWAY_TOKEN_FILE"
 upsert_env ASSISTANT_GATEWAY_API_DISABLE_FILE "$ASSISTANT_GATEWAY_DISABLE_FILE"
 upsert_env ASSISTANT_GATEWAY_API_SCOPES "proposal-replies:write"
+upsert_env ASSISTANT_GATEWAY_READ_TOKEN_FILE "$ASSISTANT_GATEWAY_READ_TOKEN_FILE"
+upsert_env ASSISTANT_GATEWAY_READ_SCOPES "proposals:read"
 upsert_env ASSISTANT_GATEWAY_REPLY_MAX_AGE_SECONDS 86400
 
 # Daily Review identities are deliberately separate from the browser and execution-system tokens.
@@ -290,6 +299,10 @@ if [[ "${TASKBOX_SKIP_CREDENTIAL_OWNER_CHECK:-0}" != "1" ]]; then
     echo "invalid HQ reply credential permissions" >&2
     exit 1
   fi
+  if [[ "$(stat -c '%U:%G:%a' "$ASSISTANT_GATEWAY_READ_TOKEN_FILE")" != "root:root:600" ]]; then
+    echo "invalid HQ read credential permissions" >&2
+    exit 1
+  fi
 fi
 WEIXIN_INGRESS_TOKEN="$(tr -d '\r\n' < "$WEIXIN_INGRESS_TOKEN_FILE")"
 WEIXIN_REPLY_PROBE_BODY='{"consumerId":"assistant-gateway","leaseToken":"deployment-probe","replyKey":"assistant-gateway:deployment-probe","text":"deployment probe"}'
@@ -305,8 +318,21 @@ if curl --silent --show-error --fail --output /dev/null \
 fi
 
 ASSISTANT_GATEWAY_TOKEN="$(tr -d '\r\n' < "$ASSISTANT_GATEWAY_TOKEN_FILE")"
+ASSISTANT_GATEWAY_READ_TOKEN="$(tr -d '\r\n' < "$ASSISTANT_GATEWAY_READ_TOKEN_FILE")"
+ASSISTANT_GATEWAY_PENDING="$API_BASE_URL/v1/assistant-gateway/proposals/pending-user-decision?limit=20"
+pending_headers=(
+  --header 'X-Assistant-Verified-User-Ref: notification-hub-user:deployment-probe'
+  --header 'X-Assistant-Conversation-Ref-Hash: 0000000000000000000000000000000000000000000000000000000000000000'
+)
+curl --silent --show-error --fail --output /dev/null \
+  --header "Authorization: Bearer $ASSISTANT_GATEWAY_READ_TOKEN" "${pending_headers[@]}" "$ASSISTANT_GATEWAY_PENDING"
+for denied_token in "$TASKBOX_API_TOKEN" "$ASSISTANT_GATEWAY_TOKEN"; do
+  code="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    --header "Authorization: Bearer $denied_token" "${pending_headers[@]}" "$ASSISTANT_GATEWAY_PENDING")"
+  [[ "$code" == "401" ]] || { echo "non-read identity unexpectedly accessed assistant gateway pending API: $code" >&2; exit 1; }
+done
 ASSISTANT_GATEWAY_PROBE="$API_BASE_URL/v1/hq/proposals/assistant-gateway-auth-probe/replies"
-ASSISTANT_GATEWAY_PROBE_BODY="$(node -e 'process.stdout.write(JSON.stringify({inboundMessageId:"assistant-gateway-auth-probe",replyRef:"deployment-probe",verifiedUserRef:"deployment-probe-user",expectedProposalRevision:1,decision:"expand",textHash:"0".repeat(64),receivedAt:new Date().toISOString(),verification:{verified:true,source:"notification_hub_weixin",signatureRef:"deployment-probe-signature"},clarification:"deployment probe"}))')"
+ASSISTANT_GATEWAY_PROBE_BODY="$(node -e 'process.stdout.write(JSON.stringify({inboundMessageId:"assistant-gateway-auth-probe",replyRef:"deployment-probe",verifiedUserRef:"deployment-probe-user",conversationRefHash:"0".repeat(64),expectedProposalRevision:1,decision:"expand",textHash:"0".repeat(64),receivedAt:new Date().toISOString(),verification:{verified:true,source:"notification_hub_weixin",signatureRef:"deployment-probe-signature"},scopeKey:"deployment-probe-binding",clarification:"deployment probe"}))')"
 gateway_code="$(curl --silent --output /dev/null --write-out '%{http_code}' \
   --request POST --header "Authorization: Bearer $ASSISTANT_GATEWAY_TOKEN" \
   --header 'Content-Type: application/json' --header 'X-Idempotency-Key: assistant-gateway:deployment-probe' \
@@ -317,9 +343,19 @@ generic_gateway_code="$(curl --silent --output /dev/null --write-out '%{http_cod
   --header 'Content-Type: application/json' --header 'X-Idempotency-Key: assistant-gateway:deployment-probe' \
   --data "$ASSISTANT_GATEWAY_PROBE_BODY" "$ASSISTANT_GATEWAY_PROBE")"
 [[ "$generic_gateway_code" == "401" ]] || { echo "generic token unexpectedly accessed assistant gateway API: $generic_gateway_code" >&2; exit 1; }
+read_gateway_code="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  --request POST --header "Authorization: Bearer $ASSISTANT_GATEWAY_READ_TOKEN" \
+  --header 'Content-Type: application/json' --header 'X-Idempotency-Key: assistant-gateway:deployment-probe' \
+  --data "$ASSISTANT_GATEWAY_PROBE_BODY" "$ASSISTANT_GATEWAY_PROBE")"
+[[ "$read_gateway_code" == "401" ]] || { echo "read token unexpectedly accessed assistant gateway reply API: $read_gateway_code" >&2; exit 1; }
 if curl --silent --show-error --fail --output /dev/null \
   --header "Authorization: Bearer $ASSISTANT_GATEWAY_TOKEN" "$HEALTH_URL" 2>/dev/null; then
   echo "assistant gateway token unexpectedly accessed generic TaskBox API" >&2
+  exit 1
+fi
+if curl --silent --show-error --fail --output /dev/null \
+  --header "Authorization: Bearer $ASSISTANT_GATEWAY_READ_TOKEN" "$HEALTH_URL" 2>/dev/null; then
+  echo "assistant gateway read token unexpectedly accessed generic TaskBox API" >&2
   exit 1
 fi
 
@@ -395,6 +431,7 @@ echo "rollback_snapshot=$BACKUP_DIR"
 echo "execution_token_file=$EXECUTION_TOKEN_FILE"
 echo "execution_disable_file=$EXECUTION_DISABLE_FILE"
 echo "assistant_gateway_token_file=$ASSISTANT_GATEWAY_TOKEN_FILE"
+echo "assistant_gateway_read_token_file=$ASSISTANT_GATEWAY_READ_TOKEN_FILE"
 echo "assistant_gateway_disable_file=$ASSISTANT_GATEWAY_DISABLE_FILE"
 echo "assistant_gateway_worker=active"
 echo "assistant_gateway_worker_mode=echo"

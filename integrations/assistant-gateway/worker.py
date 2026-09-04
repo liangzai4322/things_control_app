@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import signal
 import sys
 import time
@@ -17,10 +18,11 @@ from typing import Any, Mapping
 
 
 class GatewayError(RuntimeError):
-    def __init__(self, code: str, status: int | None = None):
+    def __init__(self, code: str, status: int | None = None, response: Mapping[str, Any] | None = None):
         super().__init__(code)
         self.code = code
         self.status = status
+        self.response = dict(response or {})
 
 
 class JsonClient:
@@ -29,32 +31,85 @@ class JsonClient:
         self.token_file = token_file
         self.timeout = timeout
 
-    def post(self, route: str, payload: Mapping[str, Any], headers: Mapping[str, str] | None = None) -> dict[str, Any]:
+    def request(self, method: str, route: str, payload: Mapping[str, Any] | None = None,
+                headers: Mapping[str, str] | None = None) -> dict[str, Any]:
         token = self.token_file.read_text(encoding="utf-8").strip()
         if not token:
             raise GatewayError("credential_empty")
         request_headers = {
             "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
             "User-Agent": "taskbox-assistant-gateway/1",
             **dict(headers or {}),
         }
+        data = None
+        if payload is not None:
+            request_headers["Content-Type"] = "application/json"
+            data = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         request = urllib.request.Request(
             self.base_url + route,
-            data=json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
+            data=data,
             headers=request_headers,
-            method="POST",
+            method=method,
         )
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 result = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as error:
-            raise GatewayError(f"remote_http_{error.code}", error.code) from error
+            try:
+                response = json.loads(error.read().decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                response = {}
+            raise GatewayError(f"remote_http_{error.code}", error.code, response) from error
         except (urllib.error.URLError, TimeoutError, OSError) as error:
             raise GatewayError("remote_unavailable") from error
         if not isinstance(result, dict):
             raise GatewayError("remote_response_invalid")
         return result
+
+    def get(self, route: str, headers: Mapping[str, str] | None = None) -> dict[str, Any]:
+        return self.request("GET", route, headers=headers)
+
+    def post(self, route: str, payload: Mapping[str, Any], headers: Mapping[str, str] | None = None) -> dict[str, Any]:
+        return self.request("POST", route, payload, headers)
+
+
+class DecisionStore:
+    def __init__(self, path: Path):
+        self.path = path
+
+    def _read(self) -> dict[str, dict[str, Any]]:
+        try:
+            value = json.loads(self.path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return {}
+        return value if isinstance(value, dict) else {}
+
+    def get(self, inbound_message_id: str) -> dict[str, Any] | None:
+        record = self._read().get(inbound_message_id)
+        return dict(record) if isinstance(record, dict) else None
+
+    def put(self, inbound_message_id: str, record: Mapping[str, Any]) -> None:
+        records = self._read()
+        records[inbound_message_id] = dict(record)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.path.with_name(f".{self.path.name}.{os.getpid()}.tmp")
+        temporary.write_text(json.dumps(records, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        os.chmod(temporary, 0o600)
+        temporary.replace(self.path)
+
+    def remove(self, inbound_message_id: str) -> None:
+        records = self._read()
+        if inbound_message_id not in records:
+            return
+        records.pop(inbound_message_id, None)
+        self.put_all(records)
+
+    def put_all(self, records: Mapping[str, Mapping[str, Any]]) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.path.with_name(f".{self.path.name}.{os.getpid()}.tmp")
+        temporary.write_text(json.dumps(records, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        os.chmod(temporary, 0o600)
+        temporary.replace(self.path)
 
 
 def verify_message(message: Mapping[str, Any]) -> str:
@@ -109,6 +164,178 @@ def send_echo(client: JsonClient, message: Mapping[str, Any]) -> None:
     })
 
 
+def verified_user_ref(message: Mapping[str, Any]) -> str:
+    sender_hash = hashlib.sha256(str(message["senderIdentity"]).encode("utf-8")).hexdigest()
+    return f"notification-hub-user:{sender_hash}"
+
+
+def conversation_ref_hash(message: Mapping[str, Any]) -> str:
+    return hashlib.sha256(str(message["conversationRef"]).encode("utf-8")).hexdigest()
+
+
+def parse_decision(text: str) -> tuple[str, dict[str, str]] | None:
+    normalized = text.strip().lower()
+    exact = {
+        "同意": "approve",
+        "批准": "approve",
+        "approve": "approve",
+        "拒绝": "reject",
+        "不同意": "reject",
+        "reject": "reject",
+        "展开": "expand",
+        "补充说明": "expand",
+        "expand": "expand",
+    }
+    if normalized in exact:
+        decision = exact[normalized]
+        return decision, ({"clarification": "用户通过微信请求展开提案信息。"} if decision == "expand" else {})
+    match = re.fullmatch(r"(?:延期|延期到|defer\s+)(\d{4}-\d{2}-\d{2})", normalized)
+    if match:
+        try:
+            time.strptime(match.group(1), "%Y-%m-%d")
+        except ValueError:
+            return None
+        return "defer", {"deferUntil": match.group(1)}
+    return None
+
+
+def pending_proposals(client: JsonClient, message: Mapping[str, Any]) -> list[dict[str, Any]]:
+    response = client.get("/v1/assistant-gateway/proposals/pending-user-decision?limit=20", {
+        "X-Assistant-Verified-User-Ref": verified_user_ref(message),
+        "X-Assistant-Conversation-Ref-Hash": conversation_ref_hash(message),
+    })
+    items = response.get("items")
+    if not isinstance(items, list):
+        raise GatewayError("pending_response_invalid")
+    return [dict(item) for item in items if isinstance(item, Mapping)]
+
+
+def decision_confirmation(decision: str, patch: Mapping[str, str]) -> str:
+    if decision == "approve":
+        return "已记录：同意。提案已批准，不会自动写入任务盒。"
+    if decision == "reject":
+        return "已记录：拒绝。"
+    if decision == "defer":
+        return f"已记录：延期到 {patch['deferUntil']}。"
+    return "已记录：请补充提案信息。"
+
+
+def build_decision_record(message: Mapping[str, Any], proposal: Mapping[str, Any],
+                          decision: str, patch: Mapping[str, str]) -> dict[str, Any]:
+    inbound_id = str(message["inboundMessageId"])
+    proposal_id = str(proposal.get("proposalId") or "")
+    revision = int(proposal.get("revision") or 0)
+    binding = proposal.get("replyBinding") if isinstance(proposal.get("replyBinding"), Mapping) else {}
+    if (not proposal_id or revision < 1 or binding.get("verifiedSource") != "notification_hub_weixin"
+            or not str(binding.get("signatureRef") or "") or not str(binding.get("bindingRef") or "")):
+        raise GatewayError("pending_binding_invalid")
+    allowed = proposal.get("allowedDecisions")
+    if not isinstance(allowed, list) or decision not in allowed:
+        raise GatewayError("decision_not_allowed")
+    message_hash = str(message["originalMessageHash"])
+    decision_fingerprint = hashlib.sha256(
+        f"{inbound_id}\0{proposal_id}\0{decision}".encode("utf-8"),
+    ).hexdigest()
+    bridge_ref = hashlib.sha256(str(message["bridgeRequestId"]).encode("utf-8")).hexdigest()
+    idempotency_key = f"assistant-gateway:decision:{decision_fingerprint}"
+    payload = {
+        "proposalId": proposal_id,
+        "inboundMessageId": inbound_id,
+        "replyRef": f"notification-hub:bridge:{bridge_ref}",
+        "verifiedUserRef": verified_user_ref(message),
+        "conversationRefHash": conversation_ref_hash(message),
+        "expectedProposalRevision": revision,
+        "decision": decision,
+        "textHash": message_hash,
+        "receivedAt": str(message["receivedAt"]),
+        "verification": {
+            "verified": True,
+            "source": "notification_hub_weixin",
+            "signatureRef": str(binding["signatureRef"]),
+        },
+        "reasonCode": "verified_weixin_user_decision",
+        "scopeKey": str(binding.get("bindingRef") or ""),
+        "fingerprint": message_hash,
+        **dict(patch),
+    }
+    return {
+        "proposalId": proposal_id,
+        "revision": revision,
+        "decision": decision,
+        "textHash": message_hash,
+        "idempotencyKey": idempotency_key,
+        "payload": payload,
+        "confirmation": decision_confirmation(decision, patch),
+        "hqApplied": False,
+        "replySent": False,
+    }
+
+
+def process_decision(hub: JsonClient, hq_reader: JsonClient, hq_writer: JsonClient,
+                     store: DecisionStore, message: Mapping[str, Any]) -> None:
+    inbound_id = str(message.get("inboundMessageId") or "")
+    try:
+        text = verify_message(message)
+        if text == "测试" or text.startswith("测试-"):
+            send_echo(hub, message)
+            acknowledge(hub, message, "processed")
+            emit("echo_processed", inboundMessageId=inbound_id, outcome="processed", mode="decision")
+            return
+        parsed = parse_decision(text)
+        if not parsed:
+            acknowledge(hub, message, "retry", "decision_not_explicit")
+            emit("message_deferred", inboundMessageId=inbound_id, attemptCount=message.get("attemptCount"), mode="decision")
+            return
+        decision, patch = parsed
+        record = store.get(inbound_id)
+        if record and record.get("textHash") != message.get("originalMessageHash"):
+            raise GatewayError("decision_state_hash_conflict", 409)
+        if not record:
+            proposals = pending_proposals(hq_reader, message)
+            if len(proposals) != 1:
+                reason = "no_pending_proposal" if not proposals else "ambiguous_pending_proposals"
+                acknowledge(hub, message, "retry", reason)
+                emit("message_deferred", inboundMessageId=inbound_id, attemptCount=message.get("attemptCount"), mode="decision")
+                return
+            record = build_decision_record(message, proposals[0], decision, patch)
+            store.put(inbound_id, record)
+        if not record.get("hqApplied"):
+            response = hq_writer.post(
+                f"/v1/hq/proposals/{urllib.parse.quote(str(record['proposalId']), safe='')}/replies",
+                record["payload"],
+                {
+                    "X-Idempotency-Key": str(record["idempotencyKey"]),
+                    "If-Match": f'"proposal-revision-{record["revision"]}"',
+                },
+            )
+            if response.get("taskboxMutation") is not False or response.get("proposalId") != record["proposalId"]:
+                raise GatewayError("hq_reply_contract_invalid")
+            record["hqApplied"] = True
+            store.put(inbound_id, record)
+        if not record.get("replySent"):
+            escaped_id = urllib.parse.quote(inbound_id, safe="")
+            hub.post(f"/v1/weixin-inbound/{escaped_id}/reply", {
+                "consumerId": "assistant-gateway",
+                "leaseToken": str(message["leaseToken"]),
+                "replyKey": f"decision:{hashlib.sha256(inbound_id.encode('utf-8')).hexdigest()}",
+                "text": str(record["confirmation"]),
+            })
+            record["replySent"] = True
+            store.put(inbound_id, record)
+        acknowledge(hub, message, "processed")
+        store.remove(inbound_id)
+        emit("decision_processed", inboundMessageId=inbound_id, outcome="processed", mode="decision")
+    except GatewayError as error:
+        permanent = error.status in {400, 401, 403, 409} or error.code.startswith("inbound_")
+        try:
+            acknowledge(hub, message, "dead_letter" if permanent else "retry", error.code)
+            if permanent:
+                store.remove(inbound_id)
+        except GatewayError:
+            pass
+        emit("message_failed", inboundMessageId=inbound_id, error=error.code, mode="decision")
+
+
 def emit(event: str, **fields: Any) -> None:
     safe = {key: value for key, value in fields.items() if key in {
         "inboundMessageId", "attemptCount", "outcome", "error", "mode",
@@ -148,11 +375,18 @@ def credential_path(name: str) -> Path:
 
 def main() -> int:
     mode = os.environ.get("ASSISTANT_GATEWAY_MODE", "echo").strip()
-    if mode != "echo":
+    if mode not in {"echo", "decision"}:
         raise GatewayError("unsupported_gateway_mode")
     ingress_token = credential_path("weixin-ingress.token")
-    credential_path("hq-reply.token")  # Required now, but intentionally unused by echo mode.
+    hq_reply_token = credential_path("hq-reply.token")
+    hq_read_token = credential_path("hq-read.token")
     hub = JsonClient(os.environ.get("NOTIFICATION_HUB_BASE_URL", "http://127.0.0.1:3219"), ingress_token)
+    hq_base_url = os.environ.get("TASKBOX_HQ_BASE_URL", "http://127.0.0.1:3107")
+    hq_reader = JsonClient(hq_base_url, hq_read_token)
+    hq_writer = JsonClient(hq_base_url, hq_reply_token)
+    store = DecisionStore(Path(os.environ.get(
+        "ASSISTANT_GATEWAY_STATE_FILE", "/var/lib/taskbox-assistant-gateway/decision-state.json",
+    )))
     disable_file = Path(os.environ.get("ASSISTANT_GATEWAY_WORKER_DISABLE_FILE", "/etc/taskbox-assistant-gateway-worker.disabled"))
     running = True
 
@@ -170,7 +404,10 @@ def main() -> int:
         try:
             messages = claim(hub)
             for message in messages:
-                process_echo(hub, message)
+                if mode == "decision":
+                    process_decision(hub, hq_reader, hq_writer, store, message)
+                else:
+                    process_echo(hub, message)
         except GatewayError as error:
             emit("claim_failed", error=error.code, mode=mode)
             if error.status in {401, 403}:
