@@ -17,11 +17,11 @@ const executionTokenFile = String(process.env.EXECUTION_SYSTEM_API_TOKEN_FILE ||
 const executionDisableFile = String(process.env.EXECUTION_SYSTEM_API_DISABLE_FILE || '/etc/taskbox-execution-system.disabled').trim();
 const assistantGatewayApiEnabled = String(process.env.ASSISTANT_GATEWAY_API_ENABLED || '') === '1';
 const assistantGatewayTokenFile = String(process.env.ASSISTANT_GATEWAY_API_TOKEN_FILE || '').trim();
+const assistantGatewayReadTokenFile = String(process.env.ASSISTANT_GATEWAY_READ_TOKEN_FILE || '').trim();
 const assistantGatewayDisableFile = String(process.env.ASSISTANT_GATEWAY_API_DISABLE_FILE || '/etc/taskbox-assistant-gateway.disabled').trim();
 const assistantGatewayScopes = new Set(String(process.env.ASSISTANT_GATEWAY_API_SCOPES || '')
   .split(',').map((item) => item.trim()).filter(Boolean));
-const assistantGatewayReadTokenFile = String(process.env.ASSISTANT_GATEWAY_READ_API_TOKEN_FILE || '').trim();
-const assistantGatewayReadScopes = new Set(String(process.env.ASSISTANT_GATEWAY_READ_API_SCOPES || 'proposal-decisions:read')
+const assistantGatewayReadScopes = new Set(String(process.env.ASSISTANT_GATEWAY_READ_SCOPES || '')
   .split(',').map((item) => item.trim()).filter(Boolean));
 const dailyIntakeApiEnabled = String(process.env.DAILY_INTAKE_API_ENABLED || '') === '1';
 const dailyIntakeDisableFile = String(process.env.DAILY_INTAKE_DISABLE_FILE || '/etc/taskbox-daily-intake.disabled').trim();
@@ -155,7 +155,7 @@ app.use((req, res, next) => {
     res.setHeader('Vary', 'Origin');
   }
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Taskbox-Token,If-Match,X-Idempotency-Key');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Taskbox-Token,If-Match,X-Idempotency-Key,X-Assistant-Verified-User-Ref,X-Assistant-Conversation-Ref-Hash');
   if (req.method === 'OPTIONS') return res.status(204).end();
   return next();
 });
@@ -180,6 +180,50 @@ app.use((req, res, next) => {
       || req.path === '/v1/mission/state') return next();
     return res.status(403).json({ error: 'daily_intake_route_denied' });
   }
+  if (req.path === '/v1/assistant-gateway/proposals/pending-user-decision') {
+    if (!assistantGatewayApiEnabled
+      || (assistantGatewayDisableFile && fs.existsSync(assistantGatewayDisableFile))) {
+      return res.status(503).json({ error: 'assistant_gateway_api_disabled' });
+    }
+    const readToken = readSecretFile(assistantGatewayReadTokenFile);
+    if (!readToken) return res.status(503).json({ error: 'assistant_gateway_read_api_not_configured' });
+    if (!secretMatches(bearerToken(req), readToken)) {
+      return res.status(401).json({ error: 'assistant_gateway_read_unauthorized' });
+    }
+    if (!assistantGatewayReadScopes.has('proposals:read')) {
+      return res.status(403).json({ error: 'assistant_gateway_read_scope_denied' });
+    }
+    req.assistantGatewayIdentity = { system: 'assistant-gateway-reader', scopes: assistantGatewayReadScopes };
+    return next();
+  }
+  if (/^\/v1\/hq\/proposals\/[^/]+\/promote$/.test(req.path)) {
+    const gatewayToken = readSecretFile(assistantGatewayTokenFile);
+    if (gatewayToken && secretMatches(bearerToken(req), gatewayToken)) {
+      if (!assistantGatewayApiEnabled
+        || (assistantGatewayDisableFile && fs.existsSync(assistantGatewayDisableFile))) {
+        return res.status(503).json({ error: 'assistant_gateway_api_disabled' });
+      }
+      if (!assistantGatewayScopes.has('proposal-promotions:write')) {
+        return res.status(403).json({ error: 'assistant_gateway_scope_denied' });
+      }
+      req.assistantGatewayIdentity = { system: 'assistant-gateway', scopes: assistantGatewayScopes };
+      return next();
+    }
+  }
+  if (/^\/v1\/hq\/proposals\/[^/]+\/approve$/.test(req.path)) {
+    const gatewayToken = readSecretFile(assistantGatewayTokenFile);
+    if (gatewayToken && secretMatches(bearerToken(req), gatewayToken)) {
+      if (!assistantGatewayApiEnabled
+        || (assistantGatewayDisableFile && fs.existsSync(assistantGatewayDisableFile))) {
+        return res.status(503).json({ error: 'assistant_gateway_api_disabled' });
+      }
+      if (!assistantGatewayScopes.has('proposal-auto-approve:write')) {
+        return res.status(403).json({ error: 'assistant_gateway_scope_denied' });
+      }
+      req.assistantGatewayIdentity = { system: 'assistant-gateway', scopes: assistantGatewayScopes };
+      return next();
+    }
+  }
   if (/^\/v1\/hq\/proposals\/[^/]+\/replies$/.test(req.path)) {
     if (!assistantGatewayApiEnabled
       || (assistantGatewayDisableFile && fs.existsSync(assistantGatewayDisableFile))) {
@@ -194,22 +238,6 @@ app.use((req, res, next) => {
       return res.status(403).json({ error: 'assistant_gateway_scope_denied' });
     }
     req.assistantGatewayIdentity = { system: 'assistant-gateway', scopes: assistantGatewayScopes };
-    return next();
-  }
-  if (req.path === '/v1/assistant-gateway/proposals/pending-user-decision') {
-    if (!assistantGatewayApiEnabled
-      || (assistantGatewayDisableFile && fs.existsSync(assistantGatewayDisableFile))) {
-      return res.status(503).json({ error: 'assistant_gateway_api_disabled' });
-    }
-    const readToken = readSecretFile(assistantGatewayReadTokenFile);
-    if (!readToken) return res.status(503).json({ error: 'assistant_gateway_read_api_not_configured' });
-    if (!secretMatches(bearerToken(req), readToken)) {
-      return res.status(401).json({ error: 'assistant_gateway_read_unauthorized' });
-    }
-    if (!assistantGatewayReadScopes.has('proposal-decisions:read')) {
-      return res.status(403).json({ error: 'assistant_gateway_read_scope_denied' });
-    }
-    req.assistantGatewayIdentity = { system: 'assistant-gateway', scopes: assistantGatewayReadScopes };
     return next();
   }
   if (req.path.startsWith('/v1/execution')) {
@@ -548,6 +576,12 @@ const HQ_PROPOSAL_TYPES = new Set([
 const HQ_SOURCE_AUTHORITIES = new Set(['explicit_user', 'standing_rule', 'ai_derived']);
 const HQ_PROPOSAL_STATUSES = new Set(['proposed', 'approved', 'rejected', 'deferred', 'promoted']);
 const HQ_PROPOSAL_TERMINAL_SYNC_STATUSES = new Set(['rejected', 'deferred', 'promoted']);
+const ASSISTANT_GATEWAY_DECISIONS = new Set(['approve', 'reject', 'defer', 'expand']);
+const ASSISTANT_GATEWAY_AUTO_APPROVE_RULE_ID = 'execution.daily_action_proposal.auto_approve';
+const ASSISTANT_GATEWAY_PROMOTION_FIELDS = new Set([
+  'boxId', 'content', 'clearAction', 'boxReason', 'note', 'scheduledAt', 'dueDate',
+  'visibleAfter', 'deviceContext', 'executionMode',
+]);
 
 function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
@@ -573,8 +607,47 @@ function proposalRevisionHash(input = {}) {
     sourceRef: input.sourceRef || {},
     taskSpec: input.taskSpec || {},
     existingTaskId: input.existingTaskId || null,
+    replyBinding: input.replyBinding || null,
   };
   return crypto.createHash('sha256').update(stableJson(revisionInput)).digest('hex');
+}
+
+function normalizeProposalReplyBinding(value, proposalRevision) {
+  if (value === undefined || value === null) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw proposalError('invalid_reply_binding');
+  }
+  const verifiedSource = String(value.verifiedSource || '').trim();
+  const verifiedUserRef = String(value.verifiedUserRef || '').trim();
+  const conversationRefHash = String(value.conversationRefHash || '').trim().toLowerCase();
+  const signatureRef = String(value.signatureRef || '').trim();
+  const bindingRef = String(value.bindingRef || '').trim();
+  const sessionRef = String(value.sessionRef || '').trim();
+  const expiresAt = String(value.expiresAt || '').trim();
+  const allowedDecisions = [...new Set(Array.isArray(value.allowedDecisions)
+    ? value.allowedDecisions.map((item) => String(item || '').trim()).filter(Boolean)
+    : [...ASSISTANT_GATEWAY_DECISIONS])];
+  if (verifiedSource !== 'notification_hub_weixin') throw proposalError('invalid_reply_binding_source');
+  if (!verifiedUserRef || verifiedUserRef.length > 500) throw proposalError('invalid_reply_binding_user');
+  if (!/^[a-f0-9]{64}$/.test(conversationRefHash)) throw proposalError('invalid_reply_binding_conversation');
+  if (!signatureRef || signatureRef.length > 500) throw proposalError('invalid_reply_binding_signature');
+  if (!bindingRef || bindingRef.length > 120) throw proposalError('invalid_reply_binding_ref');
+  if (!sessionRef || sessionRef.length > 200) throw proposalError('invalid_reply_binding_session');
+  if (!expiresAt || Number.isNaN(new Date(expiresAt).getTime())) throw proposalError('invalid_reply_binding_expiry');
+  if (!allowedDecisions.length || allowedDecisions.some((item) => !ASSISTANT_GATEWAY_DECISIONS.has(item))) {
+    throw proposalError('invalid_reply_binding_decisions');
+  }
+  return {
+    verifiedSource,
+    verifiedUserRef,
+    conversationRefHash,
+    signatureRef,
+    bindingRef,
+    sessionRef,
+    proposalRevision,
+    allowedDecisions,
+    expiresAt,
+  };
 }
 
 function proposalEvidenceStatus(input = {}) {
@@ -702,6 +775,7 @@ function upsertProposal(input = {}) {
       createdAt: timestamp,
       decidedAt: normalized.sourceAuthority === 'ai_derived' ? null : timestamp,
       promotedAt: null,
+      replyBinding: normalizeProposalReplyBinding(input.replyBinding, 1),
       updatedAt: timestamp,
     });
     recordProposalEvent(proposal, 'created', input.actor, '', {
@@ -728,6 +802,7 @@ function upsertProposal(input = {}) {
     createdAt: existing.createdAt,
     decidedAt: existing.decidedAt || null,
     promotedAt: existing.promotedAt || null,
+    replyBinding: normalizeProposalReplyBinding(input.replyBinding, existing.revision + 1),
     updatedAt: timestamp,
   });
   recordProposalEvent(proposal, 'revised', input.actor, '', { previousRevision: existing.revision });
@@ -1059,6 +1134,7 @@ function promoteProposal(decisionId, input = {}) {
       decisionNote: String(input.note || current.decisionNote || ''),
       decidedAt: current.decidedAt || timestamp,
       promotedAt: timestamp,
+      assistantGatewayPromotion: input.assistantGatewayPromotion || current.assistantGatewayPromotion || null,
       updatedAt: timestamp,
     });
     const taskSpec = proposal.taskSpec || {};
@@ -1077,7 +1153,11 @@ function promoteProposal(decisionId, input = {}) {
         actionProposalIds: [...new Set([...(brief?.actionProposalIds || []), proposal.decisionId])],
       });
     }
-    recordProposalEvent(proposal, 'promote', actor, input.note, { taskId: task.id, linkedExisting: Boolean(current.existingTaskId) });
+    recordProposalEvent(proposal, 'promote', actor, input.note, {
+      taskId: task.id,
+      linkedExisting: Boolean(current.existingTaskId),
+      assistantGatewayPromotion: input.assistantGatewayPromotion || null,
+    });
     return proposal;
   })();
 }
@@ -1692,7 +1772,7 @@ function sendProposalError(res, error) {
 
 const ASSISTANT_GATEWAY_REPLY_CONTRACT = '2026-09-03';
 const ASSISTANT_GATEWAY_REPLY_DECISIONS = new Set(['approve', 'reject', 'defer', 'expand']);
-const ASSISTANT_GATEWAY_REPLY_SOURCES = new Set(['notification_hub_weixin']);
+const ASSISTANT_GATEWAY_REPLY_SOURCES = new Set(['personal_wechat', 'notification_hub_weixin']);
 
 function boundedReplyText(value, maxLength, field, required = false) {
   const text = String(value || '').trim();
@@ -1743,17 +1823,192 @@ function normalizeGatewayReply(req) {
   const signatureRef = boundedReplyText(verification.signatureRef || body.signatureRef, 500, 'signature_ref', true);
   const replyRef = boundedReplyText(body.replyRef, 500, 'reply_ref', true);
   const verifiedUserRef = boundedReplyText(body.verifiedUserRef, 500, 'verified_user_ref', true);
+  const conversationRefHash = boundedReplyText(body.conversationRefHash, 64, 'conversation_ref_hash', true).toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(conversationRefHash)) throw proposalError('invalid_conversation_ref_hash');
+  const sessionRef = boundedReplyText(body.sessionRef, 200, 'session_ref', true);
   const note = boundedReplyText(body.note, 2000, 'note');
   const clarification = boundedReplyText(body.clarification || body.note, 2000, 'clarification', decision === 'expand');
   const deferUntil = body.deferUntil ? boundedReplyText(body.deferUntil, 10, 'defer_until') : '';
   return {
     proposalId, idempotencyKey, inboundMessageId, decision, expectedProposalRevision,
-    textHash, receivedAt, source, signatureRef, replyRef, verifiedUserRef, note,
+    textHash, receivedAt, source, signatureRef, replyRef, verifiedUserRef, conversationRefHash, sessionRef, note,
     clarification, deferUntil,
     reasonCode: boundedReplyText(body.reasonCode, 120, 'reason_code'),
     scopeKey: boundedReplyText(body.scopeKey, 120, 'scope_key'),
     fingerprint: boundedReplyText(body.fingerprint, 300, 'fingerprint'),
   };
+}
+
+function proposalReplyBindingError(proposal, input) {
+  const binding = proposal.replyBinding;
+  if (!binding || typeof binding !== 'object') return 'proposal_reply_binding_missing';
+  if (Number(binding.proposalRevision) !== input.expectedProposalRevision) return 'proposal_reply_binding_revision_conflict';
+  if (binding.verifiedSource !== input.source) return 'proposal_reply_binding_source_conflict';
+  if (binding.verifiedUserRef !== input.verifiedUserRef) return 'proposal_reply_binding_user_conflict';
+  if (binding.conversationRefHash !== input.conversationRefHash) return 'proposal_reply_binding_conversation_conflict';
+  if (binding.sessionRef !== input.sessionRef) return 'proposal_reply_binding_session_conflict';
+  if (binding.signatureRef !== input.signatureRef) return 'proposal_reply_binding_signature_conflict';
+  if (binding.bindingRef !== input.scopeKey) return 'proposal_reply_binding_ref_conflict';
+  if (!Array.isArray(binding.allowedDecisions) || !binding.allowedDecisions.includes(input.decision)) {
+    return 'proposal_reply_decision_not_allowed';
+  }
+  const expiry = new Date(binding.expiresAt).getTime();
+  if (Number.isNaN(expiry) || expiry <= Date.now()) return 'proposal_reply_binding_expired';
+  return '';
+}
+
+function normalizedGatewayAction(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase('zh-CN');
+}
+
+function gatewayPromotionEligibilityError(proposal) {
+  if (proposal.proposalType !== 'daily_action_proposal') return 'gateway_promotion_non_daily';
+  if (proposal.evidenceStatus === 'provisional') return 'gateway_promotion_provisional';
+  if (proposal.existingTaskId) return 'gateway_promotion_existing_task_forbidden';
+  const taskSpec = proposal.taskSpec && typeof proposal.taskSpec === 'object' && !Array.isArray(proposal.taskSpec)
+    ? proposal.taskSpec : {};
+  const content = proposal.content && typeof proposal.content === 'object' && !Array.isArray(proposal.content)
+    ? proposal.content : {};
+  if (Object.keys(taskSpec).some((key) => !ASSISTANT_GATEWAY_PROMOTION_FIELDS.has(key))) {
+    return 'gateway_promotion_fields_denied';
+  }
+  const boxId = String(taskSpec.boxId || '').trim();
+  const clearAction = String(taskSpec.clearAction || content.clearAction || '').trim();
+  const boxReason = String(taskSpec.boxReason || content.boxReason || '').trim();
+  const taskContent = String(taskSpec.content || '').trim();
+  if (!boxId || !db.prepare("SELECT 1 FROM boxes WHERE id=? AND box_type='task'").get(boxId)) {
+    return 'gateway_promotion_target_box_invalid';
+  }
+  if (!clearAction || !boxReason || normalizedGatewayAction(taskContent) !== normalizedGatewayAction(clearAction)) {
+    return 'gateway_promotion_action_incomplete';
+  }
+  if (String(content.riskClass || '') !== 'low' || String(content.operationKind || '') !== 'create_task') {
+    return 'gateway_promotion_risk_not_allowlisted';
+  }
+  if (String(content.duplicateStatus || '') !== 'none') return 'gateway_promotion_duplicate_unresolved';
+  if (taskSpec.deviceContext && !['desktop', 'mobile', 'universal'].includes(taskSpec.deviceContext)) {
+    return 'gateway_promotion_device_context_invalid';
+  }
+  if (taskSpec.executionMode && !['self', 'ai', 'hybrid'].includes(taskSpec.executionMode)) {
+    return 'gateway_promotion_execution_mode_invalid';
+  }
+  for (const field of ['scheduledAt', 'dueDate', 'visibleAfter']) {
+    if (taskSpec[field] && (String(taskSpec[field]).length > 40 || Number.isNaN(Date.parse(String(taskSpec[field]))))) {
+      return 'gateway_promotion_date_invalid';
+    }
+  }
+  const duplicate = db.prepare('SELECT id, content FROM tasks WHERE box_id=? AND deleted=0').all(boxId)
+    .find((task) => normalizedGatewayAction(task.content) === normalizedGatewayAction(taskContent));
+  if (duplicate) return 'gateway_promotion_duplicate_found';
+  return '';
+}
+
+function readGatewayStandingRule(ruleId, version) {
+  if (ruleId !== ASSISTANT_GATEWAY_AUTO_APPROVE_RULE_ID) return null;
+  const row = db.prepare('SELECT * FROM hq_review_rules WHERE rule_id=?').get(ruleId);
+  const rule = rowToReviewRule(row);
+  if (!rule || !rule.enabled || !rule.revocable || rule.source !== 'standing_rule' || rule.version !== version) return null;
+  if (rule.revokedAt || (rule.expiresAt && Date.parse(rule.expiresAt) <= Date.now())) return null;
+  return rule;
+}
+
+function normalizeGatewayPromotion(req) {
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const proposalId = boundedReplyText(req.params.id, 200, 'proposal_id', true);
+  if (body.proposalId && String(body.proposalId).trim() !== proposalId) {
+    throw proposalError('proposal_id_binding_mismatch', 409);
+  }
+  const idempotencyKey = boundedReplyText(req.headers['x-idempotency-key'], 300, 'idempotency_key', true);
+  const expectedProposalRevision = Number(body.expectedProposalRevision);
+  if (!Number.isSafeInteger(expectedProposalRevision) || expectedProposalRevision < 1) {
+    throw proposalError('expected_proposal_revision_required');
+  }
+  const ifMatchRevision = parseProposalRevisionTag(req.headers['if-match']);
+  if (!ifMatchRevision || ifMatchRevision !== expectedProposalRevision) {
+    throw proposalError('proposal_revision_binding_mismatch', 409);
+  }
+  const authorizationSource = boundedReplyText(body.authorizationSource, 40, 'authorization_source', true);
+  if (!['explicit_user', 'standing_rule'].includes(authorizationSource)) {
+    throw proposalError('gateway_promotion_authorization_denied', 403);
+  }
+  return {
+    proposalId,
+    idempotencyKey,
+    expectedProposalRevision,
+    authorizationSource,
+    approvalReplyId: boundedReplyText(body.approvalReplyId, 200, 'approval_reply_id'),
+    inboundMessageId: boundedReplyText(body.inboundMessageId, 200, 'inbound_message_id'),
+    bindingRef: boundedReplyText(body.bindingRef, 120, 'binding_ref'),
+    sessionRef: boundedReplyText(body.sessionRef, 200, 'session_ref'),
+    standingRuleId: boundedReplyText(body.standingRuleId, 200, 'standing_rule_id'),
+    standingRuleVersion: Number(body.standingRuleVersion || 0),
+    reasonCode: boundedReplyText(body.reasonCode, 120, 'reason_code', true),
+  };
+}
+
+function validateGatewayStandingAuthorization(proposal, input) {
+  if (!Number.isSafeInteger(input.standingRuleVersion) || input.standingRuleVersion < 1) {
+    throw proposalError('gateway_standing_rule_version_required', 403);
+  }
+  const rule = readGatewayStandingRule(input.standingRuleId, input.standingRuleVersion);
+  const authorization = proposal.automationAuthorization || {};
+  if (!rule || proposal.standingRuleId !== input.standingRuleId
+    || authorization.source !== 'standing_rule' || authorization.ruleId !== input.standingRuleId
+    || Number(authorization.version) !== input.standingRuleVersion || authorization.exact !== true
+    || authorization.enabled !== true || authorization.revocable !== true) {
+    throw proposalError('gateway_standing_rule_not_active', 403);
+  }
+}
+
+function normalizeGatewayAutoApprove(req) {
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const proposalId = boundedReplyText(req.params.id, 200, 'proposal_id', true);
+  const idempotencyKey = boundedReplyText(req.headers['x-idempotency-key'], 300, 'idempotency_key', true);
+  const expectedProposalRevision = Number(body.expectedProposalRevision);
+  const ifMatchRevision = parseProposalRevisionTag(req.headers['if-match']);
+  if (!Number.isSafeInteger(expectedProposalRevision) || expectedProposalRevision < 1
+    || !ifMatchRevision || ifMatchRevision !== expectedProposalRevision) {
+    throw proposalError('proposal_revision_binding_mismatch', 409);
+  }
+  return {
+    proposalId,
+    idempotencyKey,
+    expectedProposalRevision,
+    standingRuleId: boundedReplyText(body.standingRuleId, 200, 'standing_rule_id', true),
+    standingRuleVersion: Number(body.standingRuleVersion || 0),
+    reasonCode: boundedReplyText(body.reasonCode, 120, 'reason_code', true),
+  };
+}
+
+function validateGatewayPromotionAuthorization(proposal, input) {
+  if (proposal.status !== 'approved') throw proposalError('proposal_not_approved', 409);
+  const eligibilityError = gatewayPromotionEligibilityError(proposal);
+  if (eligibilityError) throw proposalError(eligibilityError, 409);
+  if (proposal.revision !== input.expectedProposalRevision) {
+    throw proposalError('proposal_revision_conflict', 409, {
+      expectedRevision: input.expectedProposalRevision,
+      currentRevision: proposal.revision,
+    });
+  }
+  if (input.authorizationSource === 'standing_rule') {
+    validateGatewayStandingAuthorization(proposal, input);
+    return;
+  }
+  if (!input.approvalReplyId || !input.inboundMessageId || !input.bindingRef || !input.sessionRef) {
+    throw proposalError('gateway_user_approval_binding_required', 403);
+  }
+  const binding = proposal.replyBinding || {};
+  if (binding.bindingRef !== input.bindingRef || binding.sessionRef !== input.sessionRef
+    || Number(binding.proposalRevision) !== input.expectedProposalRevision) {
+    throw proposalError('gateway_user_approval_binding_conflict', 409);
+  }
+  const reply = db.prepare(`
+    SELECT * FROM hq_proposal_replies
+    WHERE reply_id=? AND proposal_id=? AND inbound_message_id=? AND decision='approve' AND status='applied'
+  `).get(input.approvalReplyId, proposal.decisionId, input.inboundMessageId);
+  if (!reply || Number(reply.expected_revision) !== input.expectedProposalRevision) {
+    throw proposalError('gateway_user_approval_receipt_invalid', 403);
+  }
 }
 
 function rowToGatewayReply(row) {
@@ -1873,125 +2128,45 @@ app.get('/v1/hq/proposals', (req, res) => {
   });
 });
 
-const ASSISTANT_GATEWAY_TASK_SPEC_FIELDS = new Set([
-  'boxId', 'content', 'clearAction', 'boxReason', 'note', 'scheduledAt', 'dueDate',
-  'visibleAfter', 'deviceContext', 'executionMode',
-]);
-const ASSISTANT_GATEWAY_DEVICE_CONTEXTS = new Set(['desktop', 'mobile', 'universal']);
-const ASSISTANT_GATEWAY_EXECUTION_MODES = new Set(['self', 'ai', 'hybrid']);
-const validOptionalGatewayDate = (value) => value == null || value === '' || !Number.isNaN(Date.parse(String(value)));
-
-function assistantGatewayProposalEligibility(row) {
-  const raw = parseJson(row.raw_json, {});
-  const content = raw.content && typeof raw.content === 'object' ? raw.content : {};
-  const taskSpec = raw.taskSpec && typeof raw.taskSpec === 'object' ? raw.taskSpec : {};
-  const evidence = raw.evidence && typeof raw.evidence === 'object' ? raw.evidence : {};
-  const binding = raw.replyBinding && typeof raw.replyBinding === 'object' ? raw.replyBinding : {};
-  const automationAuthorization = raw.automationAuthorization && typeof raw.automationAuthorization === 'object'
-    ? raw.automationAuthorization : {};
-  const decisionClass = String(raw.decisionClass || (row.source_authority === 'ai_derived' ? 'user_required' : '')).trim();
-  const evidenceStatus = String(raw.evidenceStatus || evidence.status || 'unknown').trim();
-  const boxId = String(taskSpec.boxId || '').trim();
-  const boxReason = String(taskSpec.boxReason || content.boxReason || '').trim();
-  const clearAction = String(taskSpec.clearAction || content.clearAction || '').trim();
-  const taskContent = String(taskSpec.content || '').trim();
-  const taskSpecFieldsAllowed = Object.keys(taskSpec).every((key) => ASSISTANT_GATEWAY_TASK_SPEC_FIELDS.has(key));
-  const boxCount = boxId ? Number(db.prepare("SELECT COUNT(*) AS count FROM boxes WHERE id=? AND box_type='task'").get(boxId)?.count || 0) : 0;
-  const bindingMatches = String(binding.proposalId || '') === String(row.decision_id)
-    && Number(binding.revision) === Number(row.revision || 1)
-    && Boolean(String(binding.sessionRef || '').trim())
-    && Boolean(String(binding.verifiedUserRef || '').trim());
-  const autoRejectReasons = [];
-  if (['completed', 'confirmed'].includes(String(content.duplicateStatus || '').trim())) autoRejectReasons.push('confirmed_duplicate');
-  if (String(content.taskKind || '').trim() === 'behavior_rule') autoRejectReasons.push('principle_only');
-  if (content.actionable === false) autoRejectReasons.push('not_actionable');
-  const eligibilityReasons = [];
-  if (row.proposal_type !== 'daily_action_proposal') eligibilityReasons.push('non_daily_proposal');
-  if (evidenceStatus === 'provisional') eligibilityReasons.push('provisional_evidence');
-  if (boxCount !== 1) eligibilityReasons.push(boxCount === 0 ? 'target_box_missing' : 'target_box_not_unique');
-  if (!boxReason) eligibilityReasons.push('box_reason_missing');
-  if (!clearAction || !taskContent || taskContent !== clearAction) eligibilityReasons.push('clear_action_incomplete');
-  if (!taskSpecFieldsAllowed) eligibilityReasons.push('task_spec_outside_allowlist');
-  if (raw.existingTaskId) eligibilityReasons.push('existing_task_mutation_forbidden');
-  if (String(content.duplicateStatus || '').trim() !== 'none') eligibilityReasons.push('duplicate_status_unresolved');
-  const standingRuleMatched = automationAuthorization.source === 'standing_rule'
-    && automationAuthorization.exact === true
-    && automationAuthorization.enabled === true
-    && automationAuthorization.revocable === true
-    && Boolean(String(row.standing_rule_id || '').trim())
-    && String(automationAuthorization.ruleId || '') === String(row.standing_rule_id || '');
-  if (!standingRuleMatched) eligibilityReasons.push('standing_rule_required');
-  if (!bindingMatches) eligibilityReasons.push('reply_binding_invalid');
-  const lowRiskFieldsValid = (!taskSpec.deviceContext || ASSISTANT_GATEWAY_DEVICE_CONTEXTS.has(taskSpec.deviceContext))
-    && (!taskSpec.executionMode || ASSISTANT_GATEWAY_EXECUTION_MODES.has(taskSpec.executionMode))
-    && validOptionalGatewayDate(taskSpec.scheduledAt)
-    && validOptionalGatewayDate(taskSpec.dueDate)
-    && validOptionalGatewayDate(taskSpec.visibleAfter);
-  if (!lowRiskFieldsValid) eligibilityReasons.push('low_risk_fields_invalid');
-  const eligible = row.status === 'proposed'
-      && row.proposal_type === 'daily_action_proposal'
-      && decisionClass === 'user_required'
-      && standingRuleMatched
-      && evidenceStatus !== 'provisional'
-      && boxCount === 1
-      && Boolean(boxReason)
-      && Boolean(clearAction)
-      && taskContent === clearAction
-      && taskSpecFieldsAllowed
-      && !raw.existingTaskId
-      && (!taskSpec.deviceContext || ASSISTANT_GATEWAY_DEVICE_CONTEXTS.has(taskSpec.deviceContext))
-      && (!taskSpec.executionMode || ASSISTANT_GATEWAY_EXECUTION_MODES.has(taskSpec.executionMode))
-      && validOptionalGatewayDate(taskSpec.scheduledAt)
-      && validOptionalGatewayDate(taskSpec.dueDate)
-      && validOptionalGatewayDate(taskSpec.visibleAfter)
-      && bindingMatches
-      && String(content.duplicateStatus || '').trim() === 'none';
-  return {
-    eligible,
-    disposition: autoRejectReasons.length ? 'auto_reject' : (eligible ? 'auto_eligible' : 'confirmation_required'),
-    reasonCodes: autoRejectReasons.length ? autoRejectReasons : eligibilityReasons,
-    raw,
-    evidenceStatus,
-    decisionClass,
-  };
-}
-
 app.get('/v1/assistant-gateway/proposals/pending-user-decision', (req, res) => {
-  const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 20));
-  const rows = db.prepare(`
+  const verifiedUserRef = String(req.headers['x-assistant-verified-user-ref'] || '').trim();
+  const conversationRefHash = String(req.headers['x-assistant-conversation-ref-hash'] || '').trim().toLowerCase();
+  if (!verifiedUserRef || verifiedUserRef.length > 500 || !/^[a-f0-9]{64}$/.test(conversationRefHash)) {
+    return res.status(400).json({ error: 'pending_binding_context_required' });
+  }
+  const limit = Math.max(1, Math.min(20, Number(req.query.limit) || 20));
+  const currentTime = Date.now();
+  const items = db.prepare(`
     SELECT * FROM hq_proposals
     WHERE status='proposed'
     ORDER BY updated_at DESC
-    LIMIT 500
-  `).all();
-  const proposals = rows.map((row) => {
-    const { disposition, reasonCodes, raw, evidenceStatus, decisionClass } = assistantGatewayProposalEligibility(row);
-    const summary = String(raw.summary || raw.content?.summary || raw.content?.description || row.title || '').trim().slice(0, 500);
-    return {
-      proposalId: row.decision_id,
-      revision: Number(row.revision || 1),
-      proposalType: row.proposal_type,
-      status: 'proposed',
-      decisionClass,
-      title: String(row.title || '').slice(0, 200),
-      summary,
-      evidenceStatus,
-      disposition,
-      reasonCodes,
-      allowedReplies: disposition === 'auto_eligible'
-        ? ['approve', 'reject', 'defer', 'expand']
-        : (disposition === 'confirmation_required' ? ['expand', 'defer', 'reject'] : []),
-      updatedAt: row.updated_at,
-      expiresAt: raw.expiresAt || null,
-      replyBinding: {
-        proposalId: row.decision_id,
-        revision: Number(row.revision || 1),
-        sessionRef: raw.replyBinding.sessionRef,
-        verifiedUserRef: raw.replyBinding.verifiedUserRef,
-      },
-    };
-  }).filter(Boolean).slice(0, limit);
-  return res.json({ contractVersion: '2026-09-04', generatedAt: now(), proposals });
+    LIMIT 200
+  `).all().map(rowToProposal).filter((proposal) => {
+    const binding = proposal.replyBinding;
+    if (!binding || typeof binding !== 'object') return false;
+    if (proposal.proposalType === 'monthly_bet_proposal' && proposal.evidenceStatus === 'provisional') return false;
+    if (binding.verifiedSource !== 'notification_hub_weixin') return false;
+    if (binding.verifiedUserRef !== verifiedUserRef || binding.conversationRefHash !== conversationRefHash) return false;
+    if (Number(binding.proposalRevision) !== proposal.revision) return false;
+    if (Number.isNaN(new Date(binding.expiresAt).getTime()) || new Date(binding.expiresAt).getTime() <= currentTime) return false;
+    return Array.isArray(binding.allowedDecisions)
+      && binding.allowedDecisions.length > 0
+      && binding.allowedDecisions.every((decision) => ASSISTANT_GATEWAY_DECISIONS.has(decision));
+  }).slice(0, limit).map((proposal) => ({
+    proposalId: proposal.decisionId,
+    revision: proposal.revision,
+    proposalType: proposal.proposalType,
+    title: proposal.title,
+    evidenceStatus: proposal.evidenceStatus,
+    allowedDecisions: proposal.replyBinding.allowedDecisions,
+    replyBinding: {
+      bindingRef: proposal.replyBinding.bindingRef,
+      verifiedSource: proposal.replyBinding.verifiedSource,
+      signatureRef: proposal.replyBinding.signatureRef,
+      expiresAt: proposal.replyBinding.expiresAt,
+    },
+  }));
+  return res.json({ contractVersion: ASSISTANT_GATEWAY_REPLY_CONTRACT, items, count: items.length });
 });
 
 app.get('/v1/hq/proposals/:id', (req, res) => {
@@ -2068,6 +2243,7 @@ app.post('/v1/hq/proposals/:proposalId/replies', (req, res) => {
         inboundMessageId: input.inboundMessageId,
         replyRef: input.replyRef,
         verifiedUserRef: input.verifiedUserRef,
+        sessionRef: input.sessionRef,
         source: input.source,
         signatureRef: input.signatureRef,
         textHash: input.textHash,
@@ -2105,6 +2281,8 @@ app.post('/v1/hq/proposals/:proposalId/replies', (req, res) => {
       updatedAt: proposal.updatedAt,
     });
   }
+  const bindingError = proposalReplyBindingError(proposal, input);
+  if (bindingError) return rejectReply(bindingError);
 
   try {
     const result = db.transaction(() => {
@@ -2169,6 +2347,38 @@ app.post('/v1/hq/proposals/:proposalId/replies', (req, res) => {
 ['approve', 'reject', 'defer', 'restore'].forEach((action) => {
   app.post(`/v1/hq/proposals/:id/${action}`, (req, res) => {
     try {
+      if (action === 'approve' && req.assistantGatewayIdentity) {
+        const input = normalizeGatewayAutoApprove(req);
+        const current = getProposalOrThrow(input.proposalId);
+        if (current.status === 'approved' && current.assistantGatewayApproval) {
+          if (current.assistantGatewayApproval.idempotencyKey !== input.idempotencyKey) {
+            throw proposalError('gateway_approval_idempotency_conflict', 409);
+          }
+          return res.json(current);
+        }
+        if (current.status !== 'proposed') throw proposalError('proposal_not_proposed', 409);
+        if (current.revision !== input.expectedProposalRevision) throw proposalError('proposal_revision_conflict', 409);
+        const eligibilityError = gatewayPromotionEligibilityError(current);
+        if (eligibilityError) throw proposalError(eligibilityError, 409);
+        validateGatewayStandingAuthorization(current, {
+          standingRuleId: input.standingRuleId,
+          standingRuleVersion: input.standingRuleVersion,
+        });
+        const approved = transitionProposal(input.proposalId, 'approve', {
+          actor: 'assistant-gateway',
+          note: `assistant_gateway:${input.reasonCode}`,
+        });
+        return res.json(saveProposal({
+          ...approved,
+          assistantGatewayApproval: {
+            idempotencyKey: input.idempotencyKey,
+            standingRuleId: input.standingRuleId,
+            standingRuleVersion: input.standingRuleVersion,
+            reasonCode: input.reasonCode,
+            approvedAt: now(),
+          },
+        }));
+      }
       return res.json(db.transaction(() => transitionProposal(req.params.id, action, req.body || {}))());
     } catch (error) {
       return sendProposalError(res, error);
@@ -2178,6 +2388,59 @@ app.post('/v1/hq/proposals/:proposalId/replies', (req, res) => {
 
 app.post('/v1/hq/proposals/:id/promote', (req, res) => {
   try {
+    if (req.assistantGatewayIdentity) {
+      const input = normalizeGatewayPromotion(req);
+      const current = getProposalOrThrow(input.proposalId);
+      const requestHash = crypto.createHash('sha256').update(stableJson(input)).digest('hex');
+      const previous = current.assistantGatewayPromotion;
+      if (previous) {
+        if (previous.idempotencyKey !== input.idempotencyKey || previous.requestHash !== requestHash) {
+          throw proposalError('gateway_promotion_idempotency_conflict', 409);
+        }
+        if (current.status !== 'promoted' || !current.taskId) {
+          throw proposalError('gateway_promotion_receipt_incomplete', 409);
+        }
+        res.setHeader('ETag', `"proposal-revision-${current.revision}"`);
+        return res.json({
+          contractVersion: ASSISTANT_GATEWAY_REPLY_CONTRACT,
+          proposalId: current.decisionId,
+          proposalRevision: current.revision,
+          status: current.status,
+          taskId: current.taskId,
+          taskboxMutation: true,
+          replayed: true,
+        });
+      }
+      validateGatewayPromotionAuthorization(current, input);
+      const promotion = promoteProposal(req.params.id, {
+        actor: 'assistant-gateway',
+        note: `assistant_gateway:${input.reasonCode}`,
+        shadowMode: false,
+        assistantGatewayPromotion: {
+          idempotencyKey: input.idempotencyKey,
+          requestHash,
+          authorizationSource: input.authorizationSource,
+          approvalReplyId: input.approvalReplyId || null,
+          inboundMessageId: input.inboundMessageId || null,
+          bindingRef: input.bindingRef || null,
+          sessionRef: input.sessionRef || null,
+          standingRuleId: input.standingRuleId || null,
+          standingRuleVersion: input.standingRuleVersion || null,
+          reasonCode: input.reasonCode,
+          promotedAt: now(),
+        },
+      });
+      res.setHeader('ETag', `"proposal-revision-${promotion.revision}"`);
+      return res.json({
+        contractVersion: ASSISTANT_GATEWAY_REPLY_CONTRACT,
+        proposalId: promotion.decisionId,
+        proposalRevision: promotion.revision,
+        status: promotion.status,
+        taskId: promotion.taskId,
+        taskboxMutation: true,
+        replayed: false,
+      });
+    }
     return res.json(promoteProposal(req.params.id, req.body || {}));
   } catch (error) {
     return sendProposalError(res, error);

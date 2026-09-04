@@ -10,12 +10,27 @@ const root = path.resolve(__dirname, '..');
 const prefix = path.join(os.tmpdir(), `taskbox-hq-replies-${process.pid}-${Date.now()}`);
 const dbPath = `${prefix}.sqlite`;
 const gatewayTokenFile = `${prefix}.token`;
-const gatewayReadTokenFile = `${prefix}.read-token`;
+const gatewayReadTokenFile = `${prefix}.read.token`;
 const port = 3900 + (process.pid % 100);
 const genericToken = 'generic-test-token';
 const gatewayToken = 'assistant-gateway-test-token';
 const gatewayReadToken = 'assistant-gateway-read-test-token';
+const conversationRefHash = crypto.createHash('sha256').update('weixin:bound-user').digest('hex');
+const verifiedUserRef = `notification-hub-user:${crypto.createHash('sha256').update('bound-user').digest('hex')}`;
 let serverError = '';
+
+function replyBinding(suffix) {
+  return {
+    bindingRef: `notification-hub-binding:${suffix}`,
+    verifiedSource: 'notification_hub_weixin',
+    verifiedUserRef,
+    conversationRefHash,
+    signatureRef: `notification-hub-signature:${suffix}`,
+    sessionRef: `notification-hub-session:${suffix}`,
+    allowedDecisions: ['approve', 'reject', 'defer', 'expand'],
+    expiresAt: new Date(Date.now() + 3600000).toISOString(),
+  };
+}
 
 function request(route, { method = 'GET', payload = null, token = genericToken, headers = {}, expected = 200 } = {}) {
   return new Promise((resolve, reject) => {
@@ -63,7 +78,9 @@ function replyPayload(proposal, suffix, decision, patch = {}) {
     proposalId: proposal.decisionId,
     inboundMessageId: `weixin-message-${suffix}`,
     replyRef: `notification-outbox:${suffix}`,
-    verifiedUserRef: 'verified-user:owner',
+    verifiedUserRef: proposal.replyBinding.verifiedUserRef,
+    conversationRefHash: proposal.replyBinding.conversationRefHash,
+    sessionRef: proposal.replyBinding.sessionRef,
     expectedProposalRevision: proposal.revision,
     decision,
     textHash: crypto.createHash('sha256').update(`reply-${suffix}`).digest('hex'),
@@ -71,14 +88,15 @@ function replyPayload(proposal, suffix, decision, patch = {}) {
     verification: {
       verified: true,
       source: 'notification_hub_weixin',
-      signatureRef: `notification-signature:${suffix}`,
+      signatureRef: proposal.replyBinding.signatureRef,
     },
+    scopeKey: proposal.replyBinding.bindingRef,
     note: `reply ${suffix}`,
     ...patch,
   };
 }
 
-async function createProposal(suffix) {
+async function createProposal(suffix, patch = {}) {
   const response = await request('/v1/hq/proposals', {
     method: 'POST',
     expected: 201,
@@ -89,6 +107,8 @@ async function createProposal(suffix) {
       idempotencyKey: `gateway-proposal:${suffix}`,
       taskSpec: { boxId: 'gateway-box', content: `Gateway proposal ${suffix}` },
       actor: 'gateway_test',
+      replyBinding: replyBinding(suffix),
+      ...patch,
     },
   });
   return response.data;
@@ -106,8 +126,8 @@ const child = spawn(process.execPath, [path.join(root, 'src', 'server.js')], {
     ASSISTANT_GATEWAY_API_ENABLED: '1',
     ASSISTANT_GATEWAY_API_TOKEN_FILE: gatewayTokenFile,
     ASSISTANT_GATEWAY_API_SCOPES: 'proposal-replies:write',
-    ASSISTANT_GATEWAY_READ_API_TOKEN_FILE: gatewayReadTokenFile,
-    ASSISTANT_GATEWAY_READ_API_SCOPES: 'proposal-decisions:read',
+    ASSISTANT_GATEWAY_READ_TOKEN_FILE: gatewayReadTokenFile,
+    ASSISTANT_GATEWAY_READ_SCOPES: 'proposals:read',
     ASSISTANT_GATEWAY_REPLY_MAX_AGE_SECONDS: '86400',
     HQ_PROPOSAL_PROMOTION_ENABLED: '1',
   },
@@ -120,56 +140,69 @@ child.stderr.on('data', (chunk) => { serverError += chunk.toString('utf8'); });
     await waitForServer();
     await request('/v1/boxes', { method: 'POST', expected: 201, payload: { id: 'gateway-box', name: 'Gateway Box' } });
 
-    const pendingRoute = '/v1/assistant-gateway/proposals/pending-user-decision?limit=20';
-    await request(pendingRoute, { token: '', expected: 401 });
-    await request(pendingRoute, { token: gatewayToken, expected: 401 });
-    await request('/health', { token: gatewayReadToken, expected: 401 });
-    const eligiblePayload = {
-      decisionId: 'gateway-pending-eligible',
-      proposalType: 'daily_action_proposal', sourceAuthority: 'ai_derived',
-      standingRuleId: 'standing-rule:daily-low-risk-v1',
-      title: 'Eligible daily action', idempotencyKey: 'gateway-pending:eligible',
-      decisionClass: 'user_required', evidenceStatus: 'confirmed',
-      content: { summary: 'Safe summary', boxReason: 'Highest ROI action', duplicateStatus: 'none' },
-      taskSpec: { boxId: 'gateway-box', content: 'Publish the verified artifact', clearAction: 'Publish the verified artifact', boxReason: 'Highest ROI action', deviceContext: 'universal', executionMode: 'self' },
-      replyBinding: { proposalId: 'gateway-pending-eligible', revision: 1, sessionRef: 'session:owner', verifiedUserRef: 'verified-user:owner' },
-      automationAuthorization: { source: 'standing_rule', ruleId: 'standing-rule:daily-low-risk-v1', exact: true, enabled: true, revocable: true },
+    const pendingHeaders = {
+      'X-Assistant-Verified-User-Ref': verifiedUserRef,
+      'X-Assistant-Conversation-Ref-Hash': conversationRefHash,
     };
-    const eligible = (await request('/v1/hq/proposals', { method: 'POST', expected: 201, payload: eligiblePayload })).data;
-    const monthly = (await request('/v1/hq/proposals', { method: 'POST', expected: 201, payload: {
-      ...eligiblePayload, decisionId: 'gateway-pending-monthly', proposalType: 'monthly_bet_proposal', evidenceStatus: 'provisional',
-      title: 'Provisional monthly bet', idempotencyKey: 'gateway-pending:monthly',
-      replyBinding: { ...eligiblePayload.replyBinding, proposalId: 'gateway-pending-monthly' },
-    } })).data;
-    const missingFields = (await request('/v1/hq/proposals', { method: 'POST', expected: 201, payload: {
-      ...eligiblePayload, decisionId: 'gateway-pending-missing', title: 'Missing fields', idempotencyKey: 'gateway-pending:missing',
-      taskSpec: { boxId: 'missing-box', content: 'Mismatch', clearAction: '', boxReason: 'Reason only', priority: 1 },
-      replyBinding: { ...eligiblePayload.replyBinding, proposalId: 'gateway-pending-missing' },
-    } })).data;
-    const duplicate = (await request('/v1/hq/proposals', { method: 'POST', expected: 201, payload: {
-      ...eligiblePayload, decisionId: 'gateway-pending-duplicate', title: 'Confirmed duplicate', idempotencyKey: 'gateway-pending:duplicate',
-      content: { ...eligiblePayload.content, duplicateStatus: 'confirmed' },
-      replyBinding: { ...eligiblePayload.replyBinding, proposalId: 'gateway-pending-duplicate' },
-    } })).data;
-    const pending = (await request(pendingRoute, { token: gatewayReadToken })).data;
-    if (pending.proposals.length !== 4) throw new Error('pending three-way routing lost proposals');
-    const eligibleItem = pending.proposals.find((item) => item.proposalId === eligible.decisionId);
-    const monthlyItem = pending.proposals.find((item) => item.proposalId === monthly.decisionId);
-    const missingItem = pending.proposals.find((item) => item.proposalId === missingFields.decisionId);
-    const duplicateItem = pending.proposals.find((item) => item.proposalId === duplicate.decisionId);
-    if (eligibleItem?.disposition !== 'auto_eligible' || !eligibleItem.allowedReplies.includes('approve')) throw new Error('eligible approve missing');
-    if (monthlyItem?.disposition !== 'confirmation_required' || monthlyItem.allowedReplies.includes('approve')) throw new Error('provisional monthly proposal became approvable');
-    if (missingItem?.disposition !== 'confirmation_required' || missingItem.allowedReplies.includes('approve')) throw new Error('incomplete proposal became approvable');
-    if (duplicateItem?.disposition !== 'auto_reject' || duplicateItem.allowedReplies.length !== 0 || !duplicateItem.reasonCodes.includes('confirmed_duplicate')) throw new Error('confirmed duplicate was not safely routed');
-    const allowedKeys = new Set(['proposalId', 'revision', 'proposalType', 'status', 'decisionClass', 'title', 'summary', 'evidenceStatus', 'disposition', 'reasonCodes', 'allowedReplies', 'updatedAt', 'expiresAt', 'replyBinding']);
-    if (pending.proposals.some((item) => Object.keys(item).some((key) => !allowedKeys.has(key)))) throw new Error('pending projection leaked fields');
-    if (eligibleItem.replyBinding.proposalId !== eligible.decisionId || eligibleItem.replyBinding.revision !== eligible.revision) throw new Error('reply binding mismatch');
+    const binding = replyBinding('owner');
+    await request('/v1/hq/proposals', {
+      method: 'POST', expected: 400,
+      payload: {
+        proposalType: 'daily_action_proposal', sourceAuthority: 'ai_derived',
+        title: 'Invalid binding', idempotencyKey: 'gateway-proposal:invalid-binding',
+        replyBinding: { ...binding, verifiedSource: 'personal_wechat' },
+      },
+    });
+    const pendingProposal = await createProposal('pending-read', { replyBinding: binding });
+    const staleBindingProposal = await createProposal('stale-binding', {
+      replyBinding: { ...binding, bindingRef: 'stale-binding' },
+    });
+    await request('/v1/hq/proposals', {
+      method: 'POST', expected: 200,
+      payload: {
+        proposalType: 'daily_action_proposal', sourceAuthority: 'ai_derived',
+        title: 'Gateway proposal stale-binding revised',
+        idempotencyKey: staleBindingProposal.idempotencyKey,
+        taskSpec: { boxId: 'gateway-box', content: 'Revised without a binding' },
+        actor: 'gateway_test',
+      },
+    });
+    const pendingRoute = '/v1/assistant-gateway/proposals/pending-user-decision?limit=20';
+    await request(pendingRoute, { token: genericToken, headers: pendingHeaders, expected: 401 });
+    await request(pendingRoute, { token: gatewayToken, headers: pendingHeaders, expected: 401 });
+    await request('/health', { token: gatewayReadToken, expected: 401 });
+    await request(pendingRoute, { token: gatewayReadToken, expected: 400 });
+    const wrongBinding = await request(pendingRoute, {
+      token: gatewayReadToken,
+      headers: { ...pendingHeaders, 'X-Assistant-Conversation-Ref-Hash': '0'.repeat(64) },
+    });
+    if (wrongBinding.data.count !== 0) throw new Error('pending read crossed conversation binding');
+    const pending = await request(pendingRoute, { token: gatewayReadToken, headers: pendingHeaders });
+    if (pending.data.count !== 1 || pending.data.items[0].proposalId !== pendingProposal.decisionId
+      || pending.data.items[0].revision !== pendingProposal.revision
+      || pending.data.items[0].replyBinding.verifiedSource !== 'notification_hub_weixin'
+      || Object.hasOwn(pending.data.items[0], 'taskSpec') || Object.hasOwn(pending.data.items[0], 'content')) {
+      throw new Error(`pending proposal projection mismatch: ${JSON.stringify(pending.data)}`);
+    }
+    await createProposal('expired-binding', {
+      replyBinding: { ...binding, bindingRef: 'expired', expiresAt: new Date(Date.now() - 1000).toISOString() },
+    });
+    await createProposal('provisional-monthly', {
+      proposalType: 'monthly_bet_proposal', evidenceStatus: 'provisional',
+      replyBinding: { ...binding, bindingRef: 'provisional' },
+    });
+    const stillOnePending = await request(pendingRoute, { token: gatewayReadToken, headers: pendingHeaders });
+    if (stillOnePending.data.count !== 1) throw new Error('unsafe proposal entered pending decision projection');
 
     const approveProposal = await createProposal('approve');
     const approveRoute = `/v1/hq/proposals/${approveProposal.decisionId}/replies`;
     const approveBody = replyPayload(approveProposal, 'approve', 'approve');
     const approveKey = 'gateway-reply:approve';
 
+    await request(approveRoute, {
+      method: 'POST', payload: approveBody, token: gatewayReadToken, expected: 401,
+      headers: { 'X-Idempotency-Key': approveKey },
+    });
     await request(approveRoute, {
       method: 'POST', payload: approveBody, token: genericToken, expected: 401,
       headers: { 'X-Idempotency-Key': approveKey },
@@ -192,6 +225,15 @@ child.stderr.on('data', (chunk) => { serverError += chunk.toString('utf8'); });
       },
       token: gatewayToken, expected: 409,
       headers: { 'X-Idempotency-Key': 'gateway-reply:expired' },
+    });
+    await request(approveRoute, {
+      method: 'POST', payload: {
+        ...approveBody,
+        inboundMessageId: 'weixin-message-wrong-binding',
+        conversationRefHash: '0'.repeat(64),
+      },
+      token: gatewayToken, expected: 409,
+      headers: { 'X-Idempotency-Key': 'gateway-reply:wrong-binding' },
     });
 
     const approved = await request(approveRoute, {
@@ -253,7 +295,7 @@ child.stderr.on('data', (chunk) => { serverError += chunk.toString('utf8'); });
     const auditCount = Number(db.prepare('SELECT COUNT(*) AS count FROM hq_proposal_reply_audit').get().count);
     const clarificationCount = Number(db.prepare("SELECT COUNT(*) AS count FROM hq_proposal_events WHERE event_type='clarification_requested'").get().count);
     db.close();
-    if (appliedReplies !== 4 || rejectedReplies !== 2 || approveReceipts !== 1 || auditCount < 10 || clarificationCount !== 1) {
+    if (appliedReplies !== 4 || rejectedReplies !== 3 || approveReceipts !== 1 || auditCount < 12 || clarificationCount !== 1) {
       throw new Error(`reply audit mismatch: ${JSON.stringify({ appliedReplies, rejectedReplies, approveReceipts, auditCount, clarificationCount })}`);
     }
     console.log('HQ proposal reply gateway tests passed');
