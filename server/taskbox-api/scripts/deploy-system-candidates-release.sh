@@ -182,7 +182,7 @@ upsert_env ASSISTANT_GATEWAY_API_TOKEN_FILE "$ASSISTANT_GATEWAY_TOKEN_FILE"
 upsert_env ASSISTANT_GATEWAY_API_DISABLE_FILE "$ASSISTANT_GATEWAY_DISABLE_FILE"
 upsert_env ASSISTANT_GATEWAY_API_SCOPES "proposal-replies:write,proposal-auto-approve:write,proposal-promotions:write"
 upsert_env ASSISTANT_GATEWAY_READ_TOKEN_FILE "$ASSISTANT_GATEWAY_READ_TOKEN_FILE"
-upsert_env ASSISTANT_GATEWAY_READ_SCOPES "proposals:read"
+upsert_env ASSISTANT_GATEWAY_READ_SCOPES "proposal-decisions:read"
 upsert_env ASSISTANT_GATEWAY_REPLY_MAX_AGE_SECONDS 86400
 
 # Daily Review identities are deliberately separate from the browser and execution-system tokens.
