@@ -15,6 +15,7 @@ from worker import (  # noqa: E402
     GatewayError,
     JsonClient,
     parse_decision,
+    process_automation_queue,
     process_decision,
     process_echo,
     verify_message,
@@ -53,7 +54,7 @@ class FakeClient:
         if self.fail_route_once and self.fail_route_once in route:
             self.fail_route_once = None
             raise self.failure
-        return self.post_result
+        return self.post_result(route, payload) if callable(self.post_result) else self.post_result
 
 
 class WorkerTests(unittest.TestCase):
@@ -128,12 +129,20 @@ class WorkerTests(unittest.TestCase):
             "proposalId": "proposal-1",
             "revision": 2,
             "proposalType": "daily_action_proposal",
+            "evidenceStatus": "confirmed",
+            "disposition": "confirmation_required",
+            "promotionEligible": True,
+            "taskSpec": {
+                "boxId": "box-1", "content": "完成明确行动", "clearAction": "完成明确行动",
+                "boxReason": "直接推动目标", "deviceContext": "universal", "executionMode": "self",
+            },
             "title": "确认下一步",
             "allowedDecisions": ["approve", "reject", "defer", "expand"],
             "replyBinding": {
                 "bindingRef": "binding-1",
                 "verifiedSource": "notification_hub_weixin",
                 "signatureRef": "signature-1",
+                "sessionRef": "session-1",
                 "expiresAt": "2026-09-04T20:00:00+08:00",
             },
         }
@@ -143,12 +152,15 @@ class WorkerTests(unittest.TestCase):
     def decision_clients(self, proposals=None, decision="approve"):
         hub = FakeClient()
         reader = FakeClient(get_result={"items": proposals if proposals is not None else [self.pending_proposal()]})
-        writer = FakeClient(post_result={
-            "proposalId": "proposal-1",
-            "decision": decision,
-            "status": "applied",
-            "taskboxMutation": False,
-        })
+        def writer_result(route, _payload):
+            if route.endswith("/promote"):
+                return {"proposalId": "proposal-1", "status": "promoted", "taskId": "task-1", "taskboxMutation": True}
+            return {
+                "replyId": "reply-1", "proposalId": "proposal-1", "decision": decision,
+                "status": "applied", "taskboxMutation": False,
+                "proposal": {"decisionId": "proposal-1", "status": "approved" if decision == "approve" else decision},
+            }
+        writer = FakeClient(post_result=writer_result)
         return hub, reader, writer
 
     def test_explicit_approve_uses_bound_read_and_idempotent_hq_reply(self):
@@ -158,7 +170,7 @@ class WorkerTests(unittest.TestCase):
 
         self.assertEqual(len(reader.calls), 1)
         self.assertIn("X-Assistant-Verified-User-Ref", reader.calls[0][3])
-        self.assertEqual(len(writer.calls), 1)
+        self.assertEqual(len(writer.calls), 2)
         hq_call = writer.calls[0]
         self.assertEqual(hq_call[1], "/v1/hq/proposals/proposal-1/replies")
         self.assertEqual(hq_call[2]["verification"]["source"], "notification_hub_weixin")
@@ -168,11 +180,55 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(hq_call[3]["If-Match"], '"proposal-revision-2"')
         self.assertTrue(hq_call[3]["X-Idempotency-Key"].startswith("assistant-gateway:decision:"))
         self.assertLessEqual(len(hq_call[3]["X-Idempotency-Key"]), 300)
+        promote_call = writer.calls[1]
+        self.assertEqual(promote_call[1], "/v1/hq/proposals/proposal-1/promote")
+        self.assertEqual(promote_call[2]["approvalReplyId"], "reply-1")
+        self.assertEqual(promote_call[2]["sessionRef"], "session-1")
+        self.assertTrue(promote_call[3]["X-Idempotency-Key"].startswith("assistant-gateway:promotion:"))
         self.assertEqual([call[1] for call in hub.calls], [
             "/v1/weixin-inbound/inbound-1/reply",
             "/v1/weixin-inbound/inbound-1/ack",
         ])
         self.assertEqual(hub.calls[-1][2]["outcome"], "processed")
+        self.assertIsNone(store.get("inbound-1"))
+
+    def test_auto_eligible_queue_approves_then_promotes_with_recovery(self):
+        proposal = {
+            **self.pending_proposal(),
+            "disposition": "auto_eligible",
+            "sourceAuthority": "ai_derived",
+            "standingRuleId": "execution.daily_action_proposal.auto_approve",
+            "standingRuleVersion": 2,
+        }
+        reader = FakeClient(get_result={"items": [proposal]})
+        writer = FakeClient(post_result=lambda route, _payload: (
+            {"decisionId": "proposal-1", "status": "approved"} if route.endswith("/approve")
+            else {"proposalId": "proposal-1", "status": "promoted", "taskId": "task-1", "taskboxMutation": True}
+        ))
+        store = DecisionStore(self.state_path)
+        process_automation_queue(reader, writer, store)
+        self.assertEqual([call[1].rsplit('/', 1)[-1] for call in writer.calls], ["approve", "promote"])
+        self.assertEqual(writer.calls[0][2]["standingRuleId"], "execution.daily_action_proposal.auto_approve")
+        self.assertEqual(writer.calls[1][2]["authorizationSource"], "standing_rule")
+        self.assertIsNone(store.get("automation:proposal-1:2"))
+
+    def test_manual_promotion_pending_resumes_without_second_approval(self):
+        hub, reader, writer = self.decision_clients()
+        writer.fail_route_once = "/promote"
+        store = DecisionStore(self.state_path)
+        message = self.message("同意")
+        process_decision(hub, reader, writer, store, message)
+        saved = store.get("inbound-1")
+        self.assertTrue(saved["hqApplied"])
+        self.assertTrue(saved["promotionPending"])
+        self.assertFalse(saved["promotionApplied"])
+
+        reader.calls = []
+        writer.calls = []
+        process_decision(hub, reader, writer, store, {**message, "leaseToken": "lease-2", "attemptCount": 2})
+        self.assertEqual(reader.calls, [])
+        self.assertEqual(len(writer.calls), 1)
+        self.assertTrue(writer.calls[0][1].endswith("/promote"))
         self.assertIsNone(store.get("inbound-1"))
 
     def test_unknown_or_non_unique_pending_is_retried_without_hq_write(self):

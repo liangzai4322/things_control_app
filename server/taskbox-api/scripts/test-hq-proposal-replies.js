@@ -26,6 +26,7 @@ function replyBinding(suffix) {
     verifiedUserRef,
     conversationRefHash,
     signatureRef: `notification-hub-signature:${suffix}`,
+    sessionRef: `notification-hub-session:${suffix}`,
     allowedDecisions: ['approve', 'reject', 'defer', 'expand'],
     expiresAt: new Date(Date.now() + 3600000).toISOString(),
   };
@@ -79,6 +80,7 @@ function replyPayload(proposal, suffix, decision, patch = {}) {
     replyRef: `notification-outbox:${suffix}`,
     verifiedUserRef: proposal.replyBinding.verifiedUserRef,
     conversationRefHash: proposal.replyBinding.conversationRefHash,
+    sessionRef: proposal.replyBinding.sessionRef,
     expectedProposalRevision: proposal.revision,
     decision,
     textHash: crypto.createHash('sha256').update(`reply-${suffix}`).digest('hex'),

@@ -210,14 +210,112 @@ def pending_proposals(client: JsonClient, message: Mapping[str, Any]) -> list[di
     return [dict(item) for item in items if isinstance(item, Mapping)]
 
 
+def automation_queue(client: JsonClient) -> list[dict[str, Any]]:
+    response = client.get("/v1/assistant-gateway/proposals/automation-queue?limit=20")
+    items = response.get("items")
+    if not isinstance(items, list):
+        raise GatewayError("automation_queue_response_invalid")
+    return [dict(item) for item in items if isinstance(item, Mapping)]
+
+
 def decision_confirmation(decision: str, patch: Mapping[str, str]) -> str:
     if decision == "approve":
-        return "已记录：同意。提案已批准，不会自动写入任务盒。"
+        return "已记录：同意。提案已批准并安全加入任务盒。"
     if decision == "reject":
         return "已记录：拒绝。"
     if decision == "defer":
         return f"已记录：延期到 {patch['deferUntil']}。"
     return "已记录：请补充提案信息。"
+
+
+SAFE_PROMOTION_FIELDS = {
+    "boxId", "content", "clearAction", "boxReason", "note", "scheduledAt", "dueDate",
+    "visibleAfter", "deviceContext", "executionMode",
+}
+
+
+def validate_manual_promotion(proposal: Mapping[str, Any]) -> None:
+    if proposal.get("proposalType") != "daily_action_proposal" or proposal.get("evidenceStatus") == "provisional":
+        raise GatewayError("promotion_proposal_not_safe")
+    if proposal.get("disposition") != "confirmation_required" or proposal.get("promotionEligible") is not True:
+        raise GatewayError("promotion_eligibility_missing")
+    spec = proposal.get("taskSpec") if isinstance(proposal.get("taskSpec"), Mapping) else {}
+    if set(spec) - SAFE_PROMOTION_FIELDS:
+        raise GatewayError("promotion_fields_denied")
+    content = str(spec.get("content") or "").strip()
+    clear_action = str(spec.get("clearAction") or "").strip()
+    if (not str(spec.get("boxId") or "").strip() or not str(spec.get("boxReason") or "").strip()
+            or not content or content != clear_action):
+        raise GatewayError("promotion_task_spec_invalid")
+
+
+def validate_auto_promotion(proposal: Mapping[str, Any]) -> tuple[str, int]:
+    validate_manual_promotion({**proposal, "disposition": "confirmation_required", "promotionEligible": True})
+    if proposal.get("disposition") != "auto_eligible":
+        raise GatewayError("auto_promotion_eligibility_missing")
+    rule_id = str(proposal.get("standingRuleId") or "")
+    rule_version = int(proposal.get("standingRuleVersion") or 0)
+    if rule_id != "execution.daily_action_proposal.auto_approve" or rule_version < 1:
+        raise GatewayError("auto_promotion_rule_invalid")
+    return rule_id, rule_version
+
+
+def process_automation_queue(reader: JsonClient, writer: JsonClient, store: DecisionStore) -> None:
+    for proposal in automation_queue(reader):
+        proposal_id = str(proposal.get("proposalId") or "")
+        revision = int(proposal.get("revision") or 0)
+        rule_id, rule_version = validate_auto_promotion(proposal)
+        state_id = f"automation:{proposal_id}:{revision}"
+        fingerprint = hashlib.sha256(state_id.encode("utf-8")).hexdigest()
+        record = store.get(state_id) or {
+            "proposalId": proposal_id,
+            "revision": revision,
+            "approvalApplied": False,
+            "promotionPending": False,
+            "promotionApplied": False,
+            "approvalKey": f"assistant-gateway:auto-approve:{fingerprint}",
+            "promotionKey": f"assistant-gateway:auto-promote:{fingerprint}",
+        }
+        if record.get("proposalId") != proposal_id or int(record.get("revision") or 0) != revision:
+            raise GatewayError("automation_state_conflict", 409)
+        if not record.get("approvalApplied"):
+            approved = writer.post(
+                f"/v1/hq/proposals/{urllib.parse.quote(proposal_id, safe='')}/approve",
+                {
+                    "proposalId": proposal_id,
+                    "expectedProposalRevision": revision,
+                    "standingRuleId": rule_id,
+                    "standingRuleVersion": rule_version,
+                    "reasonCode": "standing_rule_low_risk_auto_approve",
+                },
+                {"X-Idempotency-Key": record["approvalKey"], "If-Match": f'"proposal-revision-{revision}"'},
+            )
+            if approved.get("status") != "approved" or approved.get("decisionId") != proposal_id:
+                raise GatewayError("auto_approval_contract_invalid")
+            record["approvalApplied"] = True
+            record["promotionPending"] = True
+            store.put(state_id, record)
+        if not record.get("promotionApplied"):
+            promoted = writer.post(
+                f"/v1/hq/proposals/{urllib.parse.quote(proposal_id, safe='')}/promote",
+                {
+                    "proposalId": proposal_id,
+                    "expectedProposalRevision": revision,
+                    "authorizationSource": "standing_rule",
+                    "standingRuleId": rule_id,
+                    "standingRuleVersion": rule_version,
+                    "reasonCode": "standing_rule_low_risk_auto_promote",
+                },
+                {"X-Idempotency-Key": record["promotionKey"], "If-Match": f'"proposal-revision-{revision}"'},
+            )
+            if (promoted.get("status") != "promoted" or promoted.get("proposalId") != proposal_id
+                    or promoted.get("taskboxMutation") is not True or not promoted.get("taskId")):
+                raise GatewayError("auto_promotion_contract_invalid")
+            record["promotionApplied"] = True
+            record["promotionPending"] = False
+            store.put(state_id, record)
+        store.remove(state_id)
+        emit("automation_promoted", mode="decision")
 
 
 def build_decision_record(message: Mapping[str, Any], proposal: Mapping[str, Any],
@@ -227,11 +325,14 @@ def build_decision_record(message: Mapping[str, Any], proposal: Mapping[str, Any
     revision = int(proposal.get("revision") or 0)
     binding = proposal.get("replyBinding") if isinstance(proposal.get("replyBinding"), Mapping) else {}
     if (not proposal_id or revision < 1 or binding.get("verifiedSource") != "notification_hub_weixin"
-            or not str(binding.get("signatureRef") or "") or not str(binding.get("bindingRef") or "")):
+            or not str(binding.get("signatureRef") or "") or not str(binding.get("bindingRef") or "")
+            or not str(binding.get("sessionRef") or "")):
         raise GatewayError("pending_binding_invalid")
     allowed = proposal.get("allowedDecisions")
     if not isinstance(allowed, list) or decision not in allowed:
         raise GatewayError("decision_not_allowed")
+    if decision == "approve":
+        validate_manual_promotion(proposal)
     message_hash = str(message["originalMessageHash"])
     decision_fingerprint = hashlib.sha256(
         f"{inbound_id}\0{proposal_id}\0{decision}".encode("utf-8"),
@@ -244,6 +345,7 @@ def build_decision_record(message: Mapping[str, Any], proposal: Mapping[str, Any
         "replyRef": f"notification-hub:bridge:{bridge_ref}",
         "verifiedUserRef": verified_user_ref(message),
         "conversationRefHash": conversation_ref_hash(message),
+        "sessionRef": str(binding["sessionRef"]),
         "expectedProposalRevision": revision,
         "decision": decision,
         "textHash": message_hash,
@@ -267,6 +369,8 @@ def build_decision_record(message: Mapping[str, Any], proposal: Mapping[str, Any
         "payload": payload,
         "confirmation": decision_confirmation(decision, patch),
         "hqApplied": False,
+        "promotionPending": False,
+        "promotionApplied": False,
         "replySent": False,
     }
 
@@ -310,7 +414,50 @@ def process_decision(hub: JsonClient, hq_reader: JsonClient, hq_writer: JsonClie
             )
             if response.get("taskboxMutation") is not False or response.get("proposalId") != record["proposalId"]:
                 raise GatewayError("hq_reply_contract_invalid")
+            if record.get("decision") == "approve":
+                proposal = response.get("proposal") if isinstance(response.get("proposal"), Mapping) else {}
+                reply_id = str(response.get("replyId") or "")
+                if proposal.get("status") != "approved" or not reply_id:
+                    raise GatewayError("hq_approval_receipt_invalid")
+                promotion_fingerprint = hashlib.sha256(
+                    f"{inbound_id}\0{record['proposalId']}\0{record['revision']}\0{record['payload']['scopeKey']}".encode("utf-8"),
+                ).hexdigest()
+                record["promotion"] = {
+                    "idempotencyKey": f"assistant-gateway:promotion:{promotion_fingerprint}",
+                    "payload": {
+                        "proposalId": record["proposalId"],
+                        "expectedProposalRevision": record["revision"],
+                        "authorizationSource": "explicit_user",
+                        "approvalReplyId": reply_id,
+                        "inboundMessageId": inbound_id,
+                        "bindingRef": record["payload"]["scopeKey"],
+                        "sessionRef": record["payload"]["sessionRef"],
+                        "reasonCode": "verified_weixin_user_approval",
+                    },
+                }
+                record["promotionPending"] = True
             record["hqApplied"] = True
+            store.put(inbound_id, record)
+        if record.get("decision") == "approve" and not record.get("promotionApplied"):
+            promotion = record.get("promotion") if isinstance(record.get("promotion"), Mapping) else {}
+            promotion_payload = promotion.get("payload") if isinstance(promotion.get("payload"), Mapping) else {}
+            promotion_key = str(promotion.get("idempotencyKey") or "")
+            if not record.get("promotionPending") or not promotion_key or not promotion_payload:
+                raise GatewayError("promotion_state_missing", 409)
+            response = hq_writer.post(
+                f"/v1/hq/proposals/{urllib.parse.quote(str(record['proposalId']), safe='')}/promote",
+                promotion_payload,
+                {
+                    "X-Idempotency-Key": promotion_key,
+                    "If-Match": f'"proposal-revision-{record["revision"]}"',
+                },
+            )
+            if (response.get("taskboxMutation") is not True or response.get("proposalId") != record["proposalId"]
+                    or response.get("status") != "promoted" or not str(response.get("taskId") or "")):
+                raise GatewayError("hq_promotion_contract_invalid")
+            record["promotionApplied"] = True
+            record["promotionPending"] = False
+            record["taskId"] = str(response["taskId"])
             store.put(inbound_id, record)
         if not record.get("replySent"):
             escaped_id = urllib.parse.quote(inbound_id, safe="")
@@ -402,6 +549,8 @@ def main() -> int:
             time.sleep(5)
             continue
         try:
+            if mode == "decision":
+                process_automation_queue(hq_reader, hq_writer, store)
             messages = claim(hub)
             for message in messages:
                 if mode == "decision":
