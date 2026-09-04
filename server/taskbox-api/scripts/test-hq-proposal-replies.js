@@ -127,7 +127,7 @@ const child = spawn(process.execPath, [path.join(root, 'src', 'server.js')], {
     ASSISTANT_GATEWAY_API_TOKEN_FILE: gatewayTokenFile,
     ASSISTANT_GATEWAY_API_SCOPES: 'proposal-replies:write',
     ASSISTANT_GATEWAY_READ_TOKEN_FILE: gatewayReadTokenFile,
-    ASSISTANT_GATEWAY_READ_SCOPES: 'proposals:read',
+    ASSISTANT_GATEWAY_READ_SCOPES: 'proposal-decisions:read',
     ASSISTANT_GATEWAY_REPLY_MAX_AGE_SECONDS: '86400',
     HQ_PROPOSAL_PROMOTION_ENABLED: '1',
   },
