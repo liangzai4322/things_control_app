@@ -31,6 +31,8 @@
 
 ### 普通微信自然语言会话
 
+- 2026-09-05 已增加服务器端 durable `assistant_conversation_turns` 基础表与 authenticated turn create/claim/result 路由的本地草案；未部署、未接生产 Worker。Mac runner 仍需接入经过认证的客户端和真实 Codex transport 后才能进入生产。
+
 - 2026-09-05 已确认：`decision` worker 只处理测试 echo 与显式审批 grammar；普通文本在 `parse_decision` 返回空后以 `decision_not_explicit` retry，因此“你好”没有回复。它没有 generic conversation handler。
 - 普通聊天不得复用 proposal 的 `sessionRef`，也不得在服务器硬编码 Mac Codex task ID。服务器当前没有到 Mac app-server 的已验证安全调用入口。
 - 最小安全架构是两段式：服务器 Gateway 仅验证、分流并写 durable conversation outbox；Mac 上独立最小权限 runner 按 `verifiedUserRef + conversationRefHash` 串行 claim，调用专用 Codex 会话取得真实结果，再回传 reply 并 ack。

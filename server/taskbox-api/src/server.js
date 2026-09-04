@@ -37,6 +37,11 @@ const app = express();
 const db = new Database(dbPath);
 db.pragma('foreign_keys = ON');
 db.exec(fs.readFileSync(path.join(root, 'schema.sql'), 'utf8'));
+db.exec(`CREATE TABLE IF NOT EXISTS assistant_conversation_turns (
+  turn_id TEXT PRIMARY KEY, conversation_key_hash TEXT NOT NULL, dispatch_key TEXT NOT NULL UNIQUE,
+  inbound_message_id TEXT NOT NULL, text_hash TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+  result_text TEXT, error_code TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+)`);
 const boxColumns = new Set(db.prepare("PRAGMA table_info('boxes')").all().map((column) => column.name));
 [
   ['box_type', "TEXT DEFAULT 'task'"],
@@ -181,7 +186,8 @@ app.use((req, res, next) => {
     return res.status(403).json({ error: 'daily_intake_route_denied' });
   }
   if (req.path === '/v1/assistant-gateway/proposals/pending-user-decision'
-    || req.path === '/v1/assistant-gateway/proposals/automation-queue') {
+    || req.path === '/v1/assistant-gateway/proposals/automation-queue'
+    || req.path.startsWith('/v1/assistant-gateway/conversation/')) {
     if (!assistantGatewayApiEnabled
       || (assistantGatewayDisableFile && fs.existsSync(assistantGatewayDisableFile))) {
       return res.status(503).json({ error: 'assistant_gateway_api_disabled' });
@@ -191,7 +197,9 @@ app.use((req, res, next) => {
     if (!secretMatches(bearerToken(req), readToken)) {
       return res.status(401).json({ error: 'assistant_gateway_read_unauthorized' });
     }
-    if (!assistantGatewayReadScopes.has('proposal-decisions:read')) {
+    if (req.path.startsWith('/v1/assistant-gateway/conversation/')) {
+      if (!assistantGatewayReadScopes.has('assistant-conversation:read')) return res.status(403).json({ error: 'assistant_gateway_read_scope_denied' });
+    } else if (!assistantGatewayReadScopes.has('proposal-decisions:read')) {
       return res.status(403).json({ error: 'assistant_gateway_read_scope_denied' });
     }
     req.assistantGatewayIdentity = { system: 'assistant-gateway-reader', scopes: assistantGatewayReadScopes };
@@ -2190,6 +2198,37 @@ app.get('/v1/assistant-gateway/proposals/automation-queue', (req, res) => {
       replyBinding: proposal.replyBinding,
     }));
   return res.json({ contractVersion: ASSISTANT_GATEWAY_REPLY_CONTRACT, items, count: items.length });
+});
+
+app.post('/v1/assistant-gateway/conversation/turns', (req, res) => {
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const required = ['conversationKeyHash', 'dispatchKey', 'inboundMessageId', 'textHash'];
+  if (required.some((key) => !String(body[key] || '').trim())) return res.status(400).json({ error: 'conversation_turn_fields_required' });
+  const turnId = uid(); const timestamp = now();
+  try {
+    db.prepare(`INSERT INTO assistant_conversation_turns
+      (turn_id,conversation_key_hash,dispatch_key,inbound_message_id,text_hash,status,created_at,updated_at)
+      VALUES (?,?,?,?,?,'pending',?,?)`).run(turnId, body.conversationKeyHash, body.dispatchKey, body.inboundMessageId, body.textHash, timestamp, timestamp);
+  } catch (error) {
+    const existing = db.prepare('SELECT * FROM assistant_conversation_turns WHERE dispatch_key=?').get(body.dispatchKey);
+    if (existing) return res.json({ turnId: existing.turn_id, status: existing.status, dispatchKey: existing.dispatch_key });
+    return res.status(400).json({ error: 'conversation_turn_duplicate' });
+  }
+  return res.status(201).json({ turnId, status: 'pending', dispatchKey: body.dispatchKey });
+});
+
+app.get('/v1/assistant-gateway/conversation/turns/next', (req, res) => {
+  const row = db.prepare("SELECT turn_id,conversation_key_hash,dispatch_key,inbound_message_id,text_hash,created_at FROM assistant_conversation_turns WHERE status='pending' ORDER BY created_at LIMIT 1").get();
+  return res.json({ item: row || null });
+});
+
+app.post('/v1/assistant-gateway/conversation/turns/:id/result', (req, res) => {
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const text = String(body.resultText || '').trim();
+  if (!text || text.length > 12000) return res.status(400).json({ error: 'conversation_result_invalid' });
+  const result = db.prepare("UPDATE assistant_conversation_turns SET status='completed',result_text=?,updated_at=? WHERE turn_id=? AND status='pending'").run(text, now(), req.params.id);
+  if (!result.changes) return res.status(409).json({ error: 'conversation_turn_not_pending' });
+  return res.json({ turnId: req.params.id, status: 'completed' });
 });
 
 app.get('/v1/hq/proposals/:id', (req, res) => {
