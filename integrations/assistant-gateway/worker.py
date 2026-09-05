@@ -686,7 +686,10 @@ def credential_path(name: str) -> Path:
 
 
 def main() -> int:
-    mode = os.environ.get("ASSISTANT_GATEWAY_MODE", "echo").strip()
+    configured_mode = os.environ.get("ASSISTANT_GATEWAY_MODE", "echo").strip().lower()
+    # Older production units used the human-facing name; keep it as a strict
+    # alias for decision mode so a stale drop-in cannot dead-letter messages.
+    mode = {"production": "decision", "prod": "decision"}.get(configured_mode, configured_mode)
     if mode not in {"echo", "decision"}:
         raise GatewayError("unsupported_gateway_mode")
     ingress_token = credential_path("weixin-ingress.token")
