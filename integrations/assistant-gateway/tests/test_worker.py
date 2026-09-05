@@ -20,6 +20,7 @@ from worker import (  # noqa: E402
     process_automation_queue,
     process_decision,
     process_echo,
+    claim,
     verify_message,
 )
 from crypto_payload import open_text, seal_text  # noqa: E402
@@ -111,6 +112,11 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(len(ApiHandler.calls), 1)
         self.assertEqual(ApiHandler.calls[0][1]["outcome"], "retry")
         self.assertEqual(ApiHandler.calls[0][1]["retryAfterSeconds"], 3600)
+
+    def test_claim_uses_bounded_nonblocking_poll(self):
+        with self.assertRaises(GatewayError):
+            claim(self.client)
+        self.assertEqual(ApiHandler.calls[0][1]["waitSeconds"], 0)
 
     def test_timestamped_test_prefix_is_echoed(self):
         process_echo(self.client, self.message("测试-20260903-2330"))

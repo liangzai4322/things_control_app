@@ -221,7 +221,9 @@ def claim(client: JsonClient) -> list[dict[str, Any]]:
         "consumerId": "assistant-gateway",
         "limit": 1,
         "leaseSeconds": 120,
-        "waitSeconds": 20,
+        # Keep the Hub request bounded; the outer worker loop provides the
+        # retry cadence so an empty queue cannot become a socket timeout.
+        "waitSeconds": 0,
     })
     messages = result.get("messages")
     if not isinstance(messages, list):
