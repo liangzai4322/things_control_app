@@ -6,7 +6,9 @@ const path = require('path');
 
 const root = path.resolve(__dirname, '..');
 const dbPath = path.join(os.tmpdir(), `taskbox-hq-api-${process.pid}-${Date.now()}.sqlite`);
-const port = 3200 + (process.pid % 500);
+// Keep integration tests away from service ports; allow CI to inject a fixed
+// port when needed, while using a high, per-process default locally.
+const port = Number(process.env.TASKBOX_TEST_PORT || (30000 + ((Date.now() + process.pid) % 20000)));
 const token = 'hq-integration-test-token';
 const baselinePath = path.join(os.tmpdir(), `taskbox-five-system-baseline-${process.pid}-${Date.now()}.json`);
 const hqReceiptCachePath = path.join(os.tmpdir(), `taskbox-hq-receipts-${process.pid}-${Date.now()}.json`);
