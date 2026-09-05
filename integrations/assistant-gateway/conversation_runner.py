@@ -34,19 +34,32 @@ class ApiClient:
 
     def post(self, route: str, body: dict) -> dict:
         token = self.token_file.read_text(encoding="utf-8").strip()
-        request = urllib.request.Request(
-            self.base_url + route,
-            data=json.dumps(body, separators=(",", ":")).encode("utf-8"),
-            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                value = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as error:
-            raise RunnerApiError(f"conversation_api_http_{error.code}", error.code) from error
-        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as error:
-            raise RunnerApiError("conversation_api_unavailable") from error
+        request_data = json.dumps(body, separators=(",", ":")).encode("utf-8")
+        last_error: Exception | None = None
+        for attempt in range(3):
+            request = urllib.request.Request(
+                self.base_url + route, data=request_data,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                    "User-Agent": "taskbox-assistant-conversation-runner/1",
+                }, method="POST",
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                    value = json.loads(response.read().decode("utf-8"))
+                break
+            except urllib.error.HTTPError as error:
+                last_error = error
+                if error.code not in {502, 503, 504} or attempt == 2:
+                    raise RunnerApiError(f"conversation_api_http_{error.code}", error.code) from error
+            except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as error:
+                last_error = error
+                if attempt == 2:
+                    raise RunnerApiError("conversation_api_unavailable") from error
+            time.sleep(1 + attempt)
+        else:
+            raise RunnerApiError("conversation_api_unavailable") from last_error
         if not isinstance(value, dict):
             raise RunnerError("conversation_api_invalid")
         return value
