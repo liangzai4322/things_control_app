@@ -17,6 +17,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from crypto_payload import open_text, read_key, seal_text
+
 
 class GatewayError(RuntimeError):
     def __init__(self, code: str, status: int | None = None, response: Mapping[str, Any] | None = None):
@@ -228,7 +230,7 @@ def claim(client: JsonClient) -> list[dict[str, Any]]:
 
 
 def acknowledge(client: JsonClient, message: Mapping[str, Any], outcome: str, error: str | None = None,
-                status: GatewayStatus | None = None) -> None:
+                status: GatewayStatus | None = None, retry_after_seconds: int = 3600) -> None:
     inbound_id = urllib.parse.quote(str(message["inboundMessageId"]), safe="")
     payload: dict[str, Any] = {
         "consumerId": "assistant-gateway",
@@ -236,7 +238,7 @@ def acknowledge(client: JsonClient, message: Mapping[str, Any], outcome: str, er
         "outcome": outcome,
     }
     if outcome == "retry":
-        payload["retryAfterSeconds"] = 3600
+        payload["retryAfterSeconds"] = max(5, min(3600, int(retry_after_seconds)))
     if error:
         payload["error"] = error[:240]
     client.post(f"/v1/weixin-inbound/{inbound_id}/ack", payload)
@@ -308,6 +310,63 @@ def automation_queue(client: JsonClient) -> list[dict[str, Any]]:
     if not isinstance(items, list):
         raise GatewayError("automation_queue_response_invalid")
     return [dict(item) for item in items if isinstance(item, Mapping)]
+
+
+def conversation_dispatch_key(message: Mapping[str, Any]) -> str:
+    value = f"{message['inboundMessageId']}\0{message['originalMessageHash']}"
+    return f"weixin-chat:{hashlib.sha256(value.encode('utf-8')).hexdigest()}"
+
+
+def process_conversation(hub: JsonClient, conversation: JsonClient, payload_key: bytes,
+                         message: Mapping[str, Any], text: str,
+                         status: GatewayStatus | None = None) -> None:
+    inbound_id = str(message["inboundMessageId"])
+    dispatch_key = conversation_dispatch_key(message)
+    turn = conversation.post("/v1/assistant-gateway/conversation/turns", {
+        "conversationKeyHash": conversation_ref_hash(message),
+        "dispatchKey": dispatch_key,
+        "inboundMessageId": inbound_id,
+        "textHash": str(message["originalMessageHash"]),
+        "promptPayload": seal_text(text, payload_key),
+    })
+    turn_id = str(turn.get("turnId") or "")
+    if not turn_id:
+        raise GatewayError("conversation_turn_invalid")
+    wait_seconds = max(0, min(100, int(os.environ.get("ASSISTANT_CONVERSATION_WAIT_SECONDS", "90"))))
+    deadline = time.monotonic() + wait_seconds
+    while turn.get("status") in {"pending", "leased"} and time.monotonic() < deadline:
+        time.sleep(min(2, max(0.05, deadline - time.monotonic())))
+        route_key = urllib.parse.quote(dispatch_key, safe="")
+        turn = conversation.get(f"/v1/assistant-gateway/conversation/turns/by-dispatch/{route_key}")
+    turn_status = str(turn.get("status") or "")
+    if turn_status in {"result_ready", "replied"}:
+        try:
+            reply = open_text(str(turn.get("resultPayload") or ""), payload_key)
+        except (TypeError, ValueError) as error:
+            raise GatewayError("conversation_result_payload_invalid") from error
+        if turn_status == "result_ready":
+            escaped_id = urllib.parse.quote(inbound_id, safe="")
+            hub.post(f"/v1/weixin-inbound/{escaped_id}/reply", {
+                "consumerId": "assistant-gateway",
+                "leaseToken": str(message["leaseToken"]),
+                "replyKey": f"conversation:{hashlib.sha256(dispatch_key.encode('utf-8')).hexdigest()}",
+                "text": reply,
+            })
+            if status:
+                status.record_reply()
+            conversation.post(f"/v1/assistant-gateway/conversation/turns/{turn_id}/replied", {})
+        acknowledge(hub, message, "processed", status=status)
+        conversation.post(f"/v1/assistant-gateway/conversation/turns/{turn_id}/completed", {})
+        emit("conversation_processed", inboundMessageId=inbound_id, outcome="processed", mode="decision")
+        return
+    if turn_status == "completed":
+        acknowledge(hub, message, "processed", status=status)
+        return
+    if turn_status == "dead_letter":
+        acknowledge(hub, message, "dead_letter", str(turn.get("errorCode") or "conversation_failed"), status)
+        return
+    acknowledge(hub, message, "retry", "assistant_conversation_pending", status, retry_after_seconds=15)
+    emit("conversation_pending", inboundMessageId=inbound_id, outcome="retry", mode="decision")
 
 
 def decision_confirmation(decision: str, patch: Mapping[str, str]) -> str:
@@ -473,7 +532,8 @@ def build_decision_record(message: Mapping[str, Any], proposal: Mapping[str, Any
 
 def process_decision(hub: JsonClient, hq_reader: JsonClient, hq_writer: JsonClient,
                      store: DecisionStore, message: Mapping[str, Any],
-                     status: GatewayStatus | None = None) -> None:
+                     status: GatewayStatus | None = None,
+                     conversation: JsonClient | None = None, payload_key: bytes | None = None) -> None:
     inbound_id = str(message.get("inboundMessageId") or "")
     try:
         text = verify_message(message)
@@ -484,6 +544,9 @@ def process_decision(hub: JsonClient, hq_reader: JsonClient, hq_writer: JsonClie
             return
         parsed = parse_decision(text)
         if not parsed:
+            if conversation is not None and payload_key is not None:
+                process_conversation(hub, conversation, payload_key, message, text, status)
+                return
             acknowledge(hub, message, "retry", "decision_not_explicit", status)
             emit("message_deferred", inboundMessageId=inbound_id, attemptCount=message.get("attemptCount"), mode="decision")
             return
@@ -494,6 +557,9 @@ def process_decision(hub: JsonClient, hq_reader: JsonClient, hq_writer: JsonClie
         if not record:
             proposals = pending_proposals(hq_reader, message)
             if len(proposals) != 1:
+                if not proposals and conversation is not None and payload_key is not None:
+                    process_conversation(hub, conversation, payload_key, message, text, status)
+                    return
                 reason = "no_pending_proposal" if not proposals else "ambiguous_pending_proposals"
                 acknowledge(hub, message, "retry", reason, status)
                 emit("message_deferred", inboundMessageId=inbound_id, attemptCount=message.get("attemptCount"), mode="decision")
@@ -626,10 +692,13 @@ def main() -> int:
     ingress_token = credential_path("weixin-ingress.token")
     hq_reply_token = credential_path("hq-reply.token")
     hq_read_token = credential_path("hq-read.token")
+    conversation_token = credential_path("conversation-producer.token")
+    payload_key = read_key(credential_path("conversation-payload.key"))
     hub = JsonClient(os.environ.get("NOTIFICATION_HUB_BASE_URL", "http://127.0.0.1:3219"), ingress_token)
     hq_base_url = os.environ.get("TASKBOX_HQ_BASE_URL", "http://127.0.0.1:3107")
     hq_reader = JsonClient(hq_base_url, hq_read_token)
     hq_writer = JsonClient(hq_base_url, hq_reply_token)
+    conversation = JsonClient(hq_base_url, conversation_token)
     store = DecisionStore(Path(os.environ.get(
         "ASSISTANT_GATEWAY_STATE_FILE", "/var/lib/taskbox-assistant-gateway/decision-state.json",
     )))
@@ -658,7 +727,7 @@ def main() -> int:
             status.record_claim(len(messages))
             for message in messages:
                 if mode == "decision":
-                    process_decision(hub, hq_reader, hq_writer, store, message, status)
+                    process_decision(hub, hq_reader, hq_writer, store, message, status, conversation, payload_key)
                 else:
                     process_echo(hub, message, status)
         except GatewayError as error:

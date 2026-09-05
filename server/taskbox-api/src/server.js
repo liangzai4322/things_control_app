@@ -18,6 +18,8 @@ const executionDisableFile = String(process.env.EXECUTION_SYSTEM_API_DISABLE_FIL
 const assistantGatewayApiEnabled = String(process.env.ASSISTANT_GATEWAY_API_ENABLED || '') === '1';
 const assistantGatewayTokenFile = String(process.env.ASSISTANT_GATEWAY_API_TOKEN_FILE || '').trim();
 const assistantGatewayReadTokenFile = String(process.env.ASSISTANT_GATEWAY_READ_TOKEN_FILE || '').trim();
+const assistantConversationProducerTokenFile = String(process.env.ASSISTANT_CONVERSATION_PRODUCER_TOKEN_FILE || '').trim();
+const assistantConversationRunnerTokenFile = String(process.env.ASSISTANT_CONVERSATION_RUNNER_TOKEN_FILE || '').trim();
 const assistantGatewayDisableFile = String(process.env.ASSISTANT_GATEWAY_API_DISABLE_FILE || '/etc/taskbox-assistant-gateway.disabled').trim();
 const assistantGatewayScopes = new Set(String(process.env.ASSISTANT_GATEWAY_API_SCOPES || '')
   .split(',').map((item) => item.trim()).filter(Boolean));
@@ -42,6 +44,24 @@ db.exec(`CREATE TABLE IF NOT EXISTS assistant_conversation_turns (
   inbound_message_id TEXT NOT NULL, text_hash TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
   result_text TEXT, error_code TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 )`);
+const conversationColumns = new Set(db.prepare("PRAGMA table_info('assistant_conversation_turns')").all().map((column) => column.name));
+const conversationSequenceNeedsBackfill = !conversationColumns.has('sequence_no');
+[
+  ['sequence_no', 'INTEGER NOT NULL DEFAULT 1'], ['prompt_payload', 'TEXT'], ['result_payload', 'TEXT'],
+  ['result_hash', 'TEXT'], ['lease_token_hash', 'TEXT'], ['lease_owner_hash', 'TEXT'],
+  ['lease_expires_at', 'TEXT'], ['attempt_count', 'INTEGER NOT NULL DEFAULT 0'],
+  ['replied_at', 'TEXT'], ['completed_at', 'TEXT'],
+].forEach(([name, definition]) => {
+  if (!conversationColumns.has(name)) db.exec(`ALTER TABLE assistant_conversation_turns ADD COLUMN ${name} ${definition}`);
+});
+if (conversationSequenceNeedsBackfill) db.exec(`UPDATE assistant_conversation_turns AS current SET sequence_no=(
+    SELECT COUNT(*) FROM assistant_conversation_turns AS earlier
+    WHERE earlier.conversation_key_hash=current.conversation_key_hash
+      AND (earlier.created_at<current.created_at
+        OR (earlier.created_at=current.created_at AND earlier.turn_id<=current.turn_id))
+  )`);
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_assistant_conversation_sequence ON assistant_conversation_turns(conversation_key_hash, sequence_no)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_assistant_conversation_status ON assistant_conversation_turns(status, created_at)');
 const boxColumns = new Set(db.prepare("PRAGMA table_info('boxes')").all().map((column) => column.name));
 [
   ['box_type', "TEXT DEFAULT 'task'"],
@@ -185,9 +205,28 @@ app.use((req, res, next) => {
       || req.path === '/v1/mission/state') return next();
     return res.status(403).json({ error: 'daily_intake_route_denied' });
   }
+  if (req.path.startsWith('/v1/assistant-gateway/conversation/')) {
+    if (!assistantGatewayApiEnabled
+      || (assistantGatewayDisableFile && fs.existsSync(assistantGatewayDisableFile))) {
+      return res.status(503).json({ error: 'assistant_gateway_api_disabled' });
+    }
+    const auth = bearerToken(req);
+    const producerToken = readSecretFile(assistantConversationProducerTokenFile);
+    const runnerToken = readSecretFile(assistantConversationRunnerTokenFile);
+    if (producerToken && secretMatches(auth, producerToken)) {
+      req.assistantConversationIdentity = { system: 'assistant-conversation-producer' };
+      return next();
+    }
+    if (runnerToken && secretMatches(auth, runnerToken)) {
+      req.assistantConversationIdentity = { system: 'assistant-conversation-runner' };
+      return next();
+    }
+    if (!producerToken || !runnerToken) return res.status(503).json({ error: 'assistant_conversation_api_not_configured' });
+    return res.status(401).json({ error: 'assistant_conversation_unauthorized' });
+  }
   if (req.path === '/v1/assistant-gateway/proposals/pending-user-decision'
     || req.path === '/v1/assistant-gateway/proposals/automation-queue'
-    || req.path.startsWith('/v1/assistant-gateway/conversation/')) {
+  ) {
     if (!assistantGatewayApiEnabled
       || (assistantGatewayDisableFile && fs.existsSync(assistantGatewayDisableFile))) {
       return res.status(503).json({ error: 'assistant_gateway_api_disabled' });
@@ -197,9 +236,7 @@ app.use((req, res, next) => {
     if (!secretMatches(bearerToken(req), readToken)) {
       return res.status(401).json({ error: 'assistant_gateway_read_unauthorized' });
     }
-    if (req.path.startsWith('/v1/assistant-gateway/conversation/')) {
-      if (!assistantGatewayReadScopes.has('assistant-conversation:read')) return res.status(403).json({ error: 'assistant_gateway_read_scope_denied' });
-    } else if (!assistantGatewayReadScopes.has('proposal-decisions:read')) {
+    if (!assistantGatewayReadScopes.has('proposal-decisions:read')) {
       return res.status(403).json({ error: 'assistant_gateway_read_scope_denied' });
     }
     req.assistantGatewayIdentity = { system: 'assistant-gateway-reader', scopes: assistantGatewayReadScopes };
@@ -2200,35 +2237,126 @@ app.get('/v1/assistant-gateway/proposals/automation-queue', (req, res) => {
   return res.json({ contractVersion: ASSISTANT_GATEWAY_REPLY_CONTRACT, items, count: items.length });
 });
 
+const conversationRole = (req, res, role) => {
+  if (req.assistantConversationIdentity?.system !== `assistant-conversation-${role}`) {
+    res.status(403).json({ error: 'assistant_conversation_scope_denied' });
+    return false;
+  }
+  return true;
+};
+const conversationTurnView = (row, visibility = 'producer') => row ? {
+  turnId: row.turn_id, conversationKeyHash: row.conversation_key_hash,
+  dispatchKey: row.dispatch_key, inboundMessageId: row.inbound_message_id,
+  textHash: row.text_hash, sequence: row.sequence_no, status: row.status,
+  ...(visibility === 'runner' && row.prompt_payload ? { promptPayload: row.prompt_payload } : {}),
+  ...(visibility === 'producer' && row.result_payload ? { resultPayload: row.result_payload } : {}),
+  resultHash: row.result_hash || undefined, attemptCount: Number(row.attempt_count || 0),
+  errorCode: row.error_code || undefined, createdAt: row.created_at, updatedAt: row.updated_at,
+} : null;
+
 app.post('/v1/assistant-gateway/conversation/turns', (req, res) => {
+  if (!conversationRole(req, res, 'producer')) return;
   const body = req.body && typeof req.body === 'object' ? req.body : {};
-  const required = ['conversationKeyHash', 'dispatchKey', 'inboundMessageId', 'textHash'];
+  const required = ['conversationKeyHash', 'dispatchKey', 'inboundMessageId', 'textHash', 'promptPayload'];
   if (required.some((key) => !String(body[key] || '').trim())) return res.status(400).json({ error: 'conversation_turn_fields_required' });
+  if (!/^[a-f0-9]{64}$/.test(String(body.conversationKeyHash)) || !/^[a-f0-9]{64}$/.test(String(body.textHash))
+    || String(body.promptPayload).length > 40000) return res.status(400).json({ error: 'conversation_turn_fields_invalid' });
   const turnId = uid(); const timestamp = now();
   try {
-    db.prepare(`INSERT INTO assistant_conversation_turns
-      (turn_id,conversation_key_hash,dispatch_key,inbound_message_id,text_hash,status,created_at,updated_at)
-      VALUES (?,?,?,?,?,'pending',?,?)`).run(turnId, body.conversationKeyHash, body.dispatchKey, body.inboundMessageId, body.textHash, timestamp, timestamp);
+    const row = db.transaction(() => {
+      const sequence = Number(db.prepare('SELECT COALESCE(MAX(sequence_no),0)+1 AS value FROM assistant_conversation_turns WHERE conversation_key_hash=?').get(body.conversationKeyHash).value);
+      db.prepare(`INSERT INTO assistant_conversation_turns
+        (turn_id,conversation_key_hash,dispatch_key,inbound_message_id,text_hash,prompt_payload,sequence_no,status,created_at,updated_at)
+        VALUES (?,?,?,?,?,?,?,'pending',?,?)`).run(turnId, body.conversationKeyHash, body.dispatchKey, body.inboundMessageId, body.textHash, body.promptPayload, sequence, timestamp, timestamp);
+      return db.prepare('SELECT * FROM assistant_conversation_turns WHERE turn_id=?').get(turnId);
+    })();
+    return res.status(201).json(conversationTurnView(row));
   } catch (error) {
     const existing = db.prepare('SELECT * FROM assistant_conversation_turns WHERE dispatch_key=?').get(body.dispatchKey);
-    if (existing) return res.json({ turnId: existing.turn_id, status: existing.status, dispatchKey: existing.dispatch_key });
+    if (existing && existing.text_hash === body.textHash) return res.json(conversationTurnView(existing));
+    if (existing) return res.status(409).json({ error: 'conversation_dispatch_conflict' });
     return res.status(400).json({ error: 'conversation_turn_duplicate' });
   }
-  return res.status(201).json({ turnId, status: 'pending', dispatchKey: body.dispatchKey });
 });
 
-app.get('/v1/assistant-gateway/conversation/turns/next', (req, res) => {
-  const row = db.prepare("SELECT turn_id,conversation_key_hash,dispatch_key,inbound_message_id,text_hash,created_at FROM assistant_conversation_turns WHERE status='pending' ORDER BY created_at LIMIT 1").get();
-  return res.json({ item: row || null });
+app.get('/v1/assistant-gateway/conversation/turns/by-dispatch/:key', (req, res) => {
+  if (!conversationRole(req, res, 'producer')) return;
+  const row = db.prepare('SELECT * FROM assistant_conversation_turns WHERE dispatch_key=?').get(req.params.key);
+  if (!row) return res.status(404).json({ error: 'conversation_turn_not_found' });
+  return res.json(conversationTurnView(row));
+});
+
+app.post('/v1/assistant-gateway/conversation/turns/claim', (req, res) => {
+  if (!conversationRole(req, res, 'runner')) return;
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const runnerId = String(body.runnerId || '').trim();
+  const leaseSeconds = Math.max(60, Math.min(600, Number(body.leaseSeconds) || 360));
+  if (!runnerId || runnerId.length > 120) return res.status(400).json({ error: 'conversation_runner_invalid' });
+  const timestamp = now();
+  const expiresAt = new Date(Date.now() + leaseSeconds * 1000).toISOString();
+  const leaseToken = crypto.randomBytes(32).toString('hex');
+  const leaseHash = crypto.createHash('sha256').update(leaseToken).digest('hex');
+  const ownerHash = crypto.createHash('sha256').update(runnerId).digest('hex');
+  const row = db.transaction(() => {
+    db.prepare("UPDATE assistant_conversation_turns SET status='pending',lease_token_hash=NULL,lease_owner_hash=NULL,lease_expires_at=NULL,updated_at=? WHERE status='leased' AND lease_expires_at<=?").run(timestamp, timestamp);
+    const candidate = db.prepare(`SELECT t.* FROM assistant_conversation_turns t
+      WHERE t.status='pending' AND NOT EXISTS (
+        SELECT 1 FROM assistant_conversation_turns earlier
+        WHERE earlier.conversation_key_hash=t.conversation_key_hash AND earlier.sequence_no<t.sequence_no
+          AND earlier.status!='completed')
+      ORDER BY t.created_at,t.turn_id LIMIT 1`).get();
+    if (!candidate) return null;
+    const updated = db.prepare("UPDATE assistant_conversation_turns SET status='leased',lease_token_hash=?,lease_owner_hash=?,lease_expires_at=?,attempt_count=attempt_count+1,updated_at=? WHERE turn_id=? AND status='pending'")
+      .run(leaseHash, ownerHash, expiresAt, timestamp, candidate.turn_id);
+    return updated.changes ? db.prepare('SELECT * FROM assistant_conversation_turns WHERE turn_id=?').get(candidate.turn_id) : null;
+  }).immediate();
+  if (!row) return res.json({ item: null });
+  return res.json({ item: { ...conversationTurnView(row, 'runner'), leaseToken, leaseExpiresAt: expiresAt } });
 });
 
 app.post('/v1/assistant-gateway/conversation/turns/:id/result', (req, res) => {
+  if (!conversationRole(req, res, 'runner')) return;
   const body = req.body && typeof req.body === 'object' ? req.body : {};
-  const text = String(body.resultText || '').trim();
-  if (!text || text.length > 12000) return res.status(400).json({ error: 'conversation_result_invalid' });
-  const result = db.prepare("UPDATE assistant_conversation_turns SET status='completed',result_text=?,updated_at=? WHERE turn_id=? AND status='pending'").run(text, now(), req.params.id);
-  if (!result.changes) return res.status(409).json({ error: 'conversation_turn_not_pending' });
-  return res.json({ turnId: req.params.id, status: 'completed' });
+  const payload = String(body.resultPayload || '').trim();
+  const resultHash = String(body.resultHash || '').trim().toLowerCase();
+  const leaseHash = crypto.createHash('sha256').update(String(body.leaseToken || '')).digest('hex');
+  const ownerHash = crypto.createHash('sha256').update(String(body.runnerId || '')).digest('hex');
+  if (!String(body.runnerId || '').trim() || !payload || payload.length > 40000 || !/^[a-f0-9]{64}$/.test(resultHash)) return res.status(400).json({ error: 'conversation_result_invalid' });
+  const existing = db.prepare('SELECT * FROM assistant_conversation_turns WHERE turn_id=?').get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'conversation_turn_not_found' });
+  if (existing.status === 'result_ready' && existing.result_hash === resultHash && existing.lease_owner_hash === ownerHash) return res.json(conversationTurnView(existing, 'runner'));
+  if (existing.status !== 'leased' || existing.lease_token_hash !== leaseHash || existing.lease_owner_hash !== ownerHash || existing.lease_expires_at <= now()) return res.status(409).json({ error: 'conversation_lease_conflict' });
+  db.prepare("UPDATE assistant_conversation_turns SET status='result_ready',result_payload=?,result_hash=?,lease_token_hash=NULL,lease_expires_at=NULL,updated_at=? WHERE turn_id=?")
+    .run(payload, resultHash, now(), req.params.id);
+  return res.json(conversationTurnView(db.prepare('SELECT * FROM assistant_conversation_turns WHERE turn_id=?').get(req.params.id), 'runner'));
+});
+
+app.post('/v1/assistant-gateway/conversation/turns/:id/fail', (req, res) => {
+  if (!conversationRole(req, res, 'runner')) return;
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const leaseHash = crypto.createHash('sha256').update(String(body.leaseToken || '')).digest('hex');
+  const ownerHash = crypto.createHash('sha256').update(String(body.runnerId || '')).digest('hex');
+  const row = db.prepare('SELECT * FROM assistant_conversation_turns WHERE turn_id=?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'conversation_turn_not_found' });
+  if (!String(body.runnerId || '').trim() || row.status !== 'leased' || row.lease_token_hash !== leaseHash
+    || row.lease_owner_hash !== ownerHash || row.lease_expires_at <= now()) return res.status(409).json({ error: 'conversation_lease_conflict' });
+  const terminal = Number(row.attempt_count || 0) >= 5;
+  db.prepare("UPDATE assistant_conversation_turns SET status=?,error_code=?,lease_token_hash=NULL,lease_owner_hash=NULL,lease_expires_at=NULL,updated_at=? WHERE turn_id=?")
+    .run(terminal ? 'dead_letter' : 'pending', String(body.errorCode || 'runner_failed').slice(0, 120), now(), req.params.id);
+  return res.json(conversationTurnView(db.prepare('SELECT * FROM assistant_conversation_turns WHERE turn_id=?').get(req.params.id)));
+});
+
+for (const [suffix, fromStatus, toStatus, timeColumn] of [
+  ['replied', 'result_ready', 'replied', 'replied_at'], ['completed', 'replied', 'completed', 'completed_at'],
+]) app.post(`/v1/assistant-gateway/conversation/turns/:id/${suffix}`, (req, res) => {
+  if (!conversationRole(req, res, 'producer')) return;
+  const row = db.prepare('SELECT * FROM assistant_conversation_turns WHERE turn_id=?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'conversation_turn_not_found' });
+  if (row.status === toStatus || (toStatus === 'completed' && row.status === 'completed')) return res.json(conversationTurnView(row));
+  if (row.status !== fromStatus) return res.status(409).json({ error: 'conversation_turn_state_conflict' });
+  const timestamp = now();
+  db.prepare(`UPDATE assistant_conversation_turns SET status=?,${timeColumn}=?,updated_at=? WHERE turn_id=?`).run(toStatus, timestamp, timestamp, req.params.id);
+  return res.json(conversationTurnView(db.prepare('SELECT * FROM assistant_conversation_turns WHERE turn_id=?').get(req.params.id)));
 });
 
 app.get('/v1/hq/proposals/:id', (req, res) => {

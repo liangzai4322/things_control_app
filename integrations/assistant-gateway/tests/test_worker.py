@@ -22,6 +22,7 @@ from worker import (  # noqa: E402
     process_echo,
     verify_message,
 )
+from crypto_payload import open_text, seal_text  # noqa: E402
 
 
 class ApiHandler(BaseHTTPRequestHandler):
@@ -275,6 +276,60 @@ class WorkerTests(unittest.TestCase):
             self.assertEqual(writer.calls, [])
             self.assertEqual(hub.calls[-1][2]["outcome"], "retry")
             self.state_path.unlink(missing_ok=True)
+
+    def test_ordinary_chat_uses_conversation_path_without_hq_or_taskbox_write(self):
+        key = b"k" * 32
+        hub = FakeClient()
+        reader = FakeClient()
+        writer = FakeClient()
+
+        def conversation_result(route, payload):
+            if route.endswith("/turns"):
+                self.assertEqual(open_text(payload["promptPayload"], key), "你好，今天有什么重要事项？")
+                return {
+                    "turnId": "turn-1", "status": "result_ready",
+                    "resultPayload": seal_text("今天先处理唯一主行动。", key),
+                }
+            return {"turnId": "turn-1", "status": "replied"}
+
+        conversation = FakeClient(post_result=conversation_result)
+        process_decision(
+            hub, reader, writer, DecisionStore(self.state_path),
+            self.message("你好，今天有什么重要事项？"),
+            conversation=conversation, payload_key=key,
+        )
+        self.assertEqual(reader.calls, [])
+        self.assertEqual(writer.calls, [])
+        self.assertEqual([call[1] for call in hub.calls], [
+            "/v1/weixin-inbound/inbound-1/reply",
+            "/v1/weixin-inbound/inbound-1/ack",
+        ])
+        self.assertEqual(hub.calls[0][2]["text"], "今天先处理唯一主行动。")
+        self.assertTrue(hub.calls[0][2]["replyKey"].startswith("conversation:"))
+        self.assertEqual(hub.calls[1][2]["outcome"], "processed")
+        self.assertTrue(any(call[1].endswith("/replied") for call in conversation.calls))
+        self.assertTrue(any(call[1].endswith("/completed") for call in conversation.calls))
+
+    def test_replied_chat_recovery_only_acknowledges_and_completes(self):
+        key = b"k" * 32
+        hub = FakeClient()
+
+        def conversation_result(route, _payload):
+            if route.endswith("/turns"):
+                return {
+                    "turnId": "turn-1", "status": "replied",
+                    "resultPayload": seal_text("already sent", key),
+                }
+            return {"turnId": "turn-1", "status": "completed"}
+
+        conversation = FakeClient(post_result=conversation_result)
+        process_decision(
+            hub, FakeClient(), FakeClient(), DecisionStore(self.state_path), self.message("继续"),
+            conversation=conversation, payload_key=key,
+        )
+        self.assertEqual([call[1] for call in hub.calls], ["/v1/weixin-inbound/inbound-1/ack"])
+        self.assertEqual(hub.calls[0][2]["outcome"], "processed")
+        self.assertTrue(any(call[1].endswith("/completed") for call in conversation.calls))
 
     def test_defer_requires_a_valid_explicit_date(self):
         self.assertEqual(parse_decision("同意")[0], "approve")

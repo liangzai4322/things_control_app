@@ -18,6 +18,8 @@ Environment=ASSISTANT_GATEWAY_STATUS_FILE=/var/lib/taskbox-assistant-gateway/sta
 LoadCredential=weixin-ingress.token:/etc/notification-ingress/weixin-ingress.token
 LoadCredential=hq-reply.token:/etc/taskbox-assistant-gateway-token
 LoadCredential=hq-read.token:/etc/taskbox-assistant-gateway-read-token
+LoadCredential=conversation-producer.token:/etc/taskbox-assistant-conversation-producer-token
+LoadCredential=conversation-payload.key:/etc/taskbox-assistant-conversation-payload-key
 StateDirectory=taskbox-assistant-gateway
 StateDirectoryMode=0700
 Restart=on-failure
