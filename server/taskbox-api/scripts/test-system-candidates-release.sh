@@ -159,6 +159,7 @@ export SYSTEMD_DIR="$TMP/systemd"
 export DAILY_INTAKE_ENABLE_TIMERS=1
 export ASSISTANT_GATEWAY_APP_DIR="$TMP/assistant-gateway-app"
 export ASSISTANT_GATEWAY_SERVICE="assistant-gateway.service"
+export ASSISTANT_GATEWAY_READ_TOKEN_CANONICAL_FILE="$TMP/assistant-gateway-read-token"
 export WEIXIN_INGRESS_TOKEN_FILE="$TMP/notification-ingress/weixin-ingress.token"
 export ASSISTANT_CONVERSATION_PRODUCER_TOKEN_FILE="$TMP/assistant-conversation-producer-token"
 export ASSISTANT_CONVERSATION_RUNNER_TOKEN_FILE="$TMP/assistant-conversation-runner-token"
