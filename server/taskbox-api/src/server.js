@@ -15,6 +15,10 @@ const apiToken = String(process.env.TASKBOX_API_TOKEN || '').trim();
 const executionApiEnabled = String(process.env.EXECUTION_SYSTEM_API_ENABLED || '') === '1';
 const executionTokenFile = String(process.env.EXECUTION_SYSTEM_API_TOKEN_FILE || '').trim();
 const executionDisableFile = String(process.env.EXECUTION_SYSTEM_API_DISABLE_FILE || '/etc/taskbox-execution-system.disabled').trim();
+const executionAuditSummaryTokenFile = String(process.env.EXECUTION_AUDIT_SUMMARY_TOKEN_FILE || '').trim();
+const executionAuditSummaryDisableFile = String(process.env.EXECUTION_AUDIT_SUMMARY_DISABLE_FILE || executionDisableFile).trim();
+const executionAuditSummaryScopes = new Set(String(process.env.EXECUTION_AUDIT_SUMMARY_SCOPES || '')
+  .split(',').map((item) => item.trim()).filter(Boolean));
 const assistantGatewayApiEnabled = String(process.env.ASSISTANT_GATEWAY_API_ENABLED || '') === '1';
 const assistantGatewayTokenFile = String(process.env.ASSISTANT_GATEWAY_API_TOKEN_FILE || '').trim();
 const assistantGatewayReadTokenFile = String(process.env.ASSISTANT_GATEWAY_READ_TOKEN_FILE || '').trim();
@@ -32,6 +36,7 @@ const allowedOrigins = String(process.env.TASKBOX_ALLOWED_ORIGINS || 'https://li
   .map((item) => item.trim())
   .filter(Boolean);
 const fiveSystemBaselinePath = String(process.env.TASKBOX_FIVE_SYSTEM_BASELINE_PATH || path.join(root, 'data', 'private', 'five-system-baseline-v1.json')).trim();
+const auditProjectionRevision = 'audit-summary-v1';
 
 const app = express();
 const db = new Database(dbPath);
@@ -95,6 +100,17 @@ const readSecretFile = (filePath) => {
   try { return filePath ? fs.readFileSync(filePath, 'utf8').trim() : ''; } catch { return ''; }
 };
 const bearerToken = (req) => String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+function captureAuditProjectionSnapshot() {
+  const taskIds = db.prepare('SELECT id FROM tasks ORDER BY id').all().map((row) => row.id);
+  const taskIdSetHash = crypto.createHash('sha256').update(taskIds.join('\n')).digest('hex');
+  const capturedAt = now();
+  db.prepare(`
+    INSERT INTO audit_projection_snapshots
+      (snapshot_id, captured_at, task_count, task_id_set_hash, execution_audit_count, projection_revision)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(uid(), capturedAt, taskIds.length, taskIdSetHash,
+    Number(db.prepare('SELECT COUNT(*) AS count FROM execution_task_audit').get().count), auditProjectionRevision);
+}
 const dailyIntakeIdentities = () => {
   const identities = [
     { name: 'daily-review-sender', token: readSecretFile(String(process.env.DAILY_INTAKE_SENDER_TOKEN_FILE || '').trim()), scopes: ['intakes:write'] },
@@ -241,6 +257,21 @@ app.use((req, res, next) => {
     return next();
   }
   if (req.path.startsWith('/v1/execution')) {
+    if (req.path === '/v1/execution/audit-summary') {
+      if (!executionApiEnabled || (executionAuditSummaryDisableFile && fs.existsSync(executionAuditSummaryDisableFile))) {
+        return res.status(503).json({ error: 'execution_audit_summary_disabled' });
+      }
+      const summaryToken = readSecretFile(executionAuditSummaryTokenFile);
+      if (!summaryToken) return res.status(503).json({ error: 'execution_audit_summary_not_configured' });
+      if (!secretMatches(bearerToken(req), summaryToken)) {
+        return res.status(401).json({ error: 'execution_audit_summary_unauthorized' });
+      }
+      req.executionIdentity = {
+        system: 'execution-audit-reader',
+        scopes: executionAuditSummaryScopes,
+      };
+      return next();
+    }
     if (!executionApiEnabled || (executionDisableFile && fs.existsSync(executionDisableFile))) {
       return res.status(503).json({ error: 'execution_api_disabled' });
     }
@@ -1588,6 +1619,9 @@ installMissionSystemRoutes({ app, db, now, json, parseJson, authorizeDailyIntake
 installExecutionSystemRoutes({
   app, db, now, json, parseJson, uid, rowToTask, taskParams, normalizeTaskCompletionTransition,
 });
+captureAuditProjectionSnapshot();
+const auditProjectionTimer = setInterval(captureAuditProjectionSnapshot, 60 * 1000);
+auditProjectionTimer.unref();
 
 app.get('/v1/taskbox', (req, res) => {
   const boxes = db.prepare('SELECT * FROM boxes ORDER BY sort_order, name').all().map(rowToBox);

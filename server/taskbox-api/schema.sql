@@ -162,6 +162,31 @@ CREATE TABLE IF NOT EXISTS execution_task_audit (
 CREATE INDEX IF NOT EXISTS idx_execution_task_audit_task_created
   ON execution_task_audit(task_id, created_at DESC);
 
+-- Read-only audit projection inputs. These tables intentionally contain no
+-- message body, task content, sender data, or credentials.
+CREATE TABLE IF NOT EXISTS audit_projection_snapshots (
+  snapshot_id TEXT PRIMARY KEY,
+  captured_at TEXT NOT NULL,
+  task_count INTEGER NOT NULL,
+  task_id_set_hash TEXT NOT NULL,
+  execution_audit_count INTEGER NOT NULL,
+  projection_revision TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_audit_projection_snapshots_captured
+  ON audit_projection_snapshots(captured_at);
+
+CREATE TABLE IF NOT EXISTS assistant_conversation_turns (
+  turn_id TEXT PRIMARY KEY,
+  conversation_key_hash TEXT NOT NULL,
+  sequence INTEGER NOT NULL,
+  status_timestamps_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(conversation_key_hash, sequence)
+);
+CREATE INDEX IF NOT EXISTS idx_assistant_turns_updated
+  ON assistant_conversation_turns(updated_at);
+
 CREATE TABLE IF NOT EXISTS usage_logs (
   id TEXT PRIMARY KEY,
   box_id TEXT,

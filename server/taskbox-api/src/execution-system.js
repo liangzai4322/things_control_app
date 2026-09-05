@@ -92,7 +92,110 @@ function subset(actual, allowed) {
   return actual.every((item) => allowed.includes(item));
 }
 
+const SUMMARY_SCOPE = 'execution:audit:summary';
+const SUMMARY_MAX_WINDOW_MS = 24 * 60 * 60 * 1000;
+const SUMMARY_OPERATIONS = [
+  'create', 'update', 'schedule', 'record_progress', 'record_blocker',
+  'clear_blocker', 'append_evidence', 'complete', 'reopen', 'soft_delete', 'restore',
+];
+
+function parseWindow(value, name) {
+  const parsed = new Date(String(value || ''));
+  if (!value || Number.isNaN(parsed.getTime())) throw error(`invalid_${name}`, 400);
+  return parsed;
+}
+
+function auditSummarySnapshot(row) {
+  return row ? {
+    capturedAt: row.captured_at,
+    taskCount: Number(row.task_count),
+    taskIdSetHash: row.task_id_set_hash,
+    executionAuditCount: Number(row.execution_audit_count),
+    projectionRevision: row.projection_revision,
+  } : null;
+}
+
+function installAuditSummaryRoute({ app, db, now }) {
+  app.get('/v1/execution/audit-summary', (req, res) => {
+    if (!req.executionIdentity?.scopes?.has(SUMMARY_SCOPE)) {
+      return res.status(403).json({ error: 'execution_audit_summary_scope_denied' });
+    }
+    try {
+      const windowStart = parseWindow(req.query.windowStart, 'window_start');
+      const windowEnd = parseWindow(req.query.windowEnd, 'window_end');
+      const windowMs = windowEnd.getTime() - windowStart.getTime();
+      if (windowMs <= 0 || windowMs > SUMMARY_MAX_WINDOW_MS) throw error('audit_window_invalid', 400);
+      if (String(req.query.projection || 'assistant-turns-v1') !== 'assistant-turns-v1') {
+        throw error('audit_projection_unsupported', 400);
+      }
+
+      const beforeRow = db.prepare(`
+        SELECT * FROM audit_projection_snapshots
+        WHERE captured_at <= ? ORDER BY captured_at DESC LIMIT 1
+      `).get(windowStart.toISOString());
+      const afterRow = db.prepare(`
+        SELECT * FROM audit_projection_snapshots
+        WHERE captured_at >= ? ORDER BY captured_at ASC LIMIT 1
+      `).get(windowEnd.toISOString());
+      const before = auditSummarySnapshot(beforeRow);
+      const after = auditSummarySnapshot(afterRow);
+      const insufficientEvidence = !before || !after;
+      const evidenceComplete = !insufficientEvidence;
+
+      const operationCounts = Object.fromEntries(SUMMARY_OPERATIONS.map((operation) => [operation, 0]));
+      const auditRows = db.prepare(`
+        SELECT operation_type, outcome FROM execution_task_audit
+        WHERE created_at >= ? AND created_at <= ?
+      `).all(windowStart.toISOString(), windowEnd.toISOString());
+      auditRows.forEach((row) => {
+        if (row.outcome === 'success' && Object.hasOwn(operationCounts, row.operation_type)) {
+          operationCounts[row.operation_type] += 1;
+        }
+      });
+
+      const turnRows = db.prepare(`
+        SELECT conversation_key_hash, sequence, status_timestamps_json
+        FROM assistant_conversation_turns
+        WHERE updated_at >= ? AND updated_at <= ?
+        ORDER BY sequence ASC
+      `).all(windowStart.toISOString(), windowEnd.toISOString());
+      const turns = turnRows.map((row) => ({
+        sequence: Number(row.sequence),
+        conversationKeyHash: row.conversation_key_hash,
+        statusTimestamps: JSON.parse(row.status_timestamps_json || '{}'),
+      }));
+
+      return res.json({
+        projection: 'assistant-turns-v1',
+        windowStart: windowStart.toISOString(),
+        windowEnd: windowEnd.toISOString(),
+        taskCountBefore: evidenceComplete ? before.taskCount : null,
+        taskCountAfter: evidenceComplete ? after.taskCount : null,
+        taskIdSetHashBefore: evidenceComplete ? before.taskIdSetHash : null,
+        taskIdSetHashAfter: evidenceComplete ? after.taskIdSetHash : null,
+        executionAuditCountBefore: evidenceComplete ? before.executionAuditCount : null,
+        executionAuditCountAfter: evidenceComplete ? after.executionAuditCount : null,
+        auditDelta: evidenceComplete ? after.executionAuditCount - before.executionAuditCount : null,
+        operationCounts: evidenceComplete ? operationCounts : null,
+        writeCount: evidenceComplete ? operationCounts.create + operationCounts.update + operationCounts.schedule
+          + operationCounts.record_progress + operationCounts.record_blocker + operationCounts.clear_blocker
+          + operationCounts.append_evidence + operationCounts.complete + operationCounts.reopen : null,
+        softDeleteCount: evidenceComplete ? operationCounts.soft_delete : null,
+        turns,
+        generatedAt: now(),
+        projectionRevision: after?.projectionRevision || before?.projectionRevision || 'audit-summary-v1',
+        insufficientEvidence,
+        noData: !before && !after,
+      });
+    } catch (routeError) {
+      if (routeError?.status) return res.status(routeError.status).json({ error: routeError.message });
+      return res.status(500).json({ error: 'audit_summary_internal_error' });
+    }
+  });
+}
+
 function installExecutionSystemRoutes({ app, db, now, json, parseJson, uid, rowToTask, taskParams, normalizeTaskCompletionTransition }) {
+  installAuditSummaryRoute({ app, db, now });
   const insertTask = db.prepare(`
     INSERT INTO tasks (id, revision, box_id, content, is_completed, sort_order, priority, weight, points_value, progress,
       is_recurring_template, recurrence_template_id, recurrence_key, recurrence_json, next_run_at, occurrence_status,

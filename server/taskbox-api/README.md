@@ -24,6 +24,9 @@ EXECUTION_SYSTEM_API_TOKEN_FILE=/etc/taskbox-execution-system-token
 EXECUTION_SYSTEM_API_DISABLE_FILE=/etc/taskbox-execution-system.disabled
 EXECUTION_SYSTEM_API_SCOPES=tasks:read,tasks:create,tasks:update,tasks:schedule,tasks:progress,tasks:evidence,tasks:complete,tasks:delete,tasks:audit
 EXECUTION_SYSTEM_EXPLICIT_GRANT_IDS=standing-execution-taskbox-normal-2026-09-02
+EXECUTION_AUDIT_SUMMARY_TOKEN_FILE=/etc/taskbox-execution-audit-summary-token
+EXECUTION_AUDIT_SUMMARY_DISABLE_FILE=/etc/taskbox-execution-audit-summary.disabled
+EXECUTION_AUDIT_SUMMARY_SCOPES=execution:audit:summary
 ASSISTANT_GATEWAY_API_ENABLED=1
 ASSISTANT_GATEWAY_API_TOKEN_FILE=/etc/taskbox-assistant-gateway-token
 ASSISTANT_GATEWAY_API_DISABLE_FILE=/etc/taskbox-assistant-gateway.disabled
@@ -67,8 +70,11 @@ npm run import-json -- /opt/taskbox-api/seed
 - `GET /v1/system-baseline/current`: authenticated, no-store delivery of the private five-system V1 bootstrap package. Configure `TASKBOX_FIVE_SYSTEM_BASELINE_PATH`; the file stays outside Git/Pages and is never exposed without the API token.
 - `GET /v1/daily-snapshot`: evidence snapshot consumed by 日省.
 - `/v1/execution/*`: execution-system-only task reads, capability discovery, immutable audit and allowlisted production operations. It uses a separate identity, scope checks, explicit authority evidence, idempotency and task revision/ETag conflicts; see `../../docs/execution-system-taskbox-api.md`.
+- `GET /v1/execution/audit-summary?windowStart=<ISO>&windowEnd=<ISO>&projection=assistant-turns-v1`: separate read-only audit projection. It requires the dedicated `execution:audit:summary` identity, accepts a maximum 24-hour window, and returns only count/hash/delta, operation counters, and conversation-turn sequence/hash/status timestamps. It never returns task IDs, task/message content, sender data, credentials, or audit rows. Missing boundary snapshots are reported as `insufficientEvidence` and all before/after counters remain `null`.
 
 SQLite schema lives in `schema.sql`. `raw_json` is a compatibility fallback; query-critical fields use dedicated columns and indexes.
+
+The audit projection maintains independent `audit_projection_snapshots` rows at service start and once per minute. These rows contain only aggregate counts, a SHA-256 hash of the sorted task-ID set, and a projection revision. `assistant_conversation_turns` is communication metadata only; it is isolated from TaskBox facts and stores no message body. The summary route is fail-closed behind its own token file, scope, and disable file.
 
 Task availability and routing fields are `device_context`, `execution_mode`, `visible_after`, `deferred_at`, `defer_note`, and `progress_logs_json`. Every task has a monotonic `revision`. Run `npm run test:schema`, `npm run test:hq`, `npm run test:mission`, and `npm run test:execution` before deployment.
 
