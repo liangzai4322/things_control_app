@@ -22,6 +22,23 @@ fs.writeFileSync(runnerTokenPath, `${runnerToken}\n`, { mode: 0o600 });
 fs.writeFileSync(auditTokenPath, 'audit-test-token\n', { mode: 0o600 });
 let serverError = '';
 
+// Upgrade the real pre-audit durable schema, not an empty audit-only imitation.
+const legacyDb = new Database(dbPath);
+legacyDb.exec(`CREATE TABLE assistant_conversation_turns (
+  turn_id TEXT PRIMARY KEY, conversation_key_hash TEXT NOT NULL, dispatch_key TEXT NOT NULL UNIQUE,
+  inbound_message_id TEXT NOT NULL, text_hash TEXT NOT NULL, status TEXT NOT NULL,
+  result_text TEXT, error_code TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+  sequence_no INTEGER NOT NULL DEFAULT 1, replied_at TEXT, completed_at TEXT
+); CREATE TABLE audit_projection_snapshots (
+  snapshot_id TEXT PRIMARY KEY, captured_at TEXT NOT NULL, task_count INTEGER NOT NULL,
+  task_id_set_hash TEXT NOT NULL, execution_audit_count INTEGER NOT NULL, projection_revision TEXT NOT NULL
+)`);
+legacyDb.prepare(`INSERT INTO assistant_conversation_turns
+  (turn_id,conversation_key_hash,dispatch_key,inbound_message_id,text_hash,status,created_at,updated_at,sequence_no)
+  VALUES(?,?,?,?,?,'completed',?,?,7)`).run('legacy', '9'.repeat(64), 'legacy-dispatch', 'legacy-inbound',
+    'f'.repeat(64), new Date().toISOString(), new Date().toISOString());
+legacyDb.close();
+
 function request(route, { method = 'GET', token = producerToken, body = null } = {}) {
   return new Promise((resolve, reject) => {
     const encoded = body === null ? null : Buffer.from(JSON.stringify(body));
@@ -103,6 +120,8 @@ function turn(conversationKeyHash, dispatchKey, inboundMessageId, text) {
     const c1 = '1'.repeat(64);
     const c2 = '2'.repeat(64);
     const firstSpec = turn(c1, 'dispatch-1', 'inbound-1', 'hello');
+    const oldTurn = await expectStatus(`${route}/by-dispatch/legacy-dispatch`, {}, 200);
+    if (oldTurn.sequence !== 7 || oldTurn.status !== 'completed') throw new Error('upgrade changed historical durable turn');
 
     await expectStatus(route, { method: 'POST', token: genericToken, body: firstSpec }, 401);
     await expectStatus(route, { method: 'POST', token: runnerToken, body: firstSpec }, 403);
@@ -175,6 +194,9 @@ function turn(conversationKeyHash, dispatchKey, inboundMessageId, text) {
     if (!auditedFirst || !auditedFirst.transitionEvidenceComplete || auditedFirst.status !== 'completed') {
       throw new Error('actual durable state timestamps not projected');
     }
+    const historical = summary.turns.find(t => t.conversationKeyHash === '9'.repeat(64));
+    if (!historical || historical.sequence !== 7 || historical.transitionEvidenceComplete
+      || historical.statusTimestamps.result_ready !== null) throw new Error('historical timestamps were fabricated');
     await expectStatus(auditRoute, { token: runnerToken }, 401);
     await expectStatus('/v1/tasks', { token: 'audit-test-token' }, 401);
     if (summary.insufficientEvidence !== true || summary.businessStateUnchanged !== null) throw new Error('missing snapshot evidence was guessed');
