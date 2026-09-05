@@ -10,7 +10,7 @@ Group=taskbox-assistant-gateway
 WorkingDirectory=/opt/taskbox-assistant-gateway
 ExecStart=/usr/bin/python3 /opt/taskbox-assistant-gateway/worker.py
 Environment=ASSISTANT_GATEWAY_MODE=echo
-Environment=NOTIFICATION_HUB_BASE_URL=http://127.0.0.1:3219
+Environment=NOTIFICATION_HUB_BASE_URL=https://liangzai666.com/notify/api
 Environment=TASKBOX_HQ_BASE_URL=http://127.0.0.1:3107
 Environment=ASSISTANT_GATEWAY_WORKER_DISABLE_FILE=/etc/taskbox-assistant-gateway-worker.disabled
 Environment=ASSISTANT_GATEWAY_STATE_FILE=/var/lib/taskbox-assistant-gateway/decision-state.json
