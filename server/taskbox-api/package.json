@@ -10,6 +10,7 @@
     "test:schema": "node scripts/test-schema-migration.js",
     "test:hq": "node scripts/test-hq-api.js && node scripts/test-hq-proposals.js && node scripts/test-hq-proposal-replies.js",
     "test:assistant-conversation": "node scripts/test-assistant-conversation.js",
+    "test:audit-summary": "node scripts/test-audit-summary.js",
     "test:health": "node scripts/test-health-api.js",
     "test:mission": "node scripts/test-mission-api.js",
     "test:execution": "node scripts/test-execution-api.js",

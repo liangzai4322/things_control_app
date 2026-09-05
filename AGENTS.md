@@ -2,6 +2,8 @@
 
 ## Assistant Gateway / HQ 当前交接
 
+2026-09-05 生产回退：`3ae02e0` 不含 durable conversation；后续发布必须保留 `8254958` 聊天基线并合入最新 main，不得再单独发布旧审计分支。审计必须读 `sequence_no` 与真实状态时间；历史缺失保持 null。普通聊天不写 HQ/TaskBox。详情与恢复证据见下述交接，不得沿用早晚报“通路正常”的旧结论。
+
 涉及微信决策、HQ proposal 或 TaskBox 晋升时，先读
 `docs/assistant-gateway-hq-handoff.md`。已审批 proposal 只经 HQ `/promote` 创建
 TaskBox 任务，禁止再经 execution create 双写。三分流与 writer 尚未完成联合验收时，

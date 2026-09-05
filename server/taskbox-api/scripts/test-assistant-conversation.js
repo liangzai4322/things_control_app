@@ -11,6 +11,7 @@ const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'taskbox-assistant-conversati
 const dbPath = path.join(temp, 'taskbox.sqlite');
 const producerTokenPath = path.join(temp, 'producer.token');
 const runnerTokenPath = path.join(temp, 'runner.token');
+const auditTokenPath = path.join(temp, 'audit.token');
 const disablePath = path.join(temp, 'disabled');
 const producerToken = 'conversation-producer-test-token';
 const runnerToken = 'conversation-runner-test-token';
@@ -18,6 +19,7 @@ const genericToken = 'generic-taskbox-test-token';
 const port = 3500 + (process.pid % 400);
 fs.writeFileSync(producerTokenPath, `${producerToken}\n`, { mode: 0o600 });
 fs.writeFileSync(runnerTokenPath, `${runnerToken}\n`, { mode: 0o600 });
+fs.writeFileSync(auditTokenPath, 'audit-test-token\n', { mode: 0o600 });
 let serverError = '';
 
 function request(route, { method = 'GET', token = producerToken, body = null } = {}) {
@@ -75,6 +77,10 @@ const child = spawn(process.execPath, [path.join(root, 'src', 'server.js')], {
     ASSISTANT_GATEWAY_API_DISABLE_FILE: disablePath,
     ASSISTANT_CONVERSATION_PRODUCER_TOKEN_FILE: producerTokenPath,
     ASSISTANT_CONVERSATION_RUNNER_TOKEN_FILE: runnerTokenPath,
+    EXECUTION_SYSTEM_API_ENABLED: '1',
+    EXECUTION_AUDIT_SUMMARY_TOKEN_FILE: auditTokenPath,
+    EXECUTION_AUDIT_SUMMARY_SCOPES: 'execution:audit:summary',
+    EXECUTION_AUDIT_SUMMARY_DISABLE_FILE: path.join(temp, 'audit-disabled'),
   },
   stdio: ['ignore', 'ignore', 'pipe'],
 });
@@ -161,6 +167,17 @@ function turn(conversationKeyHash, dispatchKey, inboundMessageId, text) {
     }, 409);
     const taskCount = sqlite.prepare('SELECT COUNT(*) AS count FROM tasks').get().count;
     if (taskCount !== 0) throw new Error(`ordinary conversation mutated TaskBox tasks: ${taskCount}`);
+    const auditStart = new Date(Date.now() - 3600000).toISOString();
+    const auditEnd = new Date(Date.now() + 3600000).toISOString();
+    const auditRoute = `/v1/execution/audit-summary?windowStart=${auditStart}&windowEnd=${auditEnd}`;
+    const summary = await expectStatus(auditRoute, { token: 'audit-test-token' }, 200);
+    const auditedFirst = summary.turns.find(t => t.conversationKeyHash === c1 && t.sequence === 1);
+    if (!auditedFirst || !auditedFirst.transitionEvidenceComplete || auditedFirst.status !== 'completed') {
+      throw new Error('actual durable state timestamps not projected');
+    }
+    await expectStatus(auditRoute, { token: runnerToken }, 401);
+    await expectStatus('/v1/tasks', { token: 'audit-test-token' }, 401);
+    if (summary.insufficientEvidence !== true || summary.businessStateUnchanged !== null) throw new Error('missing snapshot evidence was guessed');
     sqlite.close();
 
     const otherOwner = claimedOther === claims[0].body.item ? 'runner-a' : 'runner-b';

@@ -26,6 +26,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify production lineage and combined contracts before upload
+        run: |
+          git merge-base --is-ancestor 8254958 HEAD
+          git merge-base --is-ancestor origin/main HEAD
+          npm ci --prefix server/taskbox-api
+          npm --prefix server/taskbox-api run test:schema
+          npm --prefix server/taskbox-api run test:assistant-conversation
+          npm --prefix server/taskbox-api run test:audit-summary
+          npm --prefix server/taskbox-api run test:hq
+          npm --prefix server/taskbox-api run test:execution
+          npm --prefix server/taskbox-api run test:system-intake
+          python3 -m unittest discover -s integrations/assistant-gateway/tests -v
 
       - name: Install SSH client
         run: sudo apt-get update && sudo apt-get install -y sshpass

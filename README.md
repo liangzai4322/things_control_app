@@ -1,5 +1,7 @@
 # TaskBox / things_control_app
 
+微信助手恢复进度（2026-09-05）：旧审计分支 `3ae02e0` 发布移除了 durable conversation API，Mac runner 与 Gateway 持续 401；不能把 workflow success 当成助手可用。当前恢复工作树已合入 `deploy/main=1656105`，保留聊天基线并修复兼容审计与 runner 退避。生产恢复与重新验收尚未完成，入口见 [助手交接](docs/assistant-gateway-hq-handoff.md)。
+
 最后核对：2026-08-23。
 
 TaskBox 是一个本地优先的个人行动与决策系统：人生参谋部是默认主面板，负责日、周、月三个时间尺度的判断、项目健康和行动派发；盒子是执行副面板，负责任务、场景、进度和证据。积分、抽奖转盘和“小世界”承担游戏化反馈。这个目录也放了一些内容导出脚本，用于把 SCYS、ZSXQ、飞书等来源整理成 Markdown 或 JSON 产物。

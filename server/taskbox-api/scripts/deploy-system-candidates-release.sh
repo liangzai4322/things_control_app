@@ -294,6 +294,7 @@ npm run init-db
 npm run test:schema
 npm run test:hq
 npm run test:assistant-conversation
+npm run test:audit-summary
 npm run test:execution
 npm run test:system-intake
 systemctl start "$SERVICE"
@@ -402,11 +403,12 @@ if curl --silent --show-error --fail --output /dev/null \
 fi
 
 ASSISTANT_CONVERSATION_CLAIM="$API_BASE_URL/v1/assistant-gateway/conversation/turns/claim"
-claim_probe_body='{"runnerId":"deployment-probe","leaseSeconds":60}'
+# An invalid runner ID validates auth + route presence without leasing real work.
+claim_probe_body='{}'
 runner_claim_code="$(curl --silent --output /dev/null --write-out '%{http_code}' \
   --request POST --header "Authorization: Bearer $ASSISTANT_CONVERSATION_RUNNER_TOKEN" \
   --header 'Content-Type: application/json' --data "$claim_probe_body" "$ASSISTANT_CONVERSATION_CLAIM")"
-[[ "$runner_claim_code" == "200" ]] || { echo "assistant conversation runner probe failed: $runner_claim_code" >&2; exit 1; }
+[[ "$runner_claim_code" == "400" ]] || { echo "assistant conversation runner probe failed: $runner_claim_code" >&2; exit 1; }
 for denied_token in "$TASKBOX_API_TOKEN" "$ASSISTANT_GATEWAY_TOKEN" "$ASSISTANT_GATEWAY_READ_TOKEN"; do
   code="$(curl --silent --output /dev/null --write-out '%{http_code}' \
     --request POST --header "Authorization: Bearer $denied_token" \

@@ -6,7 +6,8 @@ const path = require('path');
 
 const root = path.resolve(__dirname, '..');
 const dbPath = path.join(os.tmpdir(), `taskbox-hq-api-${process.pid}-${Date.now()}.sqlite`);
-const port = 3200 + (process.pid % 500);
+// Do not collide with the production Hub on 3219 during release tests.
+const port = Number(process.env.TASKBOX_TEST_PORT || (30000 + ((Date.now() + process.pid) % 20000)));
 const token = 'hq-integration-test-token';
 const baselinePath = path.join(os.tmpdir(), `taskbox-five-system-baseline-${process.pid}-${Date.now()}.json`);
 const hqReceiptCachePath = path.join(os.tmpdir(), `taskbox-hq-receipts-${process.pid}-${Date.now()}.json`);

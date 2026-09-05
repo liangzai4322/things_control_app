@@ -7,6 +7,7 @@ const { createTransport } = require('./daily-intake-transport');
 const { installHealthSystemRoutes } = require('./health-system');
 const { installMissionSystemRoutes } = require('./mission-system');
 const { installExecutionSystemRoutes } = require('./execution-system');
+const { installAssistantAuditSummary } = require('./assistant-audit-summary');
 
 const root = path.resolve(__dirname, '..');
 const dbPath = process.env.TASKBOX_DB_PATH || path.join(root, 'data', 'taskbox.sqlite');
@@ -15,6 +16,9 @@ const apiToken = String(process.env.TASKBOX_API_TOKEN || '').trim();
 const executionApiEnabled = String(process.env.EXECUTION_SYSTEM_API_ENABLED || '') === '1';
 const executionTokenFile = String(process.env.EXECUTION_SYSTEM_API_TOKEN_FILE || '').trim();
 const executionDisableFile = String(process.env.EXECUTION_SYSTEM_API_DISABLE_FILE || '/etc/taskbox-execution-system.disabled').trim();
+const executionAuditSummaryTokenFile = String(process.env.EXECUTION_AUDIT_SUMMARY_TOKEN_FILE || '').trim();
+const executionAuditSummaryDisableFile = String(process.env.EXECUTION_AUDIT_SUMMARY_DISABLE_FILE || executionDisableFile).trim();
+const executionAuditSummaryScopes = new Set(String(process.env.EXECUTION_AUDIT_SUMMARY_SCOPES || '').split(',').map(s => s.trim()).filter(Boolean));
 const assistantGatewayApiEnabled = String(process.env.ASSISTANT_GATEWAY_API_ENABLED || '') === '1';
 const assistantGatewayTokenFile = String(process.env.ASSISTANT_GATEWAY_API_TOKEN_FILE || '').trim();
 const assistantGatewayReadTokenFile = String(process.env.ASSISTANT_GATEWAY_READ_TOKEN_FILE || '').trim();
@@ -51,6 +55,7 @@ const conversationSequenceNeedsBackfill = !conversationColumns.has('sequence_no'
   ['result_hash', 'TEXT'], ['lease_token_hash', 'TEXT'], ['lease_owner_hash', 'TEXT'],
   ['lease_expires_at', 'TEXT'], ['attempt_count', 'INTEGER NOT NULL DEFAULT 0'],
   ['replied_at', 'TEXT'], ['completed_at', 'TEXT'],
+  ['status_timestamps_json', "TEXT NOT NULL DEFAULT '{}'"],
 ].forEach(([name, definition]) => {
   if (!conversationColumns.has(name)) db.exec(`ALTER TABLE assistant_conversation_turns ADD COLUMN ${name} ${definition}`);
 });
@@ -287,6 +292,16 @@ app.use((req, res, next) => {
     return next();
   }
   if (req.path.startsWith('/v1/execution')) {
+    if (req.path === '/v1/execution/audit-summary') {
+      if (!executionApiEnabled || (executionAuditSummaryDisableFile && fs.existsSync(executionAuditSummaryDisableFile))) {
+        return res.status(503).json({ error: 'execution_audit_summary_disabled' });
+      }
+      const token = readSecretFile(executionAuditSummaryTokenFile);
+      if (!token) return res.status(503).json({ error: 'execution_audit_summary_not_configured' });
+      if (!secretMatches(bearerToken(req), token)) return res.status(401).json({ error: 'execution_audit_summary_unauthorized' });
+      req.executionIdentity = { system: 'execution-audit-reader', scopes: executionAuditSummaryScopes };
+      return next();
+    }
     if (!executionApiEnabled || (executionDisableFile && fs.existsSync(executionDisableFile))) {
       return res.status(503).json({ error: 'execution_api_disabled' });
     }
@@ -1634,6 +1649,7 @@ installMissionSystemRoutes({ app, db, now, json, parseJson, authorizeDailyIntake
 installExecutionSystemRoutes({
   app, db, now, json, parseJson, uid, rowToTask, taskParams, normalizeTaskCompletionTransition,
 });
+installAssistantAuditSummary({ app, db, now });
 
 app.get('/v1/taskbox', (req, res) => {
   const boxes = db.prepare('SELECT * FROM boxes ORDER BY sort_order, name').all().map(rowToBox);
@@ -2306,8 +2322,8 @@ app.post('/v1/assistant-gateway/conversation/turns/claim', (req, res) => {
           AND earlier.status!='completed')
       ORDER BY t.created_at,t.turn_id LIMIT 1`).get();
     if (!candidate) return null;
-    const updated = db.prepare("UPDATE assistant_conversation_turns SET status='leased',lease_token_hash=?,lease_owner_hash=?,lease_expires_at=?,attempt_count=attempt_count+1,updated_at=? WHERE turn_id=? AND status='pending'")
-      .run(leaseHash, ownerHash, expiresAt, timestamp, candidate.turn_id);
+    const updated = db.prepare("UPDATE assistant_conversation_turns SET status='leased',lease_token_hash=?,lease_owner_hash=?,lease_expires_at=?,attempt_count=attempt_count+1,updated_at=?,status_timestamps_json=json_set(status_timestamps_json,'$.leased',?) WHERE turn_id=? AND status='pending'")
+      .run(leaseHash, ownerHash, expiresAt, timestamp, timestamp, candidate.turn_id);
     return updated.changes ? db.prepare('SELECT * FROM assistant_conversation_turns WHERE turn_id=?').get(candidate.turn_id) : null;
   }).immediate();
   if (!row) return res.json({ item: null });
@@ -2326,8 +2342,9 @@ app.post('/v1/assistant-gateway/conversation/turns/:id/result', (req, res) => {
   if (!existing) return res.status(404).json({ error: 'conversation_turn_not_found' });
   if (existing.status === 'result_ready' && existing.result_hash === resultHash && existing.lease_owner_hash === ownerHash) return res.json(conversationTurnView(existing, 'runner'));
   if (existing.status !== 'leased' || existing.lease_token_hash !== leaseHash || existing.lease_owner_hash !== ownerHash || existing.lease_expires_at <= now()) return res.status(409).json({ error: 'conversation_lease_conflict' });
-  db.prepare("UPDATE assistant_conversation_turns SET status='result_ready',result_payload=?,result_hash=?,lease_token_hash=NULL,lease_expires_at=NULL,updated_at=? WHERE turn_id=?")
-    .run(payload, resultHash, now(), req.params.id);
+  const resultTimestamp = now();
+  db.prepare("UPDATE assistant_conversation_turns SET status='result_ready',result_payload=?,result_hash=?,lease_token_hash=NULL,lease_expires_at=NULL,updated_at=?,status_timestamps_json=json_set(status_timestamps_json,'$.result_ready',?) WHERE turn_id=?")
+    .run(payload, resultHash, resultTimestamp, resultTimestamp, req.params.id);
   return res.json(conversationTurnView(db.prepare('SELECT * FROM assistant_conversation_turns WHERE turn_id=?').get(req.params.id), 'runner'));
 });
 

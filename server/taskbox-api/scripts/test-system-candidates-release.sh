@@ -103,7 +103,7 @@ if [[ "$*" == *"/v1/assistant-gateway/proposals/pending-user-decision"* ]]; then
   exit
 fi
 if [[ "$*" == *"/v1/assistant-gateway/conversation/turns/claim"* ]]; then
-  if [[ "$*" == *"Authorization: Bearer assistant-conversation-runner-test-token"* ]]; then printf '200';
+  if [[ "$*" == *"Authorization: Bearer assistant-conversation-runner-test-token"* ]]; then printf '400';
   elif [[ "$*" == *"Authorization: Bearer assistant-conversation-producer-test-token"* ]]; then printf '403';
   else printf '401'; fi
   exit

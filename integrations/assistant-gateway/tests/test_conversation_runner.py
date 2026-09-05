@@ -9,7 +9,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from conversation_runner import SessionStore, run_codex, run_once  # noqa: E402
+from conversation_runner import RunnerApiError, RunnerError, SessionStore, run_codex, run_once, serve  # noqa: E402
 from crypto_payload import open_text, read_key, seal_text  # noqa: E402
 
 
@@ -108,6 +108,47 @@ class ConversationRunnerTests(unittest.TestCase):
         self.assertFalse(any(route.endswith("/result") for route, _ in api.calls))
         failure = next(body for route, body in api.calls if route.endswith("/fail"))
         self.assertNotIn("hello", failure["errorCode"])
+
+    def test_typed_execution_failure_preserves_safe_error_code(self):
+        api = FakeApi([{
+            "turnId": "turn-1", "leaseToken": "lease-1", "conversationKeyHash": "c" * 64,
+            "promptPayload": seal_text("hello", self.key),
+        }])
+        with patch("conversation_runner.run_codex", side_effect=RunnerError("codex_execution_failed")):
+            run_once(api, SessionStore(self.root / "sessions.json"), self.key)
+        self.assertEqual(api.calls[-1][1]["errorCode"], "codex_execution_failed")
+
+    def test_auth_outage_backs_off_without_restart_or_state_loss(self):
+        sessions = SessionStore(self.root / "sessions.json")
+        sessions.stage_result("turn-1", {"encrypted": "keep-me"})
+        original = sessions.path.read_bytes()
+        waits, events = [], []
+        def sleeping(seconds):
+            waits.append(seconds)
+            if len(waits) == 3:
+                raise KeyboardInterrupt()
+        with patch("conversation_runner.run_once", side_effect=[
+            RunnerApiError("conversation_api_http_401", 401),
+            RunnerApiError("conversation_api_http_401", 401), False,
+        ]):
+            with self.assertRaises(KeyboardInterrupt):
+                serve(FakeApi([]), sessions, self.key, sleep=sleeping,
+                      emit=lambda value, **kwargs: events.append(json.loads(value)))
+        self.assertEqual(waits, [60, 60, 3])
+        self.assertEqual([event["event"] for event in events], ["runner_api_blocked", "runner_api_recovered"])
+        self.assertEqual(sessions.path.read_bytes(), original)
+
+    def test_pending_result_auth_failure_is_visible_and_preserved(self):
+        sessions = SessionStore(self.root / 'sessions.json')
+        sessions.stage_result('turn-1', {'runnerId': 'r', 'leaseToken': 'l',
+            'resultPayload': 'encrypted', 'resultHash': 'h',
+            'conversationKey': 'c', 'nextSessionId': 'session'})
+        original = sessions.path.read_bytes()
+        api = FakeApi([])
+        with patch.object(api, 'post', side_effect=RunnerApiError('conversation_api_http_401', 401)):
+            with self.assertRaises(RunnerApiError):
+                run_once(api, sessions, self.key)
+        self.assertEqual(sessions.path.read_bytes(), original)
 
 
 if __name__ == "__main__":

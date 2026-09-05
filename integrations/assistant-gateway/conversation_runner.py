@@ -16,7 +16,9 @@ from crypto_payload import open_text, read_key, seal_text
 
 
 class RunnerError(RuntimeError):
-    pass
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.code = code
 
 
 class RunnerApiError(RunnerError):
@@ -166,7 +168,7 @@ def flush_pending_result(client: ApiClient, sessions: SessionStore) -> bool:
         if error.status == 409:
             sessions.drop_result(turn_id)
             return True
-        return False
+        raise
     sessions.commit_result(turn_id)
     return True
 
@@ -206,7 +208,9 @@ def run_once(client: ApiClient, sessions: SessionStore, payload_key: bytes,
         })
         flush_pending_result(client, sessions)
     except Exception as error:
-        if not sessions.first_pending():
+        if sessions.first_pending():
+            raise
+        else:
             error_code = error.code if isinstance(error, (RunnerError, RunnerApiError)) else "runner_unexpected_failure"
             client.post(f"/assistant-gateway/conversation/turns/{turn_id}/fail", {
                 "runnerId": runner_id,
@@ -214,6 +218,31 @@ def run_once(client: ApiClient, sessions: SessionStore, payload_key: bytes,
                 "errorCode": error_code,
             })
     return True
+
+
+def serve(client: ApiClient, sessions: SessionStore, key: bytes,
+          sleep=time.sleep, emit=print) -> None:
+    """Keep durable work intact during an outage; report only state changes."""
+    last_error = None
+    failures = 0
+    while True:
+        try:
+            worked = run_once(client, sessions, key)
+        except RunnerApiError as error:
+            failures += 1
+            if error.code != last_error:
+                emit(json.dumps({"event": "runner_api_blocked", "errorCode": error.code}), flush=True)
+            last_error = error.code
+            # Auth errors are not retried by ApiClient; probe again slowly so a
+            # repaired server recovers without deleting sessions or queued results.
+            sleep(60 if error.status in {401, 403} else min(60, 3 * 2 ** min(failures, 5)))
+            continue
+        if last_error:
+            emit(json.dumps({"event": "runner_api_recovered"}), flush=True)
+        last_error = None
+        failures = 0
+        if not worked:
+            sleep(3)
 
 
 def main() -> int:
@@ -227,10 +256,7 @@ def main() -> int:
         str(Path.home() / ".codex" / "assistant-conversation-sessions.json"),
     )))
     key = read_key(key_file)
-    while True:
-        worked = run_once(client, sessions, key)
-        if not worked:
-            time.sleep(3)
+    serve(client, sessions, key)
 
 
 if __name__ == "__main__":
