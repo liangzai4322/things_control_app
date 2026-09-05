@@ -8,6 +8,11 @@ on:
         required: false
         default: false
         type: boolean
+      conversation_provisioning_public_key:
+        description: Optional one-time base64-encoded RSA public key for encrypted Mac runner credential bootstrap
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -63,3 +68,41 @@ jobs:
             DAILY_INTAKE_ENABLE_TIMERS=$ENABLE_DAILY_INTAKE_TIMERS bash \"\$release/taskbox-api/scripts/deploy-system-candidates-release.sh\" \"\$release\"
             rm -rf \"\$release\" /tmp/taskbox-api-release.tgz
           "
+
+      - name: Export encrypted Mac runner credentials
+        if: ${{ inputs.conversation_provisioning_public_key != '' }}
+        env:
+          SSHPASS: ${{ secrets.TASKBOX_SERVER_PASSWORD }}
+          HOST: ${{ secrets.TASKBOX_SERVER_HOST }}
+          USER: ${{ secrets.TASKBOX_SERVER_USER }}
+          PROVISIONING_PUBLIC_KEY: ${{ inputs.conversation_provisioning_public_key }}
+        run: |
+          printf '%s' "$PROVISIONING_PUBLIC_KEY" | base64 --decode > /tmp/assistant-provisioning.pub
+          sshpass -e ssh -o StrictHostKeyChecking=accept-new "$USER@$HOST" \
+            "PUB_B64='$PROVISIONING_PUBLIC_KEY' bash -s" <<'REMOTE'
+          set -euo pipefail
+          work="/tmp/assistant-conversation-provisioning"
+          rm -rf "$work"
+          mkdir -p "$work"
+          printf '%s' "$PUB_B64" | base64 --decode > "$work/public.pem"
+          openssl pkeyutl -encrypt -pubin -inkey "$work/public.pem" -pkeyopt rsa_padding_mode:oaep \
+            -in /etc/taskbox-assistant-conversation-runner-token -out "$work/runner-token.enc"
+          openssl pkeyutl -encrypt -pubin -inkey "$work/public.pem" -pkeyopt rsa_padding_mode:oaep \
+            -in /etc/taskbox-assistant-conversation-payload-key -out "$work/payload-key.enc"
+          rm -f "$work/public.pem"
+          tar -C "$work" -czf /tmp/assistant-conversation-provisioning.tgz runner-token.enc payload-key.enc
+          rm -rf "$work"
+          REMOTE
+          sshpass -e scp -o StrictHostKeyChecking=accept-new \
+            "$USER@$HOST:/tmp/assistant-conversation-provisioning.tgz" /tmp/assistant-conversation-provisioning.tgz
+          sshpass -e ssh -o StrictHostKeyChecking=accept-new "$USER@$HOST" \
+            'rm -f /tmp/assistant-conversation-provisioning.tgz'
+
+      - name: Upload encrypted Mac runner credentials
+        if: ${{ inputs.conversation_provisioning_public_key != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: assistant-conversation-provisioning-${{ github.run_id }}
+          path: /tmp/assistant-conversation-provisioning.tgz
+          if-no-files-found: error
+          retention-days: 1
