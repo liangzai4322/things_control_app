@@ -13,8 +13,11 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
+
+from crypto_payload import open_text, read_key, seal_text
 
 
 class GatewayError(RuntimeError):
@@ -111,6 +114,92 @@ class DecisionStore:
         os.chmod(temporary, 0o600)
         temporary.replace(self.path)
 
+    def count_promotion_pending(self) -> int:
+        return sum(
+            1 for record in self._read().values()
+            if isinstance(record, Mapping) and record.get("promotionPending") is True
+        )
+
+
+STATUS_FIELDS = (
+    "lastClaimAt", "lastReplyAt", "pendingCount", "automationCount",
+    "promotionPendingCount", "retryCount", "deadLetterCount",
+)
+
+
+def utc_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+class GatewayStatus:
+    """Persist only the operational fields safe for local health aggregation."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        self.value = self._read()
+
+    def _read(self) -> dict[str, Any]:
+        try:
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            raw = {}
+        if not isinstance(raw, dict):
+            raw = {}
+        def count(name: str) -> int:
+            try:
+                return max(0, int(raw.get(name) or 0))
+            except (TypeError, ValueError):
+                return 0
+
+        return {
+            "lastClaimAt": raw.get("lastClaimAt") if isinstance(raw.get("lastClaimAt"), str) else None,
+            "lastReplyAt": raw.get("lastReplyAt") if isinstance(raw.get("lastReplyAt"), str) else None,
+            "pendingCount": count("pendingCount"),
+            "automationCount": count("automationCount"),
+            "promotionPendingCount": count("promotionPendingCount"),
+            "retryCount": count("retryCount"),
+            "deadLetterCount": count("deadLetterCount"),
+        }
+
+    def snapshot(self) -> dict[str, Any]:
+        return {field: self.value[field] for field in STATUS_FIELDS}
+
+    def _write(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.path.with_name(f".{self.path.name}.{os.getpid()}.tmp")
+        temporary.write_text(
+            json.dumps(self.snapshot(), ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        os.chmod(temporary, 0o600)
+        temporary.replace(self.path)
+
+    def record_claim(self, pending_count: int) -> None:
+        self.value["lastClaimAt"] = utc_timestamp()
+        self.value["pendingCount"] = max(0, int(pending_count))
+        self._write()
+
+    def record_automation_count(self, automation_count: int) -> None:
+        self.value["automationCount"] = max(0, int(automation_count))
+        self._write()
+
+    def record_reply(self) -> None:
+        self.value["lastReplyAt"] = utc_timestamp()
+        self._write()
+
+    def record_outcome(self, outcome: str) -> None:
+        if outcome == "retry":
+            self.value["retryCount"] += 1
+        elif outcome == "dead_letter":
+            self.value["deadLetterCount"] += 1
+        else:
+            return
+        self._write()
+
+    def sync_promotion_pending(self, store: DecisionStore) -> None:
+        self.value["promotionPendingCount"] = store.count_promotion_pending()
+        self._write()
+
 
 def verify_message(message: Mapping[str, Any]) -> str:
     verification = message.get("authVerification") or {}
@@ -140,7 +229,8 @@ def claim(client: JsonClient) -> list[dict[str, Any]]:
     return [dict(item) for item in messages if isinstance(item, Mapping)]
 
 
-def acknowledge(client: JsonClient, message: Mapping[str, Any], outcome: str, error: str | None = None) -> None:
+def acknowledge(client: JsonClient, message: Mapping[str, Any], outcome: str, error: str | None = None,
+                status: GatewayStatus | None = None, retry_after_seconds: int = 3600) -> None:
     inbound_id = urllib.parse.quote(str(message["inboundMessageId"]), safe="")
     payload: dict[str, Any] = {
         "consumerId": "assistant-gateway",
@@ -148,13 +238,15 @@ def acknowledge(client: JsonClient, message: Mapping[str, Any], outcome: str, er
         "outcome": outcome,
     }
     if outcome == "retry":
-        payload["retryAfterSeconds"] = 3600
+        payload["retryAfterSeconds"] = max(5, min(3600, int(retry_after_seconds)))
     if error:
         payload["error"] = error[:240]
     client.post(f"/v1/weixin-inbound/{inbound_id}/ack", payload)
+    if status:
+        status.record_outcome(outcome)
 
 
-def send_echo(client: JsonClient, message: Mapping[str, Any]) -> None:
+def send_echo(client: JsonClient, message: Mapping[str, Any], status: GatewayStatus | None = None) -> None:
     inbound_id = urllib.parse.quote(str(message["inboundMessageId"]), safe="")
     client.post(f"/v1/weixin-inbound/{inbound_id}/reply", {
         "consumerId": "assistant-gateway",
@@ -162,6 +254,8 @@ def send_echo(client: JsonClient, message: Mapping[str, Any]) -> None:
         "replyKey": f"echo:{message['inboundMessageId']}",
         "text": "已收到，微信助手通路正常",
     })
+    if status:
+        status.record_reply()
 
 
 def verified_user_ref(message: Mapping[str, Any]) -> str:
@@ -210,14 +304,173 @@ def pending_proposals(client: JsonClient, message: Mapping[str, Any]) -> list[di
     return [dict(item) for item in items if isinstance(item, Mapping)]
 
 
+def automation_queue(client: JsonClient) -> list[dict[str, Any]]:
+    response = client.get("/v1/assistant-gateway/proposals/automation-queue?limit=20")
+    items = response.get("items")
+    if not isinstance(items, list):
+        raise GatewayError("automation_queue_response_invalid")
+    return [dict(item) for item in items if isinstance(item, Mapping)]
+
+
+def conversation_dispatch_key(message: Mapping[str, Any]) -> str:
+    value = f"{message['inboundMessageId']}\0{message['originalMessageHash']}"
+    return f"weixin-chat:{hashlib.sha256(value.encode('utf-8')).hexdigest()}"
+
+
+def process_conversation(hub: JsonClient, conversation: JsonClient, payload_key: bytes,
+                         message: Mapping[str, Any], text: str,
+                         status: GatewayStatus | None = None) -> None:
+    inbound_id = str(message["inboundMessageId"])
+    dispatch_key = conversation_dispatch_key(message)
+    turn = conversation.post("/v1/assistant-gateway/conversation/turns", {
+        "conversationKeyHash": conversation_ref_hash(message),
+        "dispatchKey": dispatch_key,
+        "inboundMessageId": inbound_id,
+        "textHash": str(message["originalMessageHash"]),
+        "promptPayload": seal_text(text, payload_key),
+    })
+    turn_id = str(turn.get("turnId") or "")
+    if not turn_id:
+        raise GatewayError("conversation_turn_invalid")
+    wait_seconds = max(0, min(100, int(os.environ.get("ASSISTANT_CONVERSATION_WAIT_SECONDS", "90"))))
+    deadline = time.monotonic() + wait_seconds
+    while turn.get("status") in {"pending", "leased"} and time.monotonic() < deadline:
+        time.sleep(min(2, max(0.05, deadline - time.monotonic())))
+        route_key = urllib.parse.quote(dispatch_key, safe="")
+        turn = conversation.get(f"/v1/assistant-gateway/conversation/turns/by-dispatch/{route_key}")
+    turn_status = str(turn.get("status") or "")
+    if turn_status in {"result_ready", "replied"}:
+        try:
+            reply = open_text(str(turn.get("resultPayload") or ""), payload_key)
+        except (TypeError, ValueError) as error:
+            raise GatewayError("conversation_result_payload_invalid") from error
+        if turn_status == "result_ready":
+            escaped_id = urllib.parse.quote(inbound_id, safe="")
+            hub.post(f"/v1/weixin-inbound/{escaped_id}/reply", {
+                "consumerId": "assistant-gateway",
+                "leaseToken": str(message["leaseToken"]),
+                "replyKey": f"conversation:{hashlib.sha256(dispatch_key.encode('utf-8')).hexdigest()}",
+                "text": reply,
+            })
+            if status:
+                status.record_reply()
+            conversation.post(f"/v1/assistant-gateway/conversation/turns/{turn_id}/replied", {})
+        acknowledge(hub, message, "processed", status=status)
+        conversation.post(f"/v1/assistant-gateway/conversation/turns/{turn_id}/completed", {})
+        emit("conversation_processed", inboundMessageId=inbound_id, outcome="processed", mode="decision")
+        return
+    if turn_status == "completed":
+        acknowledge(hub, message, "processed", status=status)
+        return
+    if turn_status == "dead_letter":
+        acknowledge(hub, message, "dead_letter", str(turn.get("errorCode") or "conversation_failed"), status)
+        return
+    acknowledge(hub, message, "retry", "assistant_conversation_pending", status, retry_after_seconds=15)
+    emit("conversation_pending", inboundMessageId=inbound_id, outcome="retry", mode="decision")
+
+
 def decision_confirmation(decision: str, patch: Mapping[str, str]) -> str:
     if decision == "approve":
-        return "已记录：同意。提案已批准，不会自动写入任务盒。"
+        return "已记录：同意。提案已批准并安全加入任务盒。"
     if decision == "reject":
         return "已记录：拒绝。"
     if decision == "defer":
         return f"已记录：延期到 {patch['deferUntil']}。"
     return "已记录：请补充提案信息。"
+
+
+SAFE_PROMOTION_FIELDS = {
+    "boxId", "content", "clearAction", "boxReason", "note", "scheduledAt", "dueDate",
+    "visibleAfter", "deviceContext", "executionMode",
+}
+
+
+def validate_manual_promotion(proposal: Mapping[str, Any]) -> None:
+    if proposal.get("proposalType") != "daily_action_proposal" or proposal.get("evidenceStatus") == "provisional":
+        raise GatewayError("promotion_proposal_not_safe")
+    if proposal.get("disposition") != "confirmation_required" or proposal.get("promotionEligible") is not True:
+        raise GatewayError("promotion_eligibility_missing")
+    spec = proposal.get("taskSpec") if isinstance(proposal.get("taskSpec"), Mapping) else {}
+    if set(spec) - SAFE_PROMOTION_FIELDS:
+        raise GatewayError("promotion_fields_denied")
+    content = str(spec.get("content") or "").strip()
+    clear_action = str(spec.get("clearAction") or "").strip()
+    if (not str(spec.get("boxId") or "").strip() or not str(spec.get("boxReason") or "").strip()
+            or not content or content != clear_action):
+        raise GatewayError("promotion_task_spec_invalid")
+
+
+def validate_auto_promotion(proposal: Mapping[str, Any]) -> tuple[str, int]:
+    validate_manual_promotion({**proposal, "disposition": "confirmation_required", "promotionEligible": True})
+    if proposal.get("disposition") != "auto_eligible":
+        raise GatewayError("auto_promotion_eligibility_missing")
+    rule_id = str(proposal.get("standingRuleId") or "")
+    rule_version = int(proposal.get("standingRuleVersion") or 0)
+    if rule_id != "execution.daily_action_proposal.auto_approve" or rule_version < 1:
+        raise GatewayError("auto_promotion_rule_invalid")
+    return rule_id, rule_version
+
+
+def process_automation_queue(reader: JsonClient, writer: JsonClient, store: DecisionStore,
+                             status: GatewayStatus | None = None) -> None:
+    proposals = automation_queue(reader)
+    if status:
+        status.record_automation_count(len(proposals))
+    for proposal in proposals:
+        proposal_id = str(proposal.get("proposalId") or "")
+        revision = int(proposal.get("revision") or 0)
+        rule_id, rule_version = validate_auto_promotion(proposal)
+        state_id = f"automation:{proposal_id}:{revision}"
+        fingerprint = hashlib.sha256(state_id.encode("utf-8")).hexdigest()
+        record = store.get(state_id) or {
+            "proposalId": proposal_id,
+            "revision": revision,
+            "approvalApplied": False,
+            "promotionPending": False,
+            "promotionApplied": False,
+            "approvalKey": f"assistant-gateway:auto-approve:{fingerprint}",
+            "promotionKey": f"assistant-gateway:auto-promote:{fingerprint}",
+        }
+        if record.get("proposalId") != proposal_id or int(record.get("revision") or 0) != revision:
+            raise GatewayError("automation_state_conflict", 409)
+        if not record.get("approvalApplied"):
+            approved = writer.post(
+                f"/v1/hq/proposals/{urllib.parse.quote(proposal_id, safe='')}/approve",
+                {
+                    "proposalId": proposal_id,
+                    "expectedProposalRevision": revision,
+                    "standingRuleId": rule_id,
+                    "standingRuleVersion": rule_version,
+                    "reasonCode": "standing_rule_low_risk_auto_approve",
+                },
+                {"X-Idempotency-Key": record["approvalKey"], "If-Match": f'"proposal-revision-{revision}"'},
+            )
+            if approved.get("status") != "approved" or approved.get("decisionId") != proposal_id:
+                raise GatewayError("auto_approval_contract_invalid")
+            record["approvalApplied"] = True
+            record["promotionPending"] = True
+            store.put(state_id, record)
+        if not record.get("promotionApplied"):
+            promoted = writer.post(
+                f"/v1/hq/proposals/{urllib.parse.quote(proposal_id, safe='')}/promote",
+                {
+                    "proposalId": proposal_id,
+                    "expectedProposalRevision": revision,
+                    "authorizationSource": "standing_rule",
+                    "standingRuleId": rule_id,
+                    "standingRuleVersion": rule_version,
+                    "reasonCode": "standing_rule_low_risk_auto_promote",
+                },
+                {"X-Idempotency-Key": record["promotionKey"], "If-Match": f'"proposal-revision-{revision}"'},
+            )
+            if (promoted.get("status") != "promoted" or promoted.get("proposalId") != proposal_id
+                    or promoted.get("taskboxMutation") is not True or not promoted.get("taskId")):
+                raise GatewayError("auto_promotion_contract_invalid")
+            record["promotionApplied"] = True
+            record["promotionPending"] = False
+            store.put(state_id, record)
+        store.remove(state_id)
+        emit("automation_promoted", mode="decision")
 
 
 def build_decision_record(message: Mapping[str, Any], proposal: Mapping[str, Any],
@@ -227,11 +480,14 @@ def build_decision_record(message: Mapping[str, Any], proposal: Mapping[str, Any
     revision = int(proposal.get("revision") or 0)
     binding = proposal.get("replyBinding") if isinstance(proposal.get("replyBinding"), Mapping) else {}
     if (not proposal_id or revision < 1 or binding.get("verifiedSource") != "notification_hub_weixin"
-            or not str(binding.get("signatureRef") or "") or not str(binding.get("bindingRef") or "")):
+            or not str(binding.get("signatureRef") or "") or not str(binding.get("bindingRef") or "")
+            or not str(binding.get("sessionRef") or "")):
         raise GatewayError("pending_binding_invalid")
     allowed = proposal.get("allowedDecisions")
     if not isinstance(allowed, list) or decision not in allowed:
         raise GatewayError("decision_not_allowed")
+    if decision == "approve":
+        validate_manual_promotion(proposal)
     message_hash = str(message["originalMessageHash"])
     decision_fingerprint = hashlib.sha256(
         f"{inbound_id}\0{proposal_id}\0{decision}".encode("utf-8"),
@@ -244,6 +500,7 @@ def build_decision_record(message: Mapping[str, Any], proposal: Mapping[str, Any
         "replyRef": f"notification-hub:bridge:{bridge_ref}",
         "verifiedUserRef": verified_user_ref(message),
         "conversationRefHash": conversation_ref_hash(message),
+        "sessionRef": str(binding["sessionRef"]),
         "expectedProposalRevision": revision,
         "decision": decision,
         "textHash": message_hash,
@@ -267,23 +524,30 @@ def build_decision_record(message: Mapping[str, Any], proposal: Mapping[str, Any
         "payload": payload,
         "confirmation": decision_confirmation(decision, patch),
         "hqApplied": False,
+        "promotionPending": False,
+        "promotionApplied": False,
         "replySent": False,
     }
 
 
 def process_decision(hub: JsonClient, hq_reader: JsonClient, hq_writer: JsonClient,
-                     store: DecisionStore, message: Mapping[str, Any]) -> None:
+                     store: DecisionStore, message: Mapping[str, Any],
+                     status: GatewayStatus | None = None,
+                     conversation: JsonClient | None = None, payload_key: bytes | None = None) -> None:
     inbound_id = str(message.get("inboundMessageId") or "")
     try:
         text = verify_message(message)
         if text == "测试" or text.startswith("测试-"):
-            send_echo(hub, message)
-            acknowledge(hub, message, "processed")
+            send_echo(hub, message, status)
+            acknowledge(hub, message, "processed", status=status)
             emit("echo_processed", inboundMessageId=inbound_id, outcome="processed", mode="decision")
             return
         parsed = parse_decision(text)
         if not parsed:
-            acknowledge(hub, message, "retry", "decision_not_explicit")
+            if conversation is not None and payload_key is not None:
+                process_conversation(hub, conversation, payload_key, message, text, status)
+                return
+            acknowledge(hub, message, "retry", "decision_not_explicit", status)
             emit("message_deferred", inboundMessageId=inbound_id, attemptCount=message.get("attemptCount"), mode="decision")
             return
         decision, patch = parsed
@@ -293,8 +557,11 @@ def process_decision(hub: JsonClient, hq_reader: JsonClient, hq_writer: JsonClie
         if not record:
             proposals = pending_proposals(hq_reader, message)
             if len(proposals) != 1:
+                if not proposals and conversation is not None and payload_key is not None:
+                    process_conversation(hub, conversation, payload_key, message, text, status)
+                    return
                 reason = "no_pending_proposal" if not proposals else "ambiguous_pending_proposals"
-                acknowledge(hub, message, "retry", reason)
+                acknowledge(hub, message, "retry", reason, status)
                 emit("message_deferred", inboundMessageId=inbound_id, attemptCount=message.get("attemptCount"), mode="decision")
                 return
             record = build_decision_record(message, proposals[0], decision, patch)
@@ -310,7 +577,50 @@ def process_decision(hub: JsonClient, hq_reader: JsonClient, hq_writer: JsonClie
             )
             if response.get("taskboxMutation") is not False or response.get("proposalId") != record["proposalId"]:
                 raise GatewayError("hq_reply_contract_invalid")
+            if record.get("decision") == "approve":
+                proposal = response.get("proposal") if isinstance(response.get("proposal"), Mapping) else {}
+                reply_id = str(response.get("replyId") or "")
+                if proposal.get("status") != "approved" or not reply_id:
+                    raise GatewayError("hq_approval_receipt_invalid")
+                promotion_fingerprint = hashlib.sha256(
+                    f"{inbound_id}\0{record['proposalId']}\0{record['revision']}\0{record['payload']['scopeKey']}".encode("utf-8"),
+                ).hexdigest()
+                record["promotion"] = {
+                    "idempotencyKey": f"assistant-gateway:promotion:{promotion_fingerprint}",
+                    "payload": {
+                        "proposalId": record["proposalId"],
+                        "expectedProposalRevision": record["revision"],
+                        "authorizationSource": "explicit_user",
+                        "approvalReplyId": reply_id,
+                        "inboundMessageId": inbound_id,
+                        "bindingRef": record["payload"]["scopeKey"],
+                        "sessionRef": record["payload"]["sessionRef"],
+                        "reasonCode": "verified_weixin_user_approval",
+                    },
+                }
+                record["promotionPending"] = True
             record["hqApplied"] = True
+            store.put(inbound_id, record)
+        if record.get("decision") == "approve" and not record.get("promotionApplied"):
+            promotion = record.get("promotion") if isinstance(record.get("promotion"), Mapping) else {}
+            promotion_payload = promotion.get("payload") if isinstance(promotion.get("payload"), Mapping) else {}
+            promotion_key = str(promotion.get("idempotencyKey") or "")
+            if not record.get("promotionPending") or not promotion_key or not promotion_payload:
+                raise GatewayError("promotion_state_missing", 409)
+            response = hq_writer.post(
+                f"/v1/hq/proposals/{urllib.parse.quote(str(record['proposalId']), safe='')}/promote",
+                promotion_payload,
+                {
+                    "X-Idempotency-Key": promotion_key,
+                    "If-Match": f'"proposal-revision-{record["revision"]}"',
+                },
+            )
+            if (response.get("taskboxMutation") is not True or response.get("proposalId") != record["proposalId"]
+                    or response.get("status") != "promoted" or not str(response.get("taskId") or "")):
+                raise GatewayError("hq_promotion_contract_invalid")
+            record["promotionApplied"] = True
+            record["promotionPending"] = False
+            record["taskId"] = str(response["taskId"])
             store.put(inbound_id, record)
         if not record.get("replySent"):
             escaped_id = urllib.parse.quote(inbound_id, safe="")
@@ -320,15 +630,17 @@ def process_decision(hub: JsonClient, hq_reader: JsonClient, hq_writer: JsonClie
                 "replyKey": f"decision:{hashlib.sha256(inbound_id.encode('utf-8')).hexdigest()}",
                 "text": str(record["confirmation"]),
             })
+            if status:
+                status.record_reply()
             record["replySent"] = True
             store.put(inbound_id, record)
-        acknowledge(hub, message, "processed")
+        acknowledge(hub, message, "processed", status=status)
         store.remove(inbound_id)
         emit("decision_processed", inboundMessageId=inbound_id, outcome="processed", mode="decision")
     except GatewayError as error:
         permanent = error.status in {400, 401, 403, 409} or error.code.startswith("inbound_")
         try:
-            acknowledge(hub, message, "dead_letter" if permanent else "retry", error.code)
+            acknowledge(hub, message, "dead_letter" if permanent else "retry", error.code, status)
             if permanent:
                 store.remove(inbound_id)
         except GatewayError:
@@ -343,21 +655,21 @@ def emit(event: str, **fields: Any) -> None:
     print(json.dumps({"event": event, **safe}, ensure_ascii=False, separators=(",", ":")), flush=True)
 
 
-def process_echo(client: JsonClient, message: Mapping[str, Any]) -> None:
+def process_echo(client: JsonClient, message: Mapping[str, Any], status: GatewayStatus | None = None) -> None:
     inbound_id = str(message.get("inboundMessageId") or "")
     try:
         text = verify_message(message)
         if text != "测试" and not text.startswith("测试-"):
-            acknowledge(client, message, "retry", "echo_mode_only")
+            acknowledge(client, message, "retry", "echo_mode_only", status)
             emit("message_deferred", inboundMessageId=inbound_id, attemptCount=message.get("attemptCount"), mode="echo")
             return
-        send_echo(client, message)
-        acknowledge(client, message, "processed")
+        send_echo(client, message, status)
+        acknowledge(client, message, "processed", status=status)
         emit("echo_processed", inboundMessageId=inbound_id, outcome="processed", mode="echo")
     except GatewayError as error:
         permanent = error.status in {400, 401, 403, 409} or error.code.startswith("inbound_")
         try:
-            acknowledge(client, message, "dead_letter" if permanent else "retry", error.code)
+            acknowledge(client, message, "dead_letter" if permanent else "retry", error.code, status)
         except GatewayError:
             pass
         emit("message_failed", inboundMessageId=inbound_id, error=error.code, mode="echo")
@@ -380,13 +692,20 @@ def main() -> int:
     ingress_token = credential_path("weixin-ingress.token")
     hq_reply_token = credential_path("hq-reply.token")
     hq_read_token = credential_path("hq-read.token")
+    conversation_token = credential_path("conversation-producer.token")
+    payload_key = read_key(credential_path("conversation-payload.key"))
     hub = JsonClient(os.environ.get("NOTIFICATION_HUB_BASE_URL", "http://127.0.0.1:3219"), ingress_token)
     hq_base_url = os.environ.get("TASKBOX_HQ_BASE_URL", "http://127.0.0.1:3107")
     hq_reader = JsonClient(hq_base_url, hq_read_token)
     hq_writer = JsonClient(hq_base_url, hq_reply_token)
+    conversation = JsonClient(hq_base_url, conversation_token)
     store = DecisionStore(Path(os.environ.get(
         "ASSISTANT_GATEWAY_STATE_FILE", "/var/lib/taskbox-assistant-gateway/decision-state.json",
     )))
+    status = GatewayStatus(Path(os.environ.get(
+        "ASSISTANT_GATEWAY_STATUS_FILE", "/var/lib/taskbox-assistant-gateway/status.json",
+    )))
+    status.sync_promotion_pending(store)
     disable_file = Path(os.environ.get("ASSISTANT_GATEWAY_WORKER_DISABLE_FILE", "/etc/taskbox-assistant-gateway-worker.disabled"))
     running = True
 
@@ -402,17 +721,22 @@ def main() -> int:
             time.sleep(5)
             continue
         try:
+            if mode == "decision":
+                process_automation_queue(hq_reader, hq_writer, store, status)
             messages = claim(hub)
+            status.record_claim(len(messages))
             for message in messages:
                 if mode == "decision":
-                    process_decision(hub, hq_reader, hq_writer, store, message)
+                    process_decision(hub, hq_reader, hq_writer, store, message, status, conversation, payload_key)
                 else:
-                    process_echo(hub, message)
+                    process_echo(hub, message, status)
         except GatewayError as error:
             emit("claim_failed", error=error.code, mode=mode)
             if error.status in {401, 403}:
                 return 1
             time.sleep(10)
+        finally:
+            status.sync_promotion_pending(store)
     emit("worker_stopped", mode=mode)
     return 0
 

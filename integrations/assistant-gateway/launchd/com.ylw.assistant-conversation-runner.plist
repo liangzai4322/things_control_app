@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.ylw.assistant-conversation-runner</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/ylw/.codex/assistant-conversation-runner/conversation_runner.py</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/ylw/.codex/assistant-conversation-runner</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>TASKBOX_API_ENDPOINT</key>
+    <string>https://liangzai666.com/taskbox-api/v1</string>
+    <key>ASSISTANT_CONVERSATION_RUNNER_TOKEN_FILE</key>
+    <string>/Users/ylw/.codex/secrets/assistant-conversation-runner-token</string>
+    <key>ASSISTANT_CONVERSATION_PAYLOAD_KEY_FILE</key>
+    <string>/Users/ylw/.codex/secrets/assistant-conversation-payload-key</string>
+    <key>ASSISTANT_CONVERSATION_SESSION_FILE</key>
+    <string>/Users/ylw/.codex/assistant-conversation-runner/state.json</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>15</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>/Users/ylw/.codex/assistant-conversation-runner/runner.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/ylw/.codex/assistant-conversation-runner/runner-error.log</string>
+</dict>
+</plist>

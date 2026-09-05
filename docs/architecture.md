@@ -1,5 +1,9 @@
 # TaskBox 架构
 
+> Assistant Gateway 与 HQ 的当前权威交接、三分流和唯一 TaskBox 写路径见
+> [`assistant-gateway-hq-handoff.md`](assistant-gateway-hq-handoff.md)。HQ `/promote`
+> 是 approved proposal 的唯一创建路径；execution API 不参与该场景的 task create。
+
 最后核对：2026-08-23。
 
 ## 系统边界

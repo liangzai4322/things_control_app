@@ -1,5 +1,12 @@
 # AGENTS.md
 
+## Assistant Gateway / HQ 当前交接
+
+涉及微信决策、HQ proposal 或 TaskBox 晋升时，先读
+`docs/assistant-gateway-hq-handoff.md`。已审批 proposal 只经 HQ `/promote` 创建
+TaskBox 任务，禁止再经 execution create 双写。三分流与 writer 尚未完成联合验收时，
+不得把 decision mode 描述为自动晋升闭环。
+
 ## Repo role
 
 This workspace has two jobs:

@@ -18,6 +18,8 @@ const executionDisableFile = String(process.env.EXECUTION_SYSTEM_API_DISABLE_FIL
 const assistantGatewayApiEnabled = String(process.env.ASSISTANT_GATEWAY_API_ENABLED || '') === '1';
 const assistantGatewayTokenFile = String(process.env.ASSISTANT_GATEWAY_API_TOKEN_FILE || '').trim();
 const assistantGatewayReadTokenFile = String(process.env.ASSISTANT_GATEWAY_READ_TOKEN_FILE || '').trim();
+const assistantConversationProducerTokenFile = String(process.env.ASSISTANT_CONVERSATION_PRODUCER_TOKEN_FILE || '').trim();
+const assistantConversationRunnerTokenFile = String(process.env.ASSISTANT_CONVERSATION_RUNNER_TOKEN_FILE || '').trim();
 const assistantGatewayDisableFile = String(process.env.ASSISTANT_GATEWAY_API_DISABLE_FILE || '/etc/taskbox-assistant-gateway.disabled').trim();
 const assistantGatewayScopes = new Set(String(process.env.ASSISTANT_GATEWAY_API_SCOPES || '')
   .split(',').map((item) => item.trim()).filter(Boolean));
@@ -37,6 +39,29 @@ const app = express();
 const db = new Database(dbPath);
 db.pragma('foreign_keys = ON');
 db.exec(fs.readFileSync(path.join(root, 'schema.sql'), 'utf8'));
+db.exec(`CREATE TABLE IF NOT EXISTS assistant_conversation_turns (
+  turn_id TEXT PRIMARY KEY, conversation_key_hash TEXT NOT NULL, dispatch_key TEXT NOT NULL UNIQUE,
+  inbound_message_id TEXT NOT NULL, text_hash TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+  result_text TEXT, error_code TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+)`);
+const conversationColumns = new Set(db.prepare("PRAGMA table_info('assistant_conversation_turns')").all().map((column) => column.name));
+const conversationSequenceNeedsBackfill = !conversationColumns.has('sequence_no');
+[
+  ['sequence_no', 'INTEGER NOT NULL DEFAULT 1'], ['prompt_payload', 'TEXT'], ['result_payload', 'TEXT'],
+  ['result_hash', 'TEXT'], ['lease_token_hash', 'TEXT'], ['lease_owner_hash', 'TEXT'],
+  ['lease_expires_at', 'TEXT'], ['attempt_count', 'INTEGER NOT NULL DEFAULT 0'],
+  ['replied_at', 'TEXT'], ['completed_at', 'TEXT'],
+].forEach(([name, definition]) => {
+  if (!conversationColumns.has(name)) db.exec(`ALTER TABLE assistant_conversation_turns ADD COLUMN ${name} ${definition}`);
+});
+if (conversationSequenceNeedsBackfill) db.exec(`UPDATE assistant_conversation_turns AS current SET sequence_no=(
+    SELECT COUNT(*) FROM assistant_conversation_turns AS earlier
+    WHERE earlier.conversation_key_hash=current.conversation_key_hash
+      AND (earlier.created_at<current.created_at
+        OR (earlier.created_at=current.created_at AND earlier.turn_id<=current.turn_id))
+  )`);
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_assistant_conversation_sequence ON assistant_conversation_turns(conversation_key_hash, sequence_no)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_assistant_conversation_status ON assistant_conversation_turns(status, created_at)');
 const boxColumns = new Set(db.prepare("PRAGMA table_info('boxes')").all().map((column) => column.name));
 [
   ['box_type', "TEXT DEFAULT 'task'"],
@@ -180,7 +205,28 @@ app.use((req, res, next) => {
       || req.path === '/v1/mission/state') return next();
     return res.status(403).json({ error: 'daily_intake_route_denied' });
   }
-  if (req.path === '/v1/assistant-gateway/proposals/pending-user-decision') {
+  if (req.path.startsWith('/v1/assistant-gateway/conversation/')) {
+    if (!assistantGatewayApiEnabled
+      || (assistantGatewayDisableFile && fs.existsSync(assistantGatewayDisableFile))) {
+      return res.status(503).json({ error: 'assistant_gateway_api_disabled' });
+    }
+    const auth = bearerToken(req);
+    const producerToken = readSecretFile(assistantConversationProducerTokenFile);
+    const runnerToken = readSecretFile(assistantConversationRunnerTokenFile);
+    if (producerToken && secretMatches(auth, producerToken)) {
+      req.assistantConversationIdentity = { system: 'assistant-conversation-producer' };
+      return next();
+    }
+    if (runnerToken && secretMatches(auth, runnerToken)) {
+      req.assistantConversationIdentity = { system: 'assistant-conversation-runner' };
+      return next();
+    }
+    if (!producerToken || !runnerToken) return res.status(503).json({ error: 'assistant_conversation_api_not_configured' });
+    return res.status(401).json({ error: 'assistant_conversation_unauthorized' });
+  }
+  if (req.path === '/v1/assistant-gateway/proposals/pending-user-decision'
+    || req.path === '/v1/assistant-gateway/proposals/automation-queue'
+  ) {
     if (!assistantGatewayApiEnabled
       || (assistantGatewayDisableFile && fs.existsSync(assistantGatewayDisableFile))) {
       return res.status(503).json({ error: 'assistant_gateway_api_disabled' });
@@ -190,11 +236,39 @@ app.use((req, res, next) => {
     if (!secretMatches(bearerToken(req), readToken)) {
       return res.status(401).json({ error: 'assistant_gateway_read_unauthorized' });
     }
-    if (!assistantGatewayReadScopes.has('proposals:read')) {
+    if (!assistantGatewayReadScopes.has('proposal-decisions:read')) {
       return res.status(403).json({ error: 'assistant_gateway_read_scope_denied' });
     }
     req.assistantGatewayIdentity = { system: 'assistant-gateway-reader', scopes: assistantGatewayReadScopes };
     return next();
+  }
+  if (/^\/v1\/hq\/proposals\/[^/]+\/promote$/.test(req.path)) {
+    const gatewayToken = readSecretFile(assistantGatewayTokenFile);
+    if (gatewayToken && secretMatches(bearerToken(req), gatewayToken)) {
+      if (!assistantGatewayApiEnabled
+        || (assistantGatewayDisableFile && fs.existsSync(assistantGatewayDisableFile))) {
+        return res.status(503).json({ error: 'assistant_gateway_api_disabled' });
+      }
+      if (!assistantGatewayScopes.has('proposal-promotions:write')) {
+        return res.status(403).json({ error: 'assistant_gateway_scope_denied' });
+      }
+      req.assistantGatewayIdentity = { system: 'assistant-gateway', scopes: assistantGatewayScopes };
+      return next();
+    }
+  }
+  if (/^\/v1\/hq\/proposals\/[^/]+\/approve$/.test(req.path)) {
+    const gatewayToken = readSecretFile(assistantGatewayTokenFile);
+    if (gatewayToken && secretMatches(bearerToken(req), gatewayToken)) {
+      if (!assistantGatewayApiEnabled
+        || (assistantGatewayDisableFile && fs.existsSync(assistantGatewayDisableFile))) {
+        return res.status(503).json({ error: 'assistant_gateway_api_disabled' });
+      }
+      if (!assistantGatewayScopes.has('proposal-auto-approve:write')) {
+        return res.status(403).json({ error: 'assistant_gateway_scope_denied' });
+      }
+      req.assistantGatewayIdentity = { system: 'assistant-gateway', scopes: assistantGatewayScopes };
+      return next();
+    }
   }
   if (/^\/v1\/hq\/proposals\/[^/]+\/replies$/.test(req.path)) {
     if (!assistantGatewayApiEnabled
@@ -549,6 +623,11 @@ const HQ_SOURCE_AUTHORITIES = new Set(['explicit_user', 'standing_rule', 'ai_der
 const HQ_PROPOSAL_STATUSES = new Set(['proposed', 'approved', 'rejected', 'deferred', 'promoted']);
 const HQ_PROPOSAL_TERMINAL_SYNC_STATUSES = new Set(['rejected', 'deferred', 'promoted']);
 const ASSISTANT_GATEWAY_DECISIONS = new Set(['approve', 'reject', 'defer', 'expand']);
+const ASSISTANT_GATEWAY_AUTO_APPROVE_RULE_ID = 'execution.daily_action_proposal.auto_approve';
+const ASSISTANT_GATEWAY_PROMOTION_FIELDS = new Set([
+  'boxId', 'content', 'clearAction', 'boxReason', 'note', 'scheduledAt', 'dueDate',
+  'visibleAfter', 'deviceContext', 'executionMode',
+]);
 
 function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
@@ -589,6 +668,7 @@ function normalizeProposalReplyBinding(value, proposalRevision) {
   const conversationRefHash = String(value.conversationRefHash || '').trim().toLowerCase();
   const signatureRef = String(value.signatureRef || '').trim();
   const bindingRef = String(value.bindingRef || '').trim();
+  const sessionRef = String(value.sessionRef || '').trim();
   const expiresAt = String(value.expiresAt || '').trim();
   const allowedDecisions = [...new Set(Array.isArray(value.allowedDecisions)
     ? value.allowedDecisions.map((item) => String(item || '').trim()).filter(Boolean)
@@ -598,6 +678,7 @@ function normalizeProposalReplyBinding(value, proposalRevision) {
   if (!/^[a-f0-9]{64}$/.test(conversationRefHash)) throw proposalError('invalid_reply_binding_conversation');
   if (!signatureRef || signatureRef.length > 500) throw proposalError('invalid_reply_binding_signature');
   if (!bindingRef || bindingRef.length > 120) throw proposalError('invalid_reply_binding_ref');
+  if (!sessionRef || sessionRef.length > 200) throw proposalError('invalid_reply_binding_session');
   if (!expiresAt || Number.isNaN(new Date(expiresAt).getTime())) throw proposalError('invalid_reply_binding_expiry');
   if (!allowedDecisions.length || allowedDecisions.some((item) => !ASSISTANT_GATEWAY_DECISIONS.has(item))) {
     throw proposalError('invalid_reply_binding_decisions');
@@ -608,6 +689,7 @@ function normalizeProposalReplyBinding(value, proposalRevision) {
     conversationRefHash,
     signatureRef,
     bindingRef,
+    sessionRef,
     proposalRevision,
     allowedDecisions,
     expiresAt,
@@ -1098,6 +1180,7 @@ function promoteProposal(decisionId, input = {}) {
       decisionNote: String(input.note || current.decisionNote || ''),
       decidedAt: current.decidedAt || timestamp,
       promotedAt: timestamp,
+      assistantGatewayPromotion: input.assistantGatewayPromotion || current.assistantGatewayPromotion || null,
       updatedAt: timestamp,
     });
     const taskSpec = proposal.taskSpec || {};
@@ -1116,7 +1199,11 @@ function promoteProposal(decisionId, input = {}) {
         actionProposalIds: [...new Set([...(brief?.actionProposalIds || []), proposal.decisionId])],
       });
     }
-    recordProposalEvent(proposal, 'promote', actor, input.note, { taskId: task.id, linkedExisting: Boolean(current.existingTaskId) });
+    recordProposalEvent(proposal, 'promote', actor, input.note, {
+      taskId: task.id,
+      linkedExisting: Boolean(current.existingTaskId),
+      assistantGatewayPromotion: input.assistantGatewayPromotion || null,
+    });
     return proposal;
   })();
 }
@@ -1784,12 +1871,13 @@ function normalizeGatewayReply(req) {
   const verifiedUserRef = boundedReplyText(body.verifiedUserRef, 500, 'verified_user_ref', true);
   const conversationRefHash = boundedReplyText(body.conversationRefHash, 64, 'conversation_ref_hash', true).toLowerCase();
   if (!/^[a-f0-9]{64}$/.test(conversationRefHash)) throw proposalError('invalid_conversation_ref_hash');
+  const sessionRef = boundedReplyText(body.sessionRef, 200, 'session_ref', true);
   const note = boundedReplyText(body.note, 2000, 'note');
   const clarification = boundedReplyText(body.clarification || body.note, 2000, 'clarification', decision === 'expand');
   const deferUntil = body.deferUntil ? boundedReplyText(body.deferUntil, 10, 'defer_until') : '';
   return {
     proposalId, idempotencyKey, inboundMessageId, decision, expectedProposalRevision,
-    textHash, receivedAt, source, signatureRef, replyRef, verifiedUserRef, conversationRefHash, note,
+    textHash, receivedAt, source, signatureRef, replyRef, verifiedUserRef, conversationRefHash, sessionRef, note,
     clarification, deferUntil,
     reasonCode: boundedReplyText(body.reasonCode, 120, 'reason_code'),
     scopeKey: boundedReplyText(body.scopeKey, 120, 'scope_key'),
@@ -1804,6 +1892,7 @@ function proposalReplyBindingError(proposal, input) {
   if (binding.verifiedSource !== input.source) return 'proposal_reply_binding_source_conflict';
   if (binding.verifiedUserRef !== input.verifiedUserRef) return 'proposal_reply_binding_user_conflict';
   if (binding.conversationRefHash !== input.conversationRefHash) return 'proposal_reply_binding_conversation_conflict';
+  if (binding.sessionRef !== input.sessionRef) return 'proposal_reply_binding_session_conflict';
   if (binding.signatureRef !== input.signatureRef) return 'proposal_reply_binding_signature_conflict';
   if (binding.bindingRef !== input.scopeKey) return 'proposal_reply_binding_ref_conflict';
   if (!Array.isArray(binding.allowedDecisions) || !binding.allowedDecisions.includes(input.decision)) {
@@ -1812,6 +1901,160 @@ function proposalReplyBindingError(proposal, input) {
   const expiry = new Date(binding.expiresAt).getTime();
   if (Number.isNaN(expiry) || expiry <= Date.now()) return 'proposal_reply_binding_expired';
   return '';
+}
+
+function normalizedGatewayAction(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase('zh-CN');
+}
+
+function gatewayPromotionEligibilityError(proposal) {
+  if (proposal.proposalType !== 'daily_action_proposal') return 'gateway_promotion_non_daily';
+  if (proposal.evidenceStatus === 'provisional') return 'gateway_promotion_provisional';
+  if (proposal.existingTaskId) return 'gateway_promotion_existing_task_forbidden';
+  const taskSpec = proposal.taskSpec && typeof proposal.taskSpec === 'object' && !Array.isArray(proposal.taskSpec)
+    ? proposal.taskSpec : {};
+  const content = proposal.content && typeof proposal.content === 'object' && !Array.isArray(proposal.content)
+    ? proposal.content : {};
+  if (Object.keys(taskSpec).some((key) => !ASSISTANT_GATEWAY_PROMOTION_FIELDS.has(key))) {
+    return 'gateway_promotion_fields_denied';
+  }
+  const boxId = String(taskSpec.boxId || '').trim();
+  const clearAction = String(taskSpec.clearAction || content.clearAction || '').trim();
+  const boxReason = String(taskSpec.boxReason || content.boxReason || '').trim();
+  const taskContent = String(taskSpec.content || '').trim();
+  if (!boxId || !db.prepare("SELECT 1 FROM boxes WHERE id=? AND box_type='task'").get(boxId)) {
+    return 'gateway_promotion_target_box_invalid';
+  }
+  if (!clearAction || !boxReason || normalizedGatewayAction(taskContent) !== normalizedGatewayAction(clearAction)) {
+    return 'gateway_promotion_action_incomplete';
+  }
+  if (String(content.riskClass || '') !== 'low' || String(content.operationKind || '') !== 'create_task') {
+    return 'gateway_promotion_risk_not_allowlisted';
+  }
+  if (String(content.duplicateStatus || '') !== 'none') return 'gateway_promotion_duplicate_unresolved';
+  if (taskSpec.deviceContext && !['desktop', 'mobile', 'universal'].includes(taskSpec.deviceContext)) {
+    return 'gateway_promotion_device_context_invalid';
+  }
+  if (taskSpec.executionMode && !['self', 'ai', 'hybrid'].includes(taskSpec.executionMode)) {
+    return 'gateway_promotion_execution_mode_invalid';
+  }
+  for (const field of ['scheduledAt', 'dueDate', 'visibleAfter']) {
+    if (taskSpec[field] && (String(taskSpec[field]).length > 40 || Number.isNaN(Date.parse(String(taskSpec[field]))))) {
+      return 'gateway_promotion_date_invalid';
+    }
+  }
+  const duplicate = db.prepare('SELECT id, content FROM tasks WHERE box_id=? AND deleted=0').all(boxId)
+    .find((task) => normalizedGatewayAction(task.content) === normalizedGatewayAction(taskContent));
+  if (duplicate) return 'gateway_promotion_duplicate_found';
+  return '';
+}
+
+function readGatewayStandingRule(ruleId, version) {
+  if (ruleId !== ASSISTANT_GATEWAY_AUTO_APPROVE_RULE_ID) return null;
+  const row = db.prepare('SELECT * FROM hq_review_rules WHERE rule_id=?').get(ruleId);
+  const rule = rowToReviewRule(row);
+  if (!rule || !rule.enabled || !rule.revocable || rule.source !== 'standing_rule' || rule.version !== version) return null;
+  if (rule.revokedAt || (rule.expiresAt && Date.parse(rule.expiresAt) <= Date.now())) return null;
+  return rule;
+}
+
+function normalizeGatewayPromotion(req) {
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const proposalId = boundedReplyText(req.params.id, 200, 'proposal_id', true);
+  if (body.proposalId && String(body.proposalId).trim() !== proposalId) {
+    throw proposalError('proposal_id_binding_mismatch', 409);
+  }
+  const idempotencyKey = boundedReplyText(req.headers['x-idempotency-key'], 300, 'idempotency_key', true);
+  const expectedProposalRevision = Number(body.expectedProposalRevision);
+  if (!Number.isSafeInteger(expectedProposalRevision) || expectedProposalRevision < 1) {
+    throw proposalError('expected_proposal_revision_required');
+  }
+  const ifMatchRevision = parseProposalRevisionTag(req.headers['if-match']);
+  if (!ifMatchRevision || ifMatchRevision !== expectedProposalRevision) {
+    throw proposalError('proposal_revision_binding_mismatch', 409);
+  }
+  const authorizationSource = boundedReplyText(body.authorizationSource, 40, 'authorization_source', true);
+  if (!['explicit_user', 'standing_rule'].includes(authorizationSource)) {
+    throw proposalError('gateway_promotion_authorization_denied', 403);
+  }
+  return {
+    proposalId,
+    idempotencyKey,
+    expectedProposalRevision,
+    authorizationSource,
+    approvalReplyId: boundedReplyText(body.approvalReplyId, 200, 'approval_reply_id'),
+    inboundMessageId: boundedReplyText(body.inboundMessageId, 200, 'inbound_message_id'),
+    bindingRef: boundedReplyText(body.bindingRef, 120, 'binding_ref'),
+    sessionRef: boundedReplyText(body.sessionRef, 200, 'session_ref'),
+    standingRuleId: boundedReplyText(body.standingRuleId, 200, 'standing_rule_id'),
+    standingRuleVersion: Number(body.standingRuleVersion || 0),
+    reasonCode: boundedReplyText(body.reasonCode, 120, 'reason_code', true),
+  };
+}
+
+function validateGatewayStandingAuthorization(proposal, input) {
+  if (!Number.isSafeInteger(input.standingRuleVersion) || input.standingRuleVersion < 1) {
+    throw proposalError('gateway_standing_rule_version_required', 403);
+  }
+  const rule = readGatewayStandingRule(input.standingRuleId, input.standingRuleVersion);
+  const authorization = proposal.automationAuthorization || {};
+  if (!rule || proposal.standingRuleId !== input.standingRuleId
+    || authorization.source !== 'standing_rule' || authorization.ruleId !== input.standingRuleId
+    || Number(authorization.version) !== input.standingRuleVersion || authorization.exact !== true
+    || authorization.enabled !== true || authorization.revocable !== true) {
+    throw proposalError('gateway_standing_rule_not_active', 403);
+  }
+}
+
+function normalizeGatewayAutoApprove(req) {
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const proposalId = boundedReplyText(req.params.id, 200, 'proposal_id', true);
+  const idempotencyKey = boundedReplyText(req.headers['x-idempotency-key'], 300, 'idempotency_key', true);
+  const expectedProposalRevision = Number(body.expectedProposalRevision);
+  const ifMatchRevision = parseProposalRevisionTag(req.headers['if-match']);
+  if (!Number.isSafeInteger(expectedProposalRevision) || expectedProposalRevision < 1
+    || !ifMatchRevision || ifMatchRevision !== expectedProposalRevision) {
+    throw proposalError('proposal_revision_binding_mismatch', 409);
+  }
+  return {
+    proposalId,
+    idempotencyKey,
+    expectedProposalRevision,
+    standingRuleId: boundedReplyText(body.standingRuleId, 200, 'standing_rule_id', true),
+    standingRuleVersion: Number(body.standingRuleVersion || 0),
+    reasonCode: boundedReplyText(body.reasonCode, 120, 'reason_code', true),
+  };
+}
+
+function validateGatewayPromotionAuthorization(proposal, input) {
+  if (proposal.status !== 'approved') throw proposalError('proposal_not_approved', 409);
+  const eligibilityError = gatewayPromotionEligibilityError(proposal);
+  if (eligibilityError) throw proposalError(eligibilityError, 409);
+  if (proposal.revision !== input.expectedProposalRevision) {
+    throw proposalError('proposal_revision_conflict', 409, {
+      expectedRevision: input.expectedProposalRevision,
+      currentRevision: proposal.revision,
+    });
+  }
+  if (input.authorizationSource === 'standing_rule') {
+    validateGatewayStandingAuthorization(proposal, input);
+    return;
+  }
+  if (!input.approvalReplyId || !input.inboundMessageId || !input.bindingRef || !input.sessionRef) {
+    throw proposalError('gateway_user_approval_binding_required', 403);
+  }
+  const binding = proposal.replyBinding || {};
+  if (binding.bindingRef !== input.bindingRef || binding.sessionRef !== input.sessionRef
+    || Number(binding.proposalRevision) !== input.expectedProposalRevision) {
+    throw proposalError('gateway_user_approval_binding_conflict', 409);
+  }
+  const reply = db.prepare(`
+    SELECT * FROM hq_proposal_replies
+    WHERE reply_id=? AND proposal_id=? AND inbound_message_id=? AND decision='approve' AND status='applied'
+  `).get(input.approvalReplyId, proposal.decisionId, input.inboundMessageId);
+  if (!reply || Number(reply.expected_revision) !== input.expectedProposalRevision) {
+    throw proposalError('gateway_user_approval_receipt_invalid', 403);
+  }
 }
 
 function rowToGatewayReply(row) {
@@ -1972,6 +2215,150 @@ app.get('/v1/assistant-gateway/proposals/pending-user-decision', (req, res) => {
   return res.json({ contractVersion: ASSISTANT_GATEWAY_REPLY_CONTRACT, items, count: items.length });
 });
 
+app.get('/v1/assistant-gateway/proposals/automation-queue', (req, res) => {
+  const limit = Math.max(1, Math.min(20, Number(req.query.limit) || 20));
+  const items = db.prepare("SELECT * FROM hq_proposals WHERE status='proposed' ORDER BY updated_at DESC LIMIT 200").all()
+    .map(rowToProposal).filter((proposal) => {
+      if (proposal.proposalType !== 'daily_action_proposal' || proposal.evidenceStatus === 'provisional') return false;
+      const raw = proposal;
+      const rule = readGatewayStandingRule(raw.standingRuleId, Number(raw.standingRuleVersion));
+      return Boolean(rule && raw.sourceAuthority === 'standing_rule' && gatewayPromotionEligibilityError(proposal) === '');
+    }).slice(0, limit).map((proposal) => ({
+      proposalId: proposal.decisionId,
+      revision: proposal.revision,
+      proposalType: proposal.proposalType,
+      disposition: 'auto_eligible',
+      promotionEligible: true,
+      standingRuleId: proposal.standingRuleId,
+      standingRuleVersion: Number(proposal.standingRuleVersion),
+      taskSpec: proposal.taskSpec,
+      replyBinding: proposal.replyBinding,
+    }));
+  return res.json({ contractVersion: ASSISTANT_GATEWAY_REPLY_CONTRACT, items, count: items.length });
+});
+
+const conversationRole = (req, res, role) => {
+  if (req.assistantConversationIdentity?.system !== `assistant-conversation-${role}`) {
+    res.status(403).json({ error: 'assistant_conversation_scope_denied' });
+    return false;
+  }
+  return true;
+};
+const conversationTurnView = (row, visibility = 'producer') => row ? {
+  turnId: row.turn_id, conversationKeyHash: row.conversation_key_hash,
+  dispatchKey: row.dispatch_key, inboundMessageId: row.inbound_message_id,
+  textHash: row.text_hash, sequence: row.sequence_no, status: row.status,
+  ...(visibility === 'runner' && row.prompt_payload ? { promptPayload: row.prompt_payload } : {}),
+  ...(visibility === 'producer' && row.result_payload ? { resultPayload: row.result_payload } : {}),
+  resultHash: row.result_hash || undefined, attemptCount: Number(row.attempt_count || 0),
+  errorCode: row.error_code || undefined, createdAt: row.created_at, updatedAt: row.updated_at,
+} : null;
+
+app.post('/v1/assistant-gateway/conversation/turns', (req, res) => {
+  if (!conversationRole(req, res, 'producer')) return;
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const required = ['conversationKeyHash', 'dispatchKey', 'inboundMessageId', 'textHash', 'promptPayload'];
+  if (required.some((key) => !String(body[key] || '').trim())) return res.status(400).json({ error: 'conversation_turn_fields_required' });
+  if (!/^[a-f0-9]{64}$/.test(String(body.conversationKeyHash)) || !/^[a-f0-9]{64}$/.test(String(body.textHash))
+    || String(body.promptPayload).length > 40000) return res.status(400).json({ error: 'conversation_turn_fields_invalid' });
+  const turnId = uid(); const timestamp = now();
+  try {
+    const row = db.transaction(() => {
+      const sequence = Number(db.prepare('SELECT COALESCE(MAX(sequence_no),0)+1 AS value FROM assistant_conversation_turns WHERE conversation_key_hash=?').get(body.conversationKeyHash).value);
+      db.prepare(`INSERT INTO assistant_conversation_turns
+        (turn_id,conversation_key_hash,dispatch_key,inbound_message_id,text_hash,prompt_payload,sequence_no,status,created_at,updated_at)
+        VALUES (?,?,?,?,?,?,?,'pending',?,?)`).run(turnId, body.conversationKeyHash, body.dispatchKey, body.inboundMessageId, body.textHash, body.promptPayload, sequence, timestamp, timestamp);
+      return db.prepare('SELECT * FROM assistant_conversation_turns WHERE turn_id=?').get(turnId);
+    })();
+    return res.status(201).json(conversationTurnView(row));
+  } catch (error) {
+    const existing = db.prepare('SELECT * FROM assistant_conversation_turns WHERE dispatch_key=?').get(body.dispatchKey);
+    if (existing && existing.text_hash === body.textHash) return res.json(conversationTurnView(existing));
+    if (existing) return res.status(409).json({ error: 'conversation_dispatch_conflict' });
+    return res.status(400).json({ error: 'conversation_turn_duplicate' });
+  }
+});
+
+app.get('/v1/assistant-gateway/conversation/turns/by-dispatch/:key', (req, res) => {
+  if (!conversationRole(req, res, 'producer')) return;
+  const row = db.prepare('SELECT * FROM assistant_conversation_turns WHERE dispatch_key=?').get(req.params.key);
+  if (!row) return res.status(404).json({ error: 'conversation_turn_not_found' });
+  return res.json(conversationTurnView(row));
+});
+
+app.post('/v1/assistant-gateway/conversation/turns/claim', (req, res) => {
+  if (!conversationRole(req, res, 'runner')) return;
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const runnerId = String(body.runnerId || '').trim();
+  const leaseSeconds = Math.max(60, Math.min(600, Number(body.leaseSeconds) || 360));
+  if (!runnerId || runnerId.length > 120) return res.status(400).json({ error: 'conversation_runner_invalid' });
+  const timestamp = now();
+  const expiresAt = new Date(Date.now() + leaseSeconds * 1000).toISOString();
+  const leaseToken = crypto.randomBytes(32).toString('hex');
+  const leaseHash = crypto.createHash('sha256').update(leaseToken).digest('hex');
+  const ownerHash = crypto.createHash('sha256').update(runnerId).digest('hex');
+  const row = db.transaction(() => {
+    db.prepare("UPDATE assistant_conversation_turns SET status='pending',lease_token_hash=NULL,lease_owner_hash=NULL,lease_expires_at=NULL,updated_at=? WHERE status='leased' AND lease_expires_at<=?").run(timestamp, timestamp);
+    const candidate = db.prepare(`SELECT t.* FROM assistant_conversation_turns t
+      WHERE t.status='pending' AND NOT EXISTS (
+        SELECT 1 FROM assistant_conversation_turns earlier
+        WHERE earlier.conversation_key_hash=t.conversation_key_hash AND earlier.sequence_no<t.sequence_no
+          AND earlier.status!='completed')
+      ORDER BY t.created_at,t.turn_id LIMIT 1`).get();
+    if (!candidate) return null;
+    const updated = db.prepare("UPDATE assistant_conversation_turns SET status='leased',lease_token_hash=?,lease_owner_hash=?,lease_expires_at=?,attempt_count=attempt_count+1,updated_at=? WHERE turn_id=? AND status='pending'")
+      .run(leaseHash, ownerHash, expiresAt, timestamp, candidate.turn_id);
+    return updated.changes ? db.prepare('SELECT * FROM assistant_conversation_turns WHERE turn_id=?').get(candidate.turn_id) : null;
+  }).immediate();
+  if (!row) return res.json({ item: null });
+  return res.json({ item: { ...conversationTurnView(row, 'runner'), leaseToken, leaseExpiresAt: expiresAt } });
+});
+
+app.post('/v1/assistant-gateway/conversation/turns/:id/result', (req, res) => {
+  if (!conversationRole(req, res, 'runner')) return;
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const payload = String(body.resultPayload || '').trim();
+  const resultHash = String(body.resultHash || '').trim().toLowerCase();
+  const leaseHash = crypto.createHash('sha256').update(String(body.leaseToken || '')).digest('hex');
+  const ownerHash = crypto.createHash('sha256').update(String(body.runnerId || '')).digest('hex');
+  if (!String(body.runnerId || '').trim() || !payload || payload.length > 40000 || !/^[a-f0-9]{64}$/.test(resultHash)) return res.status(400).json({ error: 'conversation_result_invalid' });
+  const existing = db.prepare('SELECT * FROM assistant_conversation_turns WHERE turn_id=?').get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'conversation_turn_not_found' });
+  if (existing.status === 'result_ready' && existing.result_hash === resultHash && existing.lease_owner_hash === ownerHash) return res.json(conversationTurnView(existing, 'runner'));
+  if (existing.status !== 'leased' || existing.lease_token_hash !== leaseHash || existing.lease_owner_hash !== ownerHash || existing.lease_expires_at <= now()) return res.status(409).json({ error: 'conversation_lease_conflict' });
+  db.prepare("UPDATE assistant_conversation_turns SET status='result_ready',result_payload=?,result_hash=?,lease_token_hash=NULL,lease_expires_at=NULL,updated_at=? WHERE turn_id=?")
+    .run(payload, resultHash, now(), req.params.id);
+  return res.json(conversationTurnView(db.prepare('SELECT * FROM assistant_conversation_turns WHERE turn_id=?').get(req.params.id), 'runner'));
+});
+
+app.post('/v1/assistant-gateway/conversation/turns/:id/fail', (req, res) => {
+  if (!conversationRole(req, res, 'runner')) return;
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const leaseHash = crypto.createHash('sha256').update(String(body.leaseToken || '')).digest('hex');
+  const ownerHash = crypto.createHash('sha256').update(String(body.runnerId || '')).digest('hex');
+  const row = db.prepare('SELECT * FROM assistant_conversation_turns WHERE turn_id=?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'conversation_turn_not_found' });
+  if (!String(body.runnerId || '').trim() || row.status !== 'leased' || row.lease_token_hash !== leaseHash
+    || row.lease_owner_hash !== ownerHash || row.lease_expires_at <= now()) return res.status(409).json({ error: 'conversation_lease_conflict' });
+  const terminal = Number(row.attempt_count || 0) >= 5;
+  db.prepare("UPDATE assistant_conversation_turns SET status=?,error_code=?,lease_token_hash=NULL,lease_owner_hash=NULL,lease_expires_at=NULL,updated_at=? WHERE turn_id=?")
+    .run(terminal ? 'dead_letter' : 'pending', String(body.errorCode || 'runner_failed').slice(0, 120), now(), req.params.id);
+  return res.json(conversationTurnView(db.prepare('SELECT * FROM assistant_conversation_turns WHERE turn_id=?').get(req.params.id)));
+});
+
+for (const [suffix, fromStatus, toStatus, timeColumn] of [
+  ['replied', 'result_ready', 'replied', 'replied_at'], ['completed', 'replied', 'completed', 'completed_at'],
+]) app.post(`/v1/assistant-gateway/conversation/turns/:id/${suffix}`, (req, res) => {
+  if (!conversationRole(req, res, 'producer')) return;
+  const row = db.prepare('SELECT * FROM assistant_conversation_turns WHERE turn_id=?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'conversation_turn_not_found' });
+  if (row.status === toStatus || (toStatus === 'completed' && row.status === 'completed')) return res.json(conversationTurnView(row));
+  if (row.status !== fromStatus) return res.status(409).json({ error: 'conversation_turn_state_conflict' });
+  const timestamp = now();
+  db.prepare(`UPDATE assistant_conversation_turns SET status=?,${timeColumn}=?,updated_at=? WHERE turn_id=?`).run(toStatus, timestamp, timestamp, req.params.id);
+  return res.json(conversationTurnView(db.prepare('SELECT * FROM assistant_conversation_turns WHERE turn_id=?').get(req.params.id)));
+});
+
 app.get('/v1/hq/proposals/:id', (req, res) => {
   try {
     const proposal = getProposalOrThrow(req.params.id);
@@ -2046,6 +2433,7 @@ app.post('/v1/hq/proposals/:proposalId/replies', (req, res) => {
         inboundMessageId: input.inboundMessageId,
         replyRef: input.replyRef,
         verifiedUserRef: input.verifiedUserRef,
+        sessionRef: input.sessionRef,
         source: input.source,
         signatureRef: input.signatureRef,
         textHash: input.textHash,
@@ -2149,6 +2537,38 @@ app.post('/v1/hq/proposals/:proposalId/replies', (req, res) => {
 ['approve', 'reject', 'defer', 'restore'].forEach((action) => {
   app.post(`/v1/hq/proposals/:id/${action}`, (req, res) => {
     try {
+      if (action === 'approve' && req.assistantGatewayIdentity) {
+        const input = normalizeGatewayAutoApprove(req);
+        const current = getProposalOrThrow(input.proposalId);
+        if (current.status === 'approved' && current.assistantGatewayApproval) {
+          if (current.assistantGatewayApproval.idempotencyKey !== input.idempotencyKey) {
+            throw proposalError('gateway_approval_idempotency_conflict', 409);
+          }
+          return res.json(current);
+        }
+        if (current.status !== 'proposed') throw proposalError('proposal_not_proposed', 409);
+        if (current.revision !== input.expectedProposalRevision) throw proposalError('proposal_revision_conflict', 409);
+        const eligibilityError = gatewayPromotionEligibilityError(current);
+        if (eligibilityError) throw proposalError(eligibilityError, 409);
+        validateGatewayStandingAuthorization(current, {
+          standingRuleId: input.standingRuleId,
+          standingRuleVersion: input.standingRuleVersion,
+        });
+        const approved = transitionProposal(input.proposalId, 'approve', {
+          actor: 'assistant-gateway',
+          note: `assistant_gateway:${input.reasonCode}`,
+        });
+        return res.json(saveProposal({
+          ...approved,
+          assistantGatewayApproval: {
+            idempotencyKey: input.idempotencyKey,
+            standingRuleId: input.standingRuleId,
+            standingRuleVersion: input.standingRuleVersion,
+            reasonCode: input.reasonCode,
+            approvedAt: now(),
+          },
+        }));
+      }
       return res.json(db.transaction(() => transitionProposal(req.params.id, action, req.body || {}))());
     } catch (error) {
       return sendProposalError(res, error);
@@ -2158,6 +2578,59 @@ app.post('/v1/hq/proposals/:proposalId/replies', (req, res) => {
 
 app.post('/v1/hq/proposals/:id/promote', (req, res) => {
   try {
+    if (req.assistantGatewayIdentity) {
+      const input = normalizeGatewayPromotion(req);
+      const current = getProposalOrThrow(input.proposalId);
+      const requestHash = crypto.createHash('sha256').update(stableJson(input)).digest('hex');
+      const previous = current.assistantGatewayPromotion;
+      if (previous) {
+        if (previous.idempotencyKey !== input.idempotencyKey || previous.requestHash !== requestHash) {
+          throw proposalError('gateway_promotion_idempotency_conflict', 409);
+        }
+        if (current.status !== 'promoted' || !current.taskId) {
+          throw proposalError('gateway_promotion_receipt_incomplete', 409);
+        }
+        res.setHeader('ETag', `"proposal-revision-${current.revision}"`);
+        return res.json({
+          contractVersion: ASSISTANT_GATEWAY_REPLY_CONTRACT,
+          proposalId: current.decisionId,
+          proposalRevision: current.revision,
+          status: current.status,
+          taskId: current.taskId,
+          taskboxMutation: true,
+          replayed: true,
+        });
+      }
+      validateGatewayPromotionAuthorization(current, input);
+      const promotion = promoteProposal(req.params.id, {
+        actor: 'assistant-gateway',
+        note: `assistant_gateway:${input.reasonCode}`,
+        shadowMode: false,
+        assistantGatewayPromotion: {
+          idempotencyKey: input.idempotencyKey,
+          requestHash,
+          authorizationSource: input.authorizationSource,
+          approvalReplyId: input.approvalReplyId || null,
+          inboundMessageId: input.inboundMessageId || null,
+          bindingRef: input.bindingRef || null,
+          sessionRef: input.sessionRef || null,
+          standingRuleId: input.standingRuleId || null,
+          standingRuleVersion: input.standingRuleVersion || null,
+          reasonCode: input.reasonCode,
+          promotedAt: now(),
+        },
+      });
+      res.setHeader('ETag', `"proposal-revision-${promotion.revision}"`);
+      return res.json({
+        contractVersion: ASSISTANT_GATEWAY_REPLY_CONTRACT,
+        proposalId: promotion.decisionId,
+        proposalRevision: promotion.revision,
+        status: promotion.status,
+        taskId: promotion.taskId,
+        taskboxMutation: true,
+        replayed: false,
+      });
+    }
     return res.json(promoteProposal(req.params.id, req.body || {}));
   } catch (error) {
     return sendProposalError(res, error);

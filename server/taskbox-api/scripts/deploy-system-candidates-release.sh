@@ -7,6 +7,7 @@ ASSISTANT_GATEWAY_APP_DIR="${ASSISTANT_GATEWAY_APP_DIR:-/opt/taskbox-assistant-g
 SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
 SERVICE="${TASKBOX_SERVICE:-taskbox-api.service}"
 ASSISTANT_GATEWAY_SERVICE="${ASSISTANT_GATEWAY_SERVICE:-assistant-gateway.service}"
+ASSISTANT_GATEWAY_MODE_DROPIN="20-production-mode.conf"
 ENV_FILE="${TASKBOX_ENV_FILE:-/etc/taskbox-api.env}"
 RELEASE_DIR="${1:-}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -15,6 +16,9 @@ EXECUTION_TOKEN_FILE="${EXECUTION_SYSTEM_API_TOKEN_FILE:-/etc/taskbox-execution-
 EXECUTION_DISABLE_FILE="${EXECUTION_SYSTEM_API_DISABLE_FILE:-/etc/taskbox-execution-system.disabled}"
 ASSISTANT_GATEWAY_TOKEN_FILE="${ASSISTANT_GATEWAY_API_TOKEN_FILE:-/etc/taskbox-assistant-gateway-token}"
 ASSISTANT_GATEWAY_READ_TOKEN_FILE="${ASSISTANT_GATEWAY_READ_TOKEN_FILE:-/etc/taskbox-assistant-gateway-read-token}"
+ASSISTANT_CONVERSATION_PRODUCER_TOKEN_FILE="${ASSISTANT_CONVERSATION_PRODUCER_TOKEN_FILE:-/etc/taskbox-assistant-conversation-producer-token}"
+ASSISTANT_CONVERSATION_RUNNER_TOKEN_FILE="${ASSISTANT_CONVERSATION_RUNNER_TOKEN_FILE:-/etc/taskbox-assistant-conversation-runner-token}"
+ASSISTANT_CONVERSATION_PAYLOAD_KEY_FILE="${ASSISTANT_CONVERSATION_PAYLOAD_KEY_FILE:-/etc/taskbox-assistant-conversation-payload-key}"
 ASSISTANT_GATEWAY_DISABLE_FILE="${ASSISTANT_GATEWAY_API_DISABLE_FILE:-/etc/taskbox-assistant-gateway.disabled}"
 WEIXIN_INGRESS_TOKEN_FILE="${WEIXIN_INGRESS_TOKEN_FILE:-/etc/notification-ingress/weixin-ingress.token}"
 DAILY_INTAKE_TOKEN_DIR="${DAILY_INTAKE_TOKEN_DIR:-/etc/taskbox-daily-intake}"
@@ -60,7 +64,9 @@ if [[ "$API_RELEASE_DIR" != "$RELEASE_DIR" ]]; then
       exit 2
     fi
   done
-  for file in worker.py systemd/assistant-gateway.service tests/test_worker.py; do
+  for file in worker.py status.py conversation_runner.py crypto_payload.py \
+    launchd/com.ylw.assistant-conversation-runner.plist systemd/assistant-gateway.service \
+    "systemd/assistant-gateway.service.d/$ASSISTANT_GATEWAY_MODE_DROPIN" tests/test_worker.py; do
     if [[ ! -f "$ASSISTANT_GATEWAY_RELEASE_DIR/$file" ]]; then
       echo "assistant gateway release missing $file" >&2
       exit 2
@@ -81,6 +87,9 @@ EXECUTION_TOKEN_FILE="${EXECUTION_SYSTEM_API_TOKEN_FILE:-$EXECUTION_TOKEN_FILE}"
 EXECUTION_DISABLE_FILE="${EXECUTION_SYSTEM_API_DISABLE_FILE:-$EXECUTION_DISABLE_FILE}"
 ASSISTANT_GATEWAY_TOKEN_FILE="${ASSISTANT_GATEWAY_API_TOKEN_FILE:-$ASSISTANT_GATEWAY_TOKEN_FILE}"
 ASSISTANT_GATEWAY_READ_TOKEN_FILE="${ASSISTANT_GATEWAY_READ_TOKEN_FILE:-$ASSISTANT_GATEWAY_READ_TOKEN_FILE}"
+ASSISTANT_CONVERSATION_PRODUCER_TOKEN_FILE="${ASSISTANT_CONVERSATION_PRODUCER_TOKEN_FILE:-$ASSISTANT_CONVERSATION_PRODUCER_TOKEN_FILE}"
+ASSISTANT_CONVERSATION_RUNNER_TOKEN_FILE="${ASSISTANT_CONVERSATION_RUNNER_TOKEN_FILE:-$ASSISTANT_CONVERSATION_RUNNER_TOKEN_FILE}"
+ASSISTANT_CONVERSATION_PAYLOAD_KEY_FILE="${ASSISTANT_CONVERSATION_PAYLOAD_KEY_FILE:-$ASSISTANT_CONVERSATION_PAYLOAD_KEY_FILE}"
 ASSISTANT_GATEWAY_DISABLE_FILE="${ASSISTANT_GATEWAY_API_DISABLE_FILE:-$ASSISTANT_GATEWAY_DISABLE_FILE}"
 DAILY_INTAKE_TOKEN_DIR="${DAILY_INTAKE_TOKEN_DIR:-$DAILY_INTAKE_TOKEN_DIR}"
 DAILY_INTAKE_DISABLE_FILE="${DAILY_INTAKE_DISABLE_FILE:-$DAILY_INTAKE_DISABLE_FILE}"
@@ -103,6 +112,12 @@ if [[ -d "$ASSISTANT_GATEWAY_APP_DIR" ]]; then
 fi
 if [[ -f "$SYSTEMD_DIR/$ASSISTANT_GATEWAY_SERVICE" ]]; then
   cp -a "$SYSTEMD_DIR/$ASSISTANT_GATEWAY_SERVICE" "$BACKUP_DIR/config/"
+fi
+assistant_gateway_dropin_dir="$SYSTEMD_DIR/$ASSISTANT_GATEWAY_SERVICE.d"
+if [[ -f "$assistant_gateway_dropin_dir/$ASSISTANT_GATEWAY_MODE_DROPIN" ]]; then
+  cp -a "$assistant_gateway_dropin_dir/$ASSISTANT_GATEWAY_MODE_DROPIN" "$BACKUP_DIR/config/"
+else
+  : > "$BACKUP_DIR/config/$ASSISTANT_GATEWAY_MODE_DROPIN.absent"
 fi
 for unit in taskbox-{attention,execution,feedback,health,hq,mission}-daily-intake.{service,timer}; do
   if [[ -f "$SYSTEMD_DIR/$unit" ]]; then cp -a "$SYSTEMD_DIR/$unit" "$BACKUP_DIR/config/"; fi
@@ -180,10 +195,24 @@ rm -f "$ASSISTANT_GATEWAY_DISABLE_FILE"
 upsert_env ASSISTANT_GATEWAY_API_ENABLED 1
 upsert_env ASSISTANT_GATEWAY_API_TOKEN_FILE "$ASSISTANT_GATEWAY_TOKEN_FILE"
 upsert_env ASSISTANT_GATEWAY_API_DISABLE_FILE "$ASSISTANT_GATEWAY_DISABLE_FILE"
-upsert_env ASSISTANT_GATEWAY_API_SCOPES "proposal-replies:write"
+upsert_env ASSISTANT_GATEWAY_API_SCOPES "proposal-replies:write,proposal-auto-approve:write,proposal-promotions:write"
 upsert_env ASSISTANT_GATEWAY_READ_TOKEN_FILE "$ASSISTANT_GATEWAY_READ_TOKEN_FILE"
-upsert_env ASSISTANT_GATEWAY_READ_SCOPES "proposals:read"
+upsert_env ASSISTANT_GATEWAY_READ_SCOPES "proposal-decisions:read"
 upsert_env ASSISTANT_GATEWAY_REPLY_MAX_AGE_SECONDS 86400
+
+create_assistant_conversation_secret() {
+  local file="$1"
+  if [[ ! -s "$file" ]]; then
+    umask 077
+    node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex') + '\\n')" > "$file"
+  fi
+  chmod 600 "$file"
+}
+create_assistant_conversation_secret "$ASSISTANT_CONVERSATION_PRODUCER_TOKEN_FILE"
+create_assistant_conversation_secret "$ASSISTANT_CONVERSATION_RUNNER_TOKEN_FILE"
+create_assistant_conversation_secret "$ASSISTANT_CONVERSATION_PAYLOAD_KEY_FILE"
+upsert_env ASSISTANT_CONVERSATION_PRODUCER_TOKEN_FILE "$ASSISTANT_CONVERSATION_PRODUCER_TOKEN_FILE"
+upsert_env ASSISTANT_CONVERSATION_RUNNER_TOKEN_FILE "$ASSISTANT_CONVERSATION_RUNNER_TOKEN_FILE"
 
 # Daily Review identities are deliberately separate from the browser and execution-system tokens.
 install -d -m 700 "$DAILY_INTAKE_TOKEN_DIR"
@@ -246,7 +275,13 @@ if [[ -f "$ASSISTANT_GATEWAY_RELEASE_DIR/worker.py" ]]; then
   rm -rf "$ASSISTANT_GATEWAY_APP_DIR"
   install -d -m 0755 "$ASSISTANT_GATEWAY_APP_DIR"
   install -m 0755 "$ASSISTANT_GATEWAY_RELEASE_DIR/worker.py" "$ASSISTANT_GATEWAY_APP_DIR/worker.py"
+  install -m 0755 "$ASSISTANT_GATEWAY_RELEASE_DIR/status.py" "$ASSISTANT_GATEWAY_APP_DIR/status.py"
+  install -m 0644 "$ASSISTANT_GATEWAY_RELEASE_DIR/crypto_payload.py" "$ASSISTANT_GATEWAY_APP_DIR/crypto_payload.py"
   install -m 0644 "$ASSISTANT_GATEWAY_RELEASE_DIR/systemd/assistant-gateway.service" "$SYSTEMD_DIR/$ASSISTANT_GATEWAY_SERVICE"
+  install -d -m 0755 "$assistant_gateway_dropin_dir"
+  install -m 0644 \
+    "$ASSISTANT_GATEWAY_RELEASE_DIR/systemd/assistant-gateway.service.d/$ASSISTANT_GATEWAY_MODE_DROPIN" \
+    "$assistant_gateway_dropin_dir/$ASSISTANT_GATEWAY_MODE_DROPIN"
 fi
 
 cd "$APP_DIR"
@@ -254,6 +289,7 @@ npm ci --omit=dev
 npm run init-db
 npm run test:schema
 npm run test:hq
+npm run test:assistant-conversation
 npm run test:execution
 npm run test:system-intake
 systemctl start "$SERVICE"
@@ -319,6 +355,8 @@ fi
 
 ASSISTANT_GATEWAY_TOKEN="$(tr -d '\r\n' < "$ASSISTANT_GATEWAY_TOKEN_FILE")"
 ASSISTANT_GATEWAY_READ_TOKEN="$(tr -d '\r\n' < "$ASSISTANT_GATEWAY_READ_TOKEN_FILE")"
+ASSISTANT_CONVERSATION_PRODUCER_TOKEN="$(tr -d '\r\n' < "$ASSISTANT_CONVERSATION_PRODUCER_TOKEN_FILE")"
+ASSISTANT_CONVERSATION_RUNNER_TOKEN="$(tr -d '\r\n' < "$ASSISTANT_CONVERSATION_RUNNER_TOKEN_FILE")"
 ASSISTANT_GATEWAY_PENDING="$API_BASE_URL/v1/assistant-gateway/proposals/pending-user-decision?limit=20"
 pending_headers=(
   --header 'X-Assistant-Verified-User-Ref: notification-hub-user:deployment-probe'
@@ -337,7 +375,7 @@ gateway_code="$(curl --silent --output /dev/null --write-out '%{http_code}' \
   --request POST --header "Authorization: Bearer $ASSISTANT_GATEWAY_TOKEN" \
   --header 'Content-Type: application/json' --header 'X-Idempotency-Key: assistant-gateway:deployment-probe' \
   --data "$ASSISTANT_GATEWAY_PROBE_BODY" "$ASSISTANT_GATEWAY_PROBE")"
-[[ "$gateway_code" == "404" ]] || { echo "assistant gateway auth probe failed: $gateway_code" >&2; exit 1; }
+[[ "$gateway_code" == "404" || "$gateway_code" == "400" ]] || { echo "assistant gateway auth probe failed: $gateway_code" >&2; exit 1; }
 generic_gateway_code="$(curl --silent --output /dev/null --write-out '%{http_code}' \
   --request POST --header "Authorization: Bearer $TASKBOX_API_TOKEN" \
   --header 'Content-Type: application/json' --header 'X-Idempotency-Key: assistant-gateway:deployment-probe' \
@@ -358,6 +396,23 @@ if curl --silent --show-error --fail --output /dev/null \
   echo "assistant gateway read token unexpectedly accessed generic TaskBox API" >&2
   exit 1
 fi
+
+ASSISTANT_CONVERSATION_CLAIM="$API_BASE_URL/v1/assistant-gateway/conversation/turns/claim"
+claim_probe_body='{"runnerId":"deployment-probe","leaseSeconds":60}'
+runner_claim_code="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  --request POST --header "Authorization: Bearer $ASSISTANT_CONVERSATION_RUNNER_TOKEN" \
+  --header 'Content-Type: application/json' --data "$claim_probe_body" "$ASSISTANT_CONVERSATION_CLAIM")"
+[[ "$runner_claim_code" == "200" ]] || { echo "assistant conversation runner probe failed: $runner_claim_code" >&2; exit 1; }
+for denied_token in "$TASKBOX_API_TOKEN" "$ASSISTANT_GATEWAY_TOKEN" "$ASSISTANT_GATEWAY_READ_TOKEN"; do
+  code="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    --request POST --header "Authorization: Bearer $denied_token" \
+    --header 'Content-Type: application/json' --data "$claim_probe_body" "$ASSISTANT_CONVERSATION_CLAIM")"
+  [[ "$code" == "401" ]] || { echo "unrelated identity unexpectedly accessed assistant conversation API: $code" >&2; exit 1; }
+done
+producer_claim_code="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  --request POST --header "Authorization: Bearer $ASSISTANT_CONVERSATION_PRODUCER_TOKEN" \
+  --header 'Content-Type: application/json' --data "$claim_probe_body" "$ASSISTANT_CONVERSATION_CLAIM")"
+[[ "$producer_claim_code" == "403" ]] || { echo "producer identity unexpectedly claimed assistant conversation: $producer_claim_code" >&2; exit 1; }
 
 DAILY_SENDER_TOKEN="$(tr -d '\r\n' < "$DAILY_SENDER_TOKEN_FILE")"
 DAILY_HQ_TOKEN="$(tr -d '\r\n' < "$DAILY_HQ_TOKEN_FILE")"
@@ -424,6 +479,11 @@ systemctl daemon-reload
 systemctl enable --now "$ASSISTANT_GATEWAY_SERVICE"
 systemctl is-enabled --quiet "$ASSISTANT_GATEWAY_SERVICE"
 systemctl is-active --quiet "$ASSISTANT_GATEWAY_SERVICE"
+effective_gateway_environment="$(systemctl show "$ASSISTANT_GATEWAY_SERVICE" --property=Environment --value)"
+[[ " $effective_gateway_environment " == *" ASSISTANT_GATEWAY_MODE=decision "* ]] || {
+  echo "assistant gateway effective mode is not decision" >&2
+  exit 1
+}
 trap - ERR
 
 echo "deployment_ok"
@@ -432,9 +492,16 @@ echo "execution_token_file=$EXECUTION_TOKEN_FILE"
 echo "execution_disable_file=$EXECUTION_DISABLE_FILE"
 echo "assistant_gateway_token_file=$ASSISTANT_GATEWAY_TOKEN_FILE"
 echo "assistant_gateway_read_token_file=$ASSISTANT_GATEWAY_READ_TOKEN_FILE"
+echo "assistant_conversation_producer_token_file=$ASSISTANT_CONVERSATION_PRODUCER_TOKEN_FILE"
+echo "assistant_conversation_runner_token_file=$ASSISTANT_CONVERSATION_RUNNER_TOKEN_FILE"
+echo "assistant_conversation_payload_key_file=$ASSISTANT_CONVERSATION_PAYLOAD_KEY_FILE"
 echo "assistant_gateway_disable_file=$ASSISTANT_GATEWAY_DISABLE_FILE"
 echo "assistant_gateway_worker=active"
-echo "assistant_gateway_worker_mode=echo"
+echo "assistant_gateway_worker_mode=decision"
+echo "assistant_gateway_status_file=/var/lib/taskbox-assistant-gateway/status.json"
+echo -n "assistant_gateway_status="
+ASSISTANT_GATEWAY_STATUS_FILE=/var/lib/taskbox-assistant-gateway/status.json \
+  python3 "$ASSISTANT_GATEWAY_APP_DIR/status.py"
 echo "daily_intake_sender_token_file=$DAILY_SENDER_TOKEN_FILE"
 echo "daily_intake_hq_token_file=$DAILY_HQ_TOKEN_FILE"
 echo "daily_intake_token_dir=$DAILY_INTAKE_TOKEN_DIR"

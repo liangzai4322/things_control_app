@@ -12,13 +12,17 @@ sys.path.insert(0, str(ROOT))
 
 from worker import (  # noqa: E402
     DecisionStore,
+    GatewayStatus,
     GatewayError,
     JsonClient,
+    STATUS_FIELDS,
     parse_decision,
+    process_automation_queue,
     process_decision,
     process_echo,
     verify_message,
 )
+from crypto_payload import open_text, seal_text  # noqa: E402
 
 
 class ApiHandler(BaseHTTPRequestHandler):
@@ -53,7 +57,7 @@ class FakeClient:
         if self.fail_route_once and self.fail_route_once in route:
             self.fail_route_once = None
             raise self.failure
-        return self.post_result
+        return self.post_result(route, payload) if callable(self.post_result) else self.post_result
 
 
 class WorkerTests(unittest.TestCase):
@@ -67,6 +71,7 @@ class WorkerTests(unittest.TestCase):
         self.token.write_text("secret\n", encoding="utf-8")
         self.client = JsonClient(f"http://127.0.0.1:{self.server.server_port}", self.token)
         self.state_path = Path(self.temp.name) / "decision-state.json"
+        self.status_path = Path(self.temp.name) / "status.json"
 
     def tearDown(self):
         self.server.shutdown()
@@ -122,18 +127,56 @@ class WorkerTests(unittest.TestCase):
         with self.assertRaises(GatewayError):
             verify_message(self.message(conversationRef=""))
 
+    def test_status_aggregation_is_atomic_and_sanitized(self):
+        self.status_path.write_text(json.dumps({"messageText": "secret", "retryCount": "bad"}), encoding="utf-8")
+        status = GatewayStatus(self.status_path)
+        store = DecisionStore(self.state_path)
+        store.put("pending", {"promotionPending": True, "taskId": "private-task"})
+        status.record_claim(1)
+        status.record_automation_count(2)
+        status.record_reply()
+        status.record_outcome("retry")
+        status.record_outcome("dead_letter")
+        status.sync_promotion_pending(store)
+
+        saved = json.loads(self.status_path.read_text(encoding="utf-8"))
+        self.assertEqual(tuple(saved), STATUS_FIELDS)
+        self.assertEqual(saved["pendingCount"], 1)
+        self.assertEqual(saved["automationCount"], 2)
+        self.assertEqual(saved["promotionPendingCount"], 1)
+        self.assertEqual(saved["retryCount"], 1)
+        self.assertEqual(saved["deadLetterCount"], 1)
+        self.assertRegex(saved["lastClaimAt"], r"Z$")
+        self.assertRegex(saved["lastReplyAt"], r"Z$")
+        self.assertNotIn("messageText", saved)
+
+    def test_echo_updates_status_without_persisting_message_content(self):
+        status = GatewayStatus(self.status_path)
+        process_echo(self.client, self.message("测试-私密原文"), status)
+        saved_text = self.status_path.read_text(encoding="utf-8")
+        self.assertNotIn("私密原文", saved_text)
+        self.assertIsNotNone(json.loads(saved_text)["lastReplyAt"])
+
     @staticmethod
     def pending_proposal(**changes):
         proposal = {
             "proposalId": "proposal-1",
             "revision": 2,
             "proposalType": "daily_action_proposal",
+            "evidenceStatus": "confirmed",
+            "disposition": "confirmation_required",
+            "promotionEligible": True,
+            "taskSpec": {
+                "boxId": "box-1", "content": "完成明确行动", "clearAction": "完成明确行动",
+                "boxReason": "直接推动目标", "deviceContext": "universal", "executionMode": "self",
+            },
             "title": "确认下一步",
             "allowedDecisions": ["approve", "reject", "defer", "expand"],
             "replyBinding": {
                 "bindingRef": "binding-1",
                 "verifiedSource": "notification_hub_weixin",
                 "signatureRef": "signature-1",
+                "sessionRef": "session-1",
                 "expiresAt": "2026-09-04T20:00:00+08:00",
             },
         }
@@ -143,12 +186,15 @@ class WorkerTests(unittest.TestCase):
     def decision_clients(self, proposals=None, decision="approve"):
         hub = FakeClient()
         reader = FakeClient(get_result={"items": proposals if proposals is not None else [self.pending_proposal()]})
-        writer = FakeClient(post_result={
-            "proposalId": "proposal-1",
-            "decision": decision,
-            "status": "applied",
-            "taskboxMutation": False,
-        })
+        def writer_result(route, _payload):
+            if route.endswith("/promote"):
+                return {"proposalId": "proposal-1", "status": "promoted", "taskId": "task-1", "taskboxMutation": True}
+            return {
+                "replyId": "reply-1", "proposalId": "proposal-1", "decision": decision,
+                "status": "applied", "taskboxMutation": False,
+                "proposal": {"decisionId": "proposal-1", "status": "approved" if decision == "approve" else decision},
+            }
+        writer = FakeClient(post_result=writer_result)
         return hub, reader, writer
 
     def test_explicit_approve_uses_bound_read_and_idempotent_hq_reply(self):
@@ -158,7 +204,7 @@ class WorkerTests(unittest.TestCase):
 
         self.assertEqual(len(reader.calls), 1)
         self.assertIn("X-Assistant-Verified-User-Ref", reader.calls[0][3])
-        self.assertEqual(len(writer.calls), 1)
+        self.assertEqual(len(writer.calls), 2)
         hq_call = writer.calls[0]
         self.assertEqual(hq_call[1], "/v1/hq/proposals/proposal-1/replies")
         self.assertEqual(hq_call[2]["verification"]["source"], "notification_hub_weixin")
@@ -168,11 +214,55 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(hq_call[3]["If-Match"], '"proposal-revision-2"')
         self.assertTrue(hq_call[3]["X-Idempotency-Key"].startswith("assistant-gateway:decision:"))
         self.assertLessEqual(len(hq_call[3]["X-Idempotency-Key"]), 300)
+        promote_call = writer.calls[1]
+        self.assertEqual(promote_call[1], "/v1/hq/proposals/proposal-1/promote")
+        self.assertEqual(promote_call[2]["approvalReplyId"], "reply-1")
+        self.assertEqual(promote_call[2]["sessionRef"], "session-1")
+        self.assertTrue(promote_call[3]["X-Idempotency-Key"].startswith("assistant-gateway:promotion:"))
         self.assertEqual([call[1] for call in hub.calls], [
             "/v1/weixin-inbound/inbound-1/reply",
             "/v1/weixin-inbound/inbound-1/ack",
         ])
         self.assertEqual(hub.calls[-1][2]["outcome"], "processed")
+        self.assertIsNone(store.get("inbound-1"))
+
+    def test_auto_eligible_queue_approves_then_promotes_with_recovery(self):
+        proposal = {
+            **self.pending_proposal(),
+            "disposition": "auto_eligible",
+            "sourceAuthority": "ai_derived",
+            "standingRuleId": "execution.daily_action_proposal.auto_approve",
+            "standingRuleVersion": 2,
+        }
+        reader = FakeClient(get_result={"items": [proposal]})
+        writer = FakeClient(post_result=lambda route, _payload: (
+            {"decisionId": "proposal-1", "status": "approved"} if route.endswith("/approve")
+            else {"proposalId": "proposal-1", "status": "promoted", "taskId": "task-1", "taskboxMutation": True}
+        ))
+        store = DecisionStore(self.state_path)
+        process_automation_queue(reader, writer, store)
+        self.assertEqual([call[1].rsplit('/', 1)[-1] for call in writer.calls], ["approve", "promote"])
+        self.assertEqual(writer.calls[0][2]["standingRuleId"], "execution.daily_action_proposal.auto_approve")
+        self.assertEqual(writer.calls[1][2]["authorizationSource"], "standing_rule")
+        self.assertIsNone(store.get("automation:proposal-1:2"))
+
+    def test_manual_promotion_pending_resumes_without_second_approval(self):
+        hub, reader, writer = self.decision_clients()
+        writer.fail_route_once = "/promote"
+        store = DecisionStore(self.state_path)
+        message = self.message("同意")
+        process_decision(hub, reader, writer, store, message)
+        saved = store.get("inbound-1")
+        self.assertTrue(saved["hqApplied"])
+        self.assertTrue(saved["promotionPending"])
+        self.assertFalse(saved["promotionApplied"])
+
+        reader.calls = []
+        writer.calls = []
+        process_decision(hub, reader, writer, store, {**message, "leaseToken": "lease-2", "attemptCount": 2})
+        self.assertEqual(reader.calls, [])
+        self.assertEqual(len(writer.calls), 1)
+        self.assertTrue(writer.calls[0][1].endswith("/promote"))
         self.assertIsNone(store.get("inbound-1"))
 
     def test_unknown_or_non_unique_pending_is_retried_without_hq_write(self):
@@ -186,6 +276,60 @@ class WorkerTests(unittest.TestCase):
             self.assertEqual(writer.calls, [])
             self.assertEqual(hub.calls[-1][2]["outcome"], "retry")
             self.state_path.unlink(missing_ok=True)
+
+    def test_ordinary_chat_uses_conversation_path_without_hq_or_taskbox_write(self):
+        key = b"k" * 32
+        hub = FakeClient()
+        reader = FakeClient()
+        writer = FakeClient()
+
+        def conversation_result(route, payload):
+            if route.endswith("/turns"):
+                self.assertEqual(open_text(payload["promptPayload"], key), "你好，今天有什么重要事项？")
+                return {
+                    "turnId": "turn-1", "status": "result_ready",
+                    "resultPayload": seal_text("今天先处理唯一主行动。", key),
+                }
+            return {"turnId": "turn-1", "status": "replied"}
+
+        conversation = FakeClient(post_result=conversation_result)
+        process_decision(
+            hub, reader, writer, DecisionStore(self.state_path),
+            self.message("你好，今天有什么重要事项？"),
+            conversation=conversation, payload_key=key,
+        )
+        self.assertEqual(reader.calls, [])
+        self.assertEqual(writer.calls, [])
+        self.assertEqual([call[1] for call in hub.calls], [
+            "/v1/weixin-inbound/inbound-1/reply",
+            "/v1/weixin-inbound/inbound-1/ack",
+        ])
+        self.assertEqual(hub.calls[0][2]["text"], "今天先处理唯一主行动。")
+        self.assertTrue(hub.calls[0][2]["replyKey"].startswith("conversation:"))
+        self.assertEqual(hub.calls[1][2]["outcome"], "processed")
+        self.assertTrue(any(call[1].endswith("/replied") for call in conversation.calls))
+        self.assertTrue(any(call[1].endswith("/completed") for call in conversation.calls))
+
+    def test_replied_chat_recovery_only_acknowledges_and_completes(self):
+        key = b"k" * 32
+        hub = FakeClient()
+
+        def conversation_result(route, _payload):
+            if route.endswith("/turns"):
+                return {
+                    "turnId": "turn-1", "status": "replied",
+                    "resultPayload": seal_text("already sent", key),
+                }
+            return {"turnId": "turn-1", "status": "completed"}
+
+        conversation = FakeClient(post_result=conversation_result)
+        process_decision(
+            hub, FakeClient(), FakeClient(), DecisionStore(self.state_path), self.message("继续"),
+            conversation=conversation, payload_key=key,
+        )
+        self.assertEqual([call[1] for call in hub.calls], ["/v1/weixin-inbound/inbound-1/ack"])
+        self.assertEqual(hub.calls[0][2]["outcome"], "processed")
+        self.assertTrue(any(call[1].endswith("/completed") for call in conversation.calls))
 
     def test_defer_requires_a_valid_explicit_date(self):
         self.assertEqual(parse_decision("同意")[0], "approve")

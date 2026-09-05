@@ -6,7 +6,7 @@ The Assistant Gateway may deliver a verified personal-WeChat reply to one existi
 
 ## Authentication and shutdown
 
-- Reply authentication: `ASSISTANT_GATEWAY_API_TOKEN_FILE`, scope `proposal-replies:write`.
+- Gateway authentication: `ASSISTANT_GATEWAY_API_TOKEN_FILE`; reply scope `proposal-replies:write`, auto-approval scope `proposal-auto-approve:write`, and promotion scope `proposal-promotions:write` are separate allowlisted operations.
 - Pending-read authentication: independent `ASSISTANT_GATEWAY_READ_TOKEN_FILE`, scope `proposals:read`.
 - The read and reply tokens reject each other's routes. Generic browser, HQ, execution-system and Daily Intake tokens cannot use either route; neither Gateway token can use generic TaskBox or other HQ routes.
 - Creating `ASSISTANT_GATEWAY_API_DISABLE_FILE` immediately makes the route fail closed with `503 assistant_gateway_api_disabled`.

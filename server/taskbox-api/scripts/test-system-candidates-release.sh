@@ -35,6 +35,8 @@ printf 'EXECUTION_SYSTEM_API_TOKEN_FILE=%s\n' "$TMP/execution-token" >> "$ENV_FI
 printf 'EXECUTION_SYSTEM_API_DISABLE_FILE=%s\n' "$TMP/execution-disabled" >> "$ENV_FILE"
 printf 'ASSISTANT_GATEWAY_API_TOKEN_FILE=%s\n' "$TMP/assistant-gateway-token" >> "$ENV_FILE"
 printf 'ASSISTANT_GATEWAY_READ_TOKEN_FILE=%s\n' "$TMP/assistant-gateway-read-token" >> "$ENV_FILE"
+printf 'ASSISTANT_CONVERSATION_PRODUCER_TOKEN_FILE=%s\n' "$TMP/assistant-conversation-producer-token" >> "$ENV_FILE"
+printf 'ASSISTANT_CONVERSATION_RUNNER_TOKEN_FILE=%s\n' "$TMP/assistant-conversation-runner-token" >> "$ENV_FILE"
 printf 'ASSISTANT_GATEWAY_API_DISABLE_FILE=%s\n' "$TMP/assistant-gateway-disabled" >> "$ENV_FILE"
 printf 'DAILY_INTAKE_TOKEN_DIR=%s\n' "$TMP/daily-intake" >> "$ENV_FILE"
 printf 'DAILY_INTAKE_DISABLE_FILE=%s\n' "$TMP/daily-intake-disabled" >> "$ENV_FILE"
@@ -48,8 +50,11 @@ mkdir -p "$TMP/notification-ingress"
 printf 'ingress-test-token\n' > "$TMP/notification-ingress/weixin-ingress.token"
 printf 'assistant-gateway-write-test-token\n' > "$TMP/assistant-gateway-token"
 printf 'assistant-gateway-read-test-token\n' > "$TMP/assistant-gateway-read-token"
+printf 'assistant-conversation-producer-test-token\n' > "$TMP/assistant-conversation-producer-token"
+printf 'assistant-conversation-runner-test-token\n' > "$TMP/assistant-conversation-runner-token"
 chmod 600 "$TMP/notification-ingress/weixin-ingress.token"
-chmod 600 "$TMP/assistant-gateway-token" "$TMP/assistant-gateway-read-token"
+chmod 600 "$TMP/assistant-gateway-token" "$TMP/assistant-gateway-read-token" \
+  "$TMP/assistant-conversation-producer-token" "$TMP/assistant-conversation-runner-token"
 
 cat > "$BIN_DIR/systemctl" <<'EOF'
 #!/usr/bin/env bash
@@ -60,6 +65,7 @@ case "$1" in
   is-active) grep -qx active "$SYSTEMCTL_STATE_FILE" ;;
   enable) printf 'enable %s\n' "${3:-$2}" >> "$SYSTEMCTL_CALL_LOG" ;;
   is-enabled) : ;;
+  show) printf 'ASSISTANT_GATEWAY_MODE=echo ASSISTANT_GATEWAY_MODE=decision\n' ;;
   daemon-reload|disable) printf '%s %s\n' "$1" "${2:-}" >> "$SYSTEMCTL_CALL_LOG" ;;
   *) exit 2 ;;
 esac
@@ -94,6 +100,12 @@ if [[ "$*" == *"/v1/hq/proposals/assistant-gateway-auth-probe/replies"* ]]; then
 fi
 if [[ "$*" == *"/v1/assistant-gateway/proposals/pending-user-decision"* ]]; then
   if [[ "$*" == *"Authorization: Bearer release-test-token"* || "$*" == *"Authorization: Bearer assistant-gateway-write-test-token"* ]]; then printf '401'; fi
+  exit
+fi
+if [[ "$*" == *"/v1/assistant-gateway/conversation/turns/claim"* ]]; then
+  if [[ "$*" == *"Authorization: Bearer assistant-conversation-runner-test-token"* ]]; then printf '200';
+  elif [[ "$*" == *"Authorization: Bearer assistant-conversation-producer-test-token"* ]]; then printf '403';
+  else printf '401'; fi
   exit
 fi
 if [[ "$*" == *"/v1/weixin-inbound/assistant-gateway-deployment-probe/reply"* ]]; then printf '404'; exit; fi
@@ -148,6 +160,9 @@ export DAILY_INTAKE_ENABLE_TIMERS=1
 export ASSISTANT_GATEWAY_APP_DIR="$TMP/assistant-gateway-app"
 export ASSISTANT_GATEWAY_SERVICE="assistant-gateway.service"
 export WEIXIN_INGRESS_TOKEN_FILE="$TMP/notification-ingress/weixin-ingress.token"
+export ASSISTANT_CONVERSATION_PRODUCER_TOKEN_FILE="$TMP/assistant-conversation-producer-token"
+export ASSISTANT_CONVERSATION_RUNNER_TOKEN_FILE="$TMP/assistant-conversation-runner-token"
+export ASSISTANT_CONVERSATION_PAYLOAD_KEY_FILE="$TMP/assistant-conversation-payload-key"
 export TASKBOX_SKIP_CREDENTIAL_OWNER_CHECK=1
 
 "$ROOT/scripts/deploy-system-candidates-release.sh" "$RELEASE_DIR" > "$TMP/deploy.log"
@@ -158,6 +173,7 @@ grep -q 'ci --omit=dev' "$TMP/npm.log"
 grep -q 'run init-db' "$TMP/npm.log"
 grep -q 'run test:schema' "$TMP/npm.log"
 grep -q 'run test:hq' "$TMP/npm.log"
+grep -q 'run test:assistant-conversation' "$TMP/npm.log"
 grep -q 'run test:execution' "$TMP/npm.log"
 grep -q 'run test:system-intake' "$TMP/npm.log"
 grep -q 'Authorization: Bearer release-test-token' "$CURL_CALL_LOG"
@@ -166,10 +182,15 @@ grep -q '/v1/execution/capabilities' "$CURL_CALL_LOG"
 grep -q '^EXECUTION_SYSTEM_API_ENABLED=1$' "$ENV_FILE"
 test -s "$TMP/execution-token"
 grep -q '^ASSISTANT_GATEWAY_API_ENABLED=1$' "$ENV_FILE"
-grep -q '^ASSISTANT_GATEWAY_API_SCOPES=proposal-replies:write$' "$ENV_FILE"
-grep -q '^ASSISTANT_GATEWAY_READ_SCOPES=proposals:read$' "$ENV_FILE"
+grep -q '^ASSISTANT_GATEWAY_API_SCOPES=proposal-replies:write,proposal-auto-approve:write,proposal-promotions:write$' "$ENV_FILE"
+grep -q '^ASSISTANT_GATEWAY_READ_SCOPES=proposal-decisions:read$' "$ENV_FILE"
 test -s "$TMP/assistant-gateway-token"
 test -s "$TMP/assistant-gateway-read-token"
+test -s "$TMP/assistant-conversation-producer-token"
+test -s "$TMP/assistant-conversation-runner-token"
+test -s "$TMP/assistant-conversation-payload-key"
+grep -q '^ASSISTANT_CONVERSATION_PRODUCER_TOKEN_FILE=' "$ENV_FILE"
+grep -q '^ASSISTANT_CONVERSATION_RUNNER_TOKEN_FILE=' "$ENV_FILE"
 grep -q '^DAILY_INTAKE_API_ENABLED=1$' "$ENV_FILE"
 test -s "$TMP/daily-intake/sender.token"
 test -s "$TMP/daily-intake/hq.token"
@@ -186,8 +207,14 @@ for system in attention execution feedback health hq mission; do
 done
 grep -q 'daily_intake_timers=enabled' "$TMP/deploy.log"
 grep -q 'assistant_gateway_worker=active' "$TMP/deploy.log"
+grep -q 'assistant_gateway_worker_mode=decision' "$TMP/deploy.log"
 test -f "$TMP/systemd/assistant-gateway.service"
 grep -q '^Environment=ASSISTANT_GATEWAY_MODE=echo$' "$TMP/systemd/assistant-gateway.service"
+test -f "$TMP/systemd/assistant-gateway.service.d/20-production-mode.conf"
+grep -q '^Environment=ASSISTANT_GATEWAY_MODE=decision$' \
+  "$TMP/systemd/assistant-gateway.service.d/20-production-mode.conf"
+test -x "$TMP/assistant-gateway-app/status.py"
+test -f "$TMP/assistant-gateway-app/crypto_payload.py"
 grep -q '^LoadCredential=hq-read.token:' "$TMP/systemd/assistant-gateway.service"
 grep -q '^StateDirectory=taskbox-assistant-gateway$' "$TMP/systemd/assistant-gateway.service"
 ! grep -q '/v1/tasks' "$TMP/assistant-gateway-app/worker.py"
@@ -201,5 +228,6 @@ grep -qx active "$STATE_FILE"
 grep -q 'rollback_ok' "$TMP/rollback.log"
 grep -q '^EXECUTION_SYSTEM_API_ENABLED=0$' "$ENV_FILE"
 grep -q '^ASSISTANT_GATEWAY_API_ENABLED=0$' "$ENV_FILE"
+test ! -f "$TMP/systemd/assistant-gateway.service.d/20-production-mode.conf"
 
 echo "system candidate release script tests passed"

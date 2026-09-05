@@ -14,9 +14,12 @@ Environment=NOTIFICATION_HUB_BASE_URL=http://127.0.0.1:3219
 Environment=TASKBOX_HQ_BASE_URL=http://127.0.0.1:3107
 Environment=ASSISTANT_GATEWAY_WORKER_DISABLE_FILE=/etc/taskbox-assistant-gateway-worker.disabled
 Environment=ASSISTANT_GATEWAY_STATE_FILE=/var/lib/taskbox-assistant-gateway/decision-state.json
+Environment=ASSISTANT_GATEWAY_STATUS_FILE=/var/lib/taskbox-assistant-gateway/status.json
 LoadCredential=weixin-ingress.token:/etc/notification-ingress/weixin-ingress.token
 LoadCredential=hq-reply.token:/etc/taskbox-assistant-gateway-token
 LoadCredential=hq-read.token:/etc/taskbox-assistant-gateway-read-token
+LoadCredential=conversation-producer.token:/etc/taskbox-assistant-conversation-producer-token
+LoadCredential=conversation-payload.key:/etc/taskbox-assistant-conversation-payload-key
 StateDirectory=taskbox-assistant-gateway
 StateDirectoryMode=0700
 Restart=on-failure
