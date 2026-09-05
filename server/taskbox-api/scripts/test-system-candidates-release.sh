@@ -211,6 +211,7 @@ grep -q 'assistant_gateway_worker=active' "$TMP/deploy.log"
 grep -q 'assistant_gateway_worker_mode=decision' "$TMP/deploy.log"
 test -f "$TMP/systemd/assistant-gateway.service"
 grep -q '^Environment=ASSISTANT_GATEWAY_MODE=echo$' "$TMP/systemd/assistant-gateway.service"
+grep -q '^Environment=NOTIFICATION_HUB_BASE_URL=https://liangzai666.com/notify/api$' "$TMP/systemd/assistant-gateway.service"
 test -f "$TMP/systemd/assistant-gateway.service.d/20-production-mode.conf"
 grep -q '^Environment=ASSISTANT_GATEWAY_MODE=decision$' \
   "$TMP/systemd/assistant-gateway.service.d/20-production-mode.conf"
