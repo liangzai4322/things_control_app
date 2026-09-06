@@ -465,21 +465,32 @@ if [[ "$DAILY_INTAKE_ENABLE_TIMERS" == "1" ]]; then
       exit 1
     fi
   done
-  # Keep the fail-closed gate after the consumers run. A retrying or accepted
-  # item means the consumers did not reach a safe terminal state, so timers
-  # must remain disabled.
-  for system in attention execution feedback health mission; do
-    token="$(tr -d '\r\n' < "$DAILY_INTAKE_TOKEN_DIR/$system.token")"
-    for status in accepted retrying; do
-      inbox="$API_BASE_URL/v1/system-candidates?intake=1&systemId=$system&status=$status&limit=1"
-      queue_count="$(curl --silent --show-error --fail --header "Authorization: Bearer $token" "$inbox" \
-        | node -e "let input='';process.stdin.on('data',d=>input+=d).on('end',()=>{const body=JSON.parse(input);process.stdout.write(String(Number(body.count)||0));});")"
-      if [[ "$queue_count" != "0" ]]; then
-        echo "daily intake enable gate has $status work for $system" >&2
-        exit 1
-      fi
+  # Keep the fail-closed gate after the consumers run. Consumers are oneshot
+  # services and may acknowledge asynchronously, so poll for a bounded window
+  # rather than racing their first receipt. Any remaining work keeps timers
+  # disabled and fails the deployment.
+  queue_drained=0
+  for attempt in {1..12}; do
+    queue_drained=1
+    for system in attention execution feedback health mission; do
+      token="$(tr -d '\r\n' < "$DAILY_INTAKE_TOKEN_DIR/$system.token")"
+      for status in accepted retrying; do
+        inbox="$API_BASE_URL/v1/system-candidates?intake=1&systemId=$system&status=$status&limit=1"
+        queue_count="$(curl --silent --show-error --fail --header "Authorization: Bearer $token" "$inbox" \
+          | node -e "let input='';process.stdin.on('data',d=>input+=d).on('end',()=>{const body=JSON.parse(input);process.stdout.write(String(Number(body.count)||0));});")"
+        if [[ "$queue_count" != "0" ]]; then
+          queue_drained=0
+          echo "daily intake drain pending: system=$system status=$status count=$queue_count" >&2
+        fi
+      done
     done
+    if [[ "$queue_drained" == "1" ]]; then break; fi
+    sleep 5
   done
+  if [[ "$queue_drained" != "1" ]]; then
+    echo "daily intake enable gate timed out with accepted/retrying work" >&2
+    exit 1
+  fi
   for system in hq mission health attention feedback execution; do
     systemctl enable --now "taskbox-$system-daily-intake.timer"
     systemctl is-enabled --quiet "taskbox-$system-daily-intake.timer"
