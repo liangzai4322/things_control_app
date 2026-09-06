@@ -453,6 +453,21 @@ for system in attention execution feedback health mission; do
 done
 daily_intake_timer_state=disabled
 if [[ "$DAILY_INTAKE_ENABLE_TIMERS" == "1" ]]; then
+  # Drain only currently eligible work through the existing least-privilege
+  # consumers while scheduling is still disabled. Checking for an empty queue
+  # before this step deadlocks recovery whenever a timer-disabled deployment
+  # is followed by a legitimate intake.
+  for system in hq mission health attention feedback execution; do
+    unit="taskbox-$system-daily-intake.service"
+    if ! systemctl start "$unit"; then
+      systemctl status --no-pager --lines=40 "$unit" || true
+      journalctl --no-pager --lines=80 --unit "$unit" || true
+      exit 1
+    fi
+  done
+  # Keep the fail-closed gate after the consumers run. A retrying or accepted
+  # item means the consumers did not reach a safe terminal state, so timers
+  # must remain disabled.
   for system in attention execution feedback health mission; do
     token="$(tr -d '\r\n' < "$DAILY_INTAKE_TOKEN_DIR/$system.token")"
     for status in accepted retrying; do
@@ -464,15 +479,6 @@ if [[ "$DAILY_INTAKE_ENABLE_TIMERS" == "1" ]]; then
         exit 1
       fi
     done
-  done
-  # Exercise every oneshot once while timers are still disabled, so a broken runtime cannot be scheduled.
-  for system in hq mission health attention feedback execution; do
-    unit="taskbox-$system-daily-intake.service"
-    if ! systemctl start "$unit"; then
-      systemctl status --no-pager --lines=40 "$unit" || true
-      journalctl --no-pager --lines=80 --unit "$unit" || true
-      exit 1
-    fi
   done
   for system in hq mission health attention feedback execution; do
     systemctl enable --now "taskbox-$system-daily-intake.timer"

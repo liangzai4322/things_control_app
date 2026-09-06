@@ -222,6 +222,9 @@ grep -q '^StateDirectory=taskbox-assistant-gateway$' "$TMP/systemd/assistant-gat
 ! grep -q '/v1/tasks' "$TMP/assistant-gateway-app/worker.py"
 grep -q 'start taskbox-hq-daily-intake.service' "$SYSTEMCTL_CALL_LOG"
 grep -q 'enable taskbox-hq-daily-intake.timer' "$TMP/systemctl.log"
+start_line="$(grep -n 'start taskbox-hq-daily-intake.service' "$SYSTEMCTL_CALL_LOG" | head -1 | cut -d: -f1)"
+enable_line="$(grep -n 'enable taskbox-hq-daily-intake.timer' "$SYSTEMCTL_CALL_LOG" | head -1 | cut -d: -f1)"
+(( start_line < enable_line ))
 
 printf 'changed\n' > "$APP_DIR/schema.sql"
 "$ROOT/scripts/rollback-system-candidates-release.sh" "$BACKUP_ROOT/snapshot" > "$TMP/rollback.log"
