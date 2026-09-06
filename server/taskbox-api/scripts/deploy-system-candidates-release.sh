@@ -483,9 +483,9 @@ if [[ "$DAILY_INTAKE_ENABLE_TIMERS" == "1" ]]; then
     for system in attention execution feedback health mission; do
       token="$(tr -d '\r\n' < "$DAILY_INTAKE_TOKEN_DIR/$system.token")"
       for status in accepted retrying; do
-        inbox="$API_BASE_URL/v1/system-candidates?intake=1&systemId=$system&status=$status&limit=1"
+        inbox="$API_BASE_URL/v1/system-candidates?intake=1&systemId=$system&status=$status&limit=200"
         queue_count="$(curl --silent --show-error --fail --header "Authorization: Bearer $token" "$inbox" \
-          | node -e "let input='';process.stdin.on('data',d=>input+=d).on('end',()=>{const body=JSON.parse(input);process.stdout.write(String(Number(body.count)||0));});")"
+          | node -e "let input='';process.stdin.on('data',d=>input+=d).on('end',()=>{const body=JSON.parse(input);const rows=Array.isArray(body.intakes)?body.intakes:[];const pending=rows.filter((row)=>!row.receipt||['processing','retrying','failed'].includes(row.receipt.status));process.stdout.write(String(pending.length));});")"
         if [[ "$queue_count" != "0" ]]; then
           queue_drained=0
           echo "daily intake drain pending: system=$system status=$status count=$queue_count" >&2
