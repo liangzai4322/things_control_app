@@ -453,6 +453,9 @@ for system in attention execution feedback health mission; do
 done
 daily_intake_timer_state=disabled
 if [[ "$DAILY_INTAKE_ENABLE_TIMERS" == "1" ]]; then
+  # The release has just copied updated unit files. Reload systemd before
+  # starting the one-shot consumers so recovery never runs stale definitions.
+  systemctl daemon-reload
   # Drain only currently eligible work through the existing least-privilege
   # consumers while scheduling is still disabled. Checking for an empty queue
   # before this step deadlocks recovery whenever a timer-disabled deployment
