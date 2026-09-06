@@ -467,6 +467,11 @@ if [[ "$DAILY_INTAKE_ENABLE_TIMERS" == "1" ]]; then
       journalctl --no-pager --lines=80 --unit "$unit" || true
       exit 1
     fi
+    # A oneshot can return success from systemctl even when its process exits
+    # non-zero. Capture bounded status/journal now so a failed drain is
+    # diagnosable without guessing or touching the queue.
+    systemctl status --no-pager --lines=20 "$unit" || true
+    journalctl --no-pager --lines=40 --unit "$unit" || true
   done
   # Keep the fail-closed gate after the consumers run. Consumers are oneshot
   # services and may acknowledge asynchronously, so poll for a bounded window
