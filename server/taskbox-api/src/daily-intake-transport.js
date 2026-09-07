@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const SYSTEM_IDS = new Set(['execution', 'health', 'attention', 'feedback', 'mission', 'box-app', 'life-hq', 'governance']);
 const INTAKE_STATUSES = new Set(['accepted', 'processing', 'processed', 'retrying', 'failed', 'ignored']);
 const RECEIPT_STATUSES = new Set(['received', 'processing', 'processed', 'retrying', 'failed', 'ignored']);
+const PAYLOAD_KINDS = new Set(['candidate_batch', 'domain_snapshot']);
 
 function isObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -25,6 +26,40 @@ function error(code, status = 422, detail = {}) {
 
 function stableHash(stableJson, value) {
   return crypto.createHash('sha256').update(stableJson(value)).digest('hex');
+}
+
+function normalizeFreshness(value) {
+  if (value === 'unknown' || value === null || value === undefined || value === '') {
+    return { status: 'unknown', generatedAt: null };
+  }
+  if (typeof value === 'string') {
+    if (Number.isNaN(Date.parse(value))) throw error('invalid_freshness');
+    return { status: 'fresh', generatedAt: new Date(value).toISOString() };
+  }
+  if (!isObject(value)) throw error('invalid_freshness');
+  const status = String(value.status || '').trim();
+  if (!['fresh', 'stale', 'unknown'].includes(status)) throw error('invalid_freshness_status');
+  const generatedAt = value.generatedAt || value.updatedAt || value.observedAt || null;
+  if (generatedAt !== null && Number.isNaN(Date.parse(String(generatedAt)))) throw error('invalid_freshness_timestamp');
+  return { status, generatedAt: generatedAt ? new Date(generatedAt).toISOString() : null };
+}
+
+function inferPayloadKind(data, explicitKind) {
+  if (explicitKind !== undefined && explicitKind !== null && explicitKind !== '') {
+    const kind = String(explicitKind).trim();
+    if (!PAYLOAD_KINDS.has(kind)) throw error('invalid_payload_kind');
+    return kind;
+  }
+  return isObject(data) && Array.isArray(data.candidates) && Object.keys(data).every((key) => key === 'candidates')
+    ? 'candidate_batch'
+    : 'domain_snapshot';
+}
+
+function compatibilityShape(input) {
+  return {
+    payloadKind: inferPayloadKind(input?.data, input?.payloadKind),
+    freshness: normalizeFreshness(input?.freshness),
+  };
 }
 
 function packagesFrom(body = {}) {
@@ -53,19 +88,21 @@ function normalizePackage(input, fallbackContractVersion, stableJson, validDateK
   if (!isObject(observationPeriod)) throw error('invalid_observation_period');
   if (!meaningful(sourceRef)) throw error('invalid_source_ref');
   if (!Array.isArray(evidenceRefs)) throw error('invalid_evidence_refs');
-  if (!meaningful(freshness)) throw error('invalid_freshness');
+  if (!meaningful(freshness) && freshness !== 'unknown') throw error('invalid_freshness');
   if (!Number.isSafeInteger(revision) || revision < 1) throw error('invalid_revision');
   if (!idempotencyKey || idempotencyKey.length > 512) throw error('invalid_idempotency_key');
   if (!isObject(data) || !meaningful(data)) throw error('empty_intake_data');
-  const canonical = {
+  const legacyCanonical = {
     schemaVersion, contractVersion, systemId, reviewDate, observationPeriod, sourceRef,
     evidenceRefs, freshness, revision, idempotencyKey, data,
   };
-  return { ...canonical, payloadHash: stableHash(stableJson, canonical) };
+  return { ...legacyCanonical, ...compatibilityShape(input), payloadHash: stableHash(stableJson, legacyCanonical) };
 }
 
 function rowToIntake(row, parseJson) {
   if (!row) return null;
+  const raw = parseJson(row.raw_json, {});
+  const shape = compatibilityShape({ data: parseJson(row.data_json, {}), payloadKind: raw.payloadKind, freshness: parseJson(row.freshness_json, 'unknown') });
   return {
     id: row.id,
     schemaVersion: Number(row.schema_version),
@@ -75,7 +112,8 @@ function rowToIntake(row, parseJson) {
     observationPeriod: parseJson(row.observation_period_json, {}),
     sourceRef: parseJson(row.source_ref_json, null),
     evidenceRefs: parseJson(row.evidence_refs_json, []),
-    freshness: parseJson(row.freshness_json, 'unknown'),
+    freshness: shape.freshness,
+    payloadKind: shape.payloadKind,
     revision: Number(row.revision),
     idempotencyKey: row.idempotency_key,
     data: parseJson(row.data_json, {}),
@@ -218,7 +256,7 @@ function createTransport({ app, db, now, uid, json, parseJson, stableJson, valid
             id,intake_id,system_id,review_date,status,projection_json,attempts,updated_at,raw_json
           ) VALUES (?,?,?,?, 'received', ?,0,?,?)`).run(
             receiptId, id, intake.systemId, intake.reviewDate,
-            json({ intakeRef: id, sourceRef: intake.sourceRef, freshness: intake.freshness }), timestamp,
+            json({ intakeRef: id, sourceRef: intake.sourceRef, freshness: intake.freshness, payloadKind: intake.payloadKind }), timestamp,
             json({ intakeRef: id, status: 'received' }),
           );
         })();
@@ -278,12 +316,13 @@ function createTransport({ app, db, now, uid, json, parseJson, stableJson, valid
     const limit = Math.max(1, Math.min(200, Number(req.query.limit) || 50)); const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     const rows = db.prepare(`SELECT r.*,i.contract_version,i.source_ref_json,i.evidence_refs_json,i.freshness_json,i.revision,i.idempotency_key AS intake_idempotency_key
       FROM system_intake_receipts r JOIN system_intakes i ON i.id=r.intake_id ${where}
-      ORDER BY r.review_date DESC,r.updated_at DESC LIMIT ?`).all(...params, limit);
+      ORDER BY r.review_date DESC,i.revision DESC,r.updated_at DESC LIMIT ?`).all(...params, limit);
     return res.json({ receipts: rows.map((row) => ({ ...rowToReceipt(row, parseJson), contractVersion: row.contract_version,
-      sourceRef: parseJson(row.source_ref_json, null), evidenceRefs: parseJson(row.evidence_refs_json, []), freshness: parseJson(row.freshness_json, 'unknown'),
+      sourceRef: parseJson(row.source_ref_json, null), evidenceRefs: parseJson(row.evidence_refs_json, []), freshness: normalizeFreshness(parseJson(row.freshness_json, 'unknown')),
+      payloadKind: parseJson(row.raw_json, {}).payloadKind || inferPayloadKind(parseJson(row.data_json, {})),
       revision: Number(row.revision), intakeIdempotencyKey: row.intake_idempotency_key })) });
   });
   return { isIntakeRead, isIntakeBatch, list, receive };
 }
 
-module.exports = { createTransport };
+module.exports = { createTransport, normalizeFreshness, inferPayloadKind, compatibilityShape };

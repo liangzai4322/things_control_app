@@ -1702,27 +1702,41 @@ app.patch('/v1/daily-quote', (req, res) => {
 });
 
 const HQ_RECEIPT_SYSTEMS = new Set(['mission', 'health', 'attention', 'execution', 'feedback']);
-const HQ_RECEIPT_FIELDS = ['systemId', 'receiptId', 'intakeRef', 'effectiveDate', 'generatedAt', 'freshness', 'status', 'riskLevel', 'needsUserInput', 'inputGaps', 'factRefs', 'evidenceRefs', 'syncState', 'revision'];
+const HQ_RECEIPT_FIELDS = ['systemId', 'receiptId', 'intakeRef', 'effectiveDate', 'generatedAt', 'freshness', 'status', 'riskLevel', 'needsUserInput', 'inputGaps', 'factRefs', 'evidenceRefs', 'syncState', 'revision', 'errorCode', 'errorMessage'];
 const safeReceiptText = (value, max = 240) => String(value || '').trim().slice(0, max);
 const safeReceiptList = (value, maxItems = 40) => (Array.isArray(value) ? value : [])
-  .map((item) => safeReceiptText(item, 500)).filter(Boolean).slice(0, maxItems);
+  .map((item) => {
+    if (item && typeof item === 'object' && !Array.isArray(item)) {
+      const safe = {};
+      for (const key of ['code', 'field', 'severity', 'message', 'ref']) {
+        if (item[key] !== undefined) safe[key] = safeReceiptText(item[key], 240);
+      }
+      return Object.keys(safe).length ? safe : null;
+    }
+    const text = safeReceiptText(item, 500);
+    return text || null;
+  }).filter(Boolean).slice(0, maxItems);
 
 function readHqDailyIntakeReceipts(reviewDate) {
   try {
     if (!hqDailyIntakeCacheFile || fs.statSync(hqDailyIntakeCacheFile).size > 1024 * 1024) return [];
     const cache = parseJson(fs.readFileSync(hqDailyIntakeCacheFile, 'utf8'), null);
     if (!cache || !Array.isArray(cache.receipts)) return [];
-    return cache.receipts.map((item) => {
+    const selected = new Map();
+    cache.receipts.forEach((item) => {
       const projection = item?.projection && typeof item.projection === 'object' ? item.projection : {};
       const effectiveDate = validDateKey(item?.effectiveDate || item?.reviewDate);
-      if (!HQ_RECEIPT_SYSTEMS.has(safeReceiptText(item?.systemId, 80)) || effectiveDate !== reviewDate) return null;
+      if (!HQ_RECEIPT_SYSTEMS.has(safeReceiptText(item?.systemId, 80)) || effectiveDate !== reviewDate) return;
       const receipt = {
         systemId: safeReceiptText(item.systemId, 80),
         receiptId: safeReceiptText(item.receiptId || item.id, 240),
         intakeRef: safeReceiptText(item.intakeRef || item.intakeId, 240),
         effectiveDate,
         generatedAt: safeReceiptText(item.generatedAt || item.updatedAt, 80),
-        freshness: typeof item.freshness === 'object' ? { status: safeReceiptText(item.freshness?.status, 40) } : safeReceiptText(item.freshness, 40),
+        freshness: typeof item.freshness === 'object' ? {
+          status: safeReceiptText(item.freshness?.status, 40) || 'unknown',
+          generatedAt: safeReceiptText(item.freshness?.generatedAt || item.freshness?.updatedAt, 80) || null,
+        } : safeReceiptText(item.freshness, 40) || 'unknown',
         status: safeReceiptText(item.status, 80) || 'unknown',
         riskLevel: safeReceiptText(item.riskLevel || projection.riskLevel, 80),
         needsUserInput: item.needsUserInput === true || projection.needsUserInput === true,
@@ -1731,9 +1745,16 @@ function readHqDailyIntakeReceipts(reviewDate) {
         evidenceRefs: safeReceiptList(item.evidenceRefs || projection.evidenceRefs),
         syncState: safeReceiptText(item.syncState || projection.syncState, 80),
         revision: Math.max(1, Number(item.revision) || 1),
+        errorCode: safeReceiptText(item.errorCode || projection.errorCode, 160) || null,
+        errorMessage: safeReceiptText(item.errorMessage || projection.errorMessage, 1200) || null,
       };
-      return Object.fromEntries(HQ_RECEIPT_FIELDS.filter((key) => receipt[key] !== undefined).map((key) => [key, receipt[key]]));
-    }).filter(Boolean);
+      const key = `${receipt.systemId}:${effectiveDate}`;
+      const current = selected.get(key);
+      if (!current || receipt.revision > current.revision
+        || (receipt.revision === current.revision && String(receipt.generatedAt) > String(current.generatedAt))) selected.set(key, receipt);
+    });
+    return [...selected.values()].map((receipt) => Object.fromEntries(HQ_RECEIPT_FIELDS
+      .filter((key) => receipt[key] !== undefined).map((key) => [key, receipt[key]])));
   } catch {
     return [];
   }

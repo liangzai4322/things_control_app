@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "contractVersion": "2026-09-03.1",
+  "reviewDate": "2026-09-07",
+  "observationPeriod": { "activity_start": "2026-09-06", "activity_end": "2026-09-06" },
+  "sourceRef": "redacted://daily-review/2026-09-07",
+  "evidenceRefs": ["redacted://evidence/one"],
+  "freshness": "2026-09-07T03:24:00.432532+00:00",
+  "revision": 1,
+  "idempotencyKey": "redacted:2026-09-07:1:content",
+  "cases": {
+    "execution": {
+      "systemId": "execution",
+      "data": { "candidates": [{ "candidateId": "redacted-execution", "statement": "[redacted]" }] }
+    },
+    "attention": {
+      "systemId": "attention",
+      "data": { "candidates": [{ "candidateId": "redacted-attention", "statement": "[redacted]" }] }
+    },
+    "feedback": {
+      "systemId": "feedback",
+      "data": { "candidates": [{ "candidateId": "redacted-feedback", "statement": "[redacted]" }] }
+    }
+  }
+}

@@ -163,6 +163,10 @@ child.stderr.on('data', (chunk) => { serverError += chunk.toString('utf8'); });
     if (intake.data.currentActions[0].taskId !== 'task-ref-only' || partial.data.accepted[0].receipt.status !== 'received') {
       throw new Error('intake payload or initial receipt did not round trip');
     }
+    const candidateIntake = partial.data.accepted.find((item) => item.intake.systemId === 'governance').intake;
+    if (candidateIntake.payloadKind !== 'domain_snapshot' || candidateIntake.freshness.status !== 'fresh') {
+      throw new Error(`shared compatibility shape did not normalize: ${JSON.stringify(candidateIntake)}`);
+    }
 
     const repeated = await request('/v1/system-candidates/batch', 'POST', { packages: [executionPackage()] }, { authToken: senderToken });
     if (repeated.status !== 201 || repeated.data.accepted[0]?.idempotent !== true || repeated.data.accepted[0]?.intake.id !== intake.id) {
@@ -235,7 +239,9 @@ child.stderr.on('data', (chunk) => { serverError += chunk.toString('utf8'); });
     const receiptPayload = {
       status: 'processed',
       idempotencyKey: 'execution:2026-09-03:2:abc123:receipt:processed',
-      projection: { summary: '已读取任务引用，无任务写入', taskRefs: ['task-ref-only'], sourceRunId: 'daily-2026-09-03' },
+      projection: { summary: '已读取任务引用，无任务写入', taskRefs: ['task-ref-only'], sourceRunId: 'daily-2026-09-03', inputGaps: [{ code: 'missing_evidence', field: 'taskRefs', severity: 'low' }] },
+      errorCode: 'partial_evidence',
+      errorMessage: 'fixture receipt retains typed gap',
     };
     const receipt = await request(`/v1/system-candidates/${intake.id}/receipt`, 'POST', receiptPayload, { authToken: consumerTokens.execution });
     if (receipt.status !== 201 || receipt.data.receipt.status !== 'processed' || receipt.data.receipt.attempts !== 2) {
@@ -249,6 +255,7 @@ child.stderr.on('data', (chunk) => { serverError += chunk.toString('utf8'); });
     const hqProjection = await request('/v1/hq/system-receipts?reviewDate=2026-09-03&systemId=execution', 'GET', null, { authToken: hqToken });
     const hqReceipt = hqProjection.data.receipts?.[0];
     if (hqProjection.status !== 200 || !hqReceipt || hqReceipt.projection.summary !== '已读取任务引用，无任务写入'
+      || hqReceipt.errorCode !== 'partial_evidence' || hqReceipt.projection.inputGaps?.[0]?.code !== 'missing_evidence'
       || Object.hasOwn(hqReceipt, 'data') || hqReceipt.sourceRef !== '10-日省/2026-09-03.md') {
       throw new Error('HQ receipt projection leaked candidate data or lost reference metadata');
     }

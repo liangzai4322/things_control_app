@@ -31,6 +31,7 @@
     "test:feedback": "node scripts/test-feedback-model.mjs",
     "test:feedback-intake": "node scripts/test-feedback-daily-intake.mjs && node integrations/feedback-system/test-daily-intake-runner.mjs",
     "test:daily-intake-e2e": "npm --prefix server/taskbox-api run test:system-intake",
+    "test:daily-intake-compat": "node scripts/test-daily-intake-compat.mjs",
     "test:feedback-python": "python3 -m unittest integrations/test_feedback_continuity.py",
     "test:assistant-gateway": "python3 -m unittest discover -s integrations/assistant-gateway/tests -v",
     "test:p1-integration": "node scripts/test-p1-integration.mjs",

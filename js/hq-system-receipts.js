@@ -10,6 +10,18 @@ function text(value) {
   return value === null || value === undefined ? null : String(value);
 }
 
+function normalizeInputGap(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const gap = {};
+    ['code', 'field', 'severity', 'message', 'ref'].forEach((key) => {
+      if (value[key] !== undefined && value[key] !== null) gap[key] = String(value[key]);
+    });
+    return Object.keys(gap).length ? gap : null;
+  }
+  const code = text(value);
+  return code ? { code } : null;
+}
+
 function inferFreshness(snapshot = {}) {
   const explicit = typeof snapshot.freshness === 'object' ? snapshot.freshness?.status : snapshot.freshness;
   if (FRESHNESS.has(explicit)) return explicit;
@@ -32,7 +44,8 @@ export function buildDailyReviewIntakeRef(brief = {}, reviewDate = '') {
 export function normalizeSystemReceipt(receipt = {}, { systemId, intakeRef, effectiveDate, syncState = {} } = {}) {
   const id = text(receipt.systemId || systemId) || 'unknown';
   const revision = Math.max(1, Number(receipt.revision) || 1);
-  const generatedAt = text(receipt.generatedAt || receipt.updatedAt);
+  const generatedAt = text(receipt.generatedAt || receipt.updatedAt
+    || (receipt.freshness && typeof receipt.freshness === 'object' ? receipt.freshness.generatedAt : ''));
   const status = text(receipt.status || receipt.health) || 'unknown';
   const projection = receipt.projection && typeof receipt.projection === 'object' ? receipt.projection : {};
   return Object.freeze({
@@ -45,13 +58,15 @@ export function normalizeSystemReceipt(receipt = {}, { systemId, intakeRef, effe
     status,
     riskLevel: text(receipt.riskLevel || projection.riskLevel) || (['alert', 'blocked', 'failed'].includes(status) ? 'action' : ['attention', 'retrying'].includes(status) ? 'watch' : 'none'),
     needsUserInput: receipt.needsUserInput === true || projection.needsUserInput === true,
-    inputGaps: list(receipt.inputGaps || receipt.missingRequiredFields || projection.inputGaps),
+    inputGaps: list(receipt.inputGaps || receipt.missingRequiredFields || projection.inputGaps).map(normalizeInputGap).filter(Boolean),
     factRefs: list(receipt.factRefs || receipt.sourceRefs || projection.factRefs),
     evidenceRefs: list(receipt.evidenceRefs || projection.evidenceRefs),
     syncState: inferSyncState(receipt, syncState),
     revision,
     candidateCount: Math.max(0, Number(receipt.candidateCount) || 0),
     appliedStatePresent: receipt.appliedStatePresent === true,
+    errorCode: text(receipt.errorCode || projection.errorCode),
+    errorMessage: text(receipt.errorMessage || projection.errorMessage),
   });
 }
 
@@ -88,9 +103,13 @@ export function selectSystemReceipts(payload, reviewDate = '') {
     if (reviewDate && itemDate && itemDate !== reviewDate) return;
     const receiptId = text(item.receiptId || item.id || item.snapshotId);
     if (!receiptId) return;
-    const current = selected.get(receiptId);
     const revision = Math.max(1, Number(item.revision) || 1);
-    if (!current || revision > (Number(current.revision) || 1)) selected.set(receiptId, { ...item, revision });
+    const key = `${item.systemId}:${itemDate || reviewDate || 'unknown'}`;
+    const current = selected.get(key);
+    const currentAt = Date.parse(String(current?.updatedAt || current?.generatedAt || '')) || 0;
+    const nextAt = Date.parse(String(item.updatedAt || item.generatedAt || '')) || 0;
+    if (!current || revision > (Number(current.revision) || 1)
+      || (revision === Number(current.revision || 1) && nextAt > currentAt)) selected.set(key, { ...item, revision });
   });
   return [...selected.values()];
 }
