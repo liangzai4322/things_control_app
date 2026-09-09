@@ -236,6 +236,17 @@ function buildIgnoredContractReceipt(intake) {
   };
 }
 
+function buildRejectedIntakeReceipt(intake, rejection) {
+  const code = clean(rejection?.code) || 'invalid_intake';
+  return {
+    status: 'failed',
+    idempotencyKey: attentionReceiptIdempotencyKey(intake, 'failed'),
+    projection: emptyAttentionProjection(),
+    errorCode: code,
+    errorMessage: `Attention intake rejected: ${code}.`,
+  };
+}
+
 export function prepareAttentionIntakes(intakes, options = {}) {
   const accepted = [];
   const rejected = [];
@@ -305,6 +316,22 @@ export async function consumeAttentionDailyReviewIntakes({
     { reviewDate, expectedStatus: status, supportedContractVersions },
   );
   const processed = [];
+  const failed = [];
+  for (const rejection of prepared.rejected) {
+    if (!clean(rejection.id)) continue;
+    const intake = response.intakes.find((item) => item?.id === rejection.id);
+    if (!intake) continue;
+    const receipt = buildRejectedIntakeReceipt(intake, rejection);
+    try {
+      const result = await request(`/system-candidates/${encodeURIComponent(intake.id)}/receipt`, {
+        method: 'POST',
+        body: JSON.stringify(receipt),
+      });
+      failed.push({ id: intake.id, revision: intake.revision, receipt, result });
+    } catch (error) {
+      failures.push({ id: intake.id, revision: intake.revision, errorCode: clean(error?.code) || `http_${error?.status || 'request_failed'}` });
+    }
+  }
   for (const intake of prepared.accepted) {
     const receipt = buildAttentionReceipt(intake);
     try {
@@ -317,5 +344,5 @@ export async function consumeAttentionDailyReviewIntakes({
       failures.push({ id: intake.id, revision: intake.revision, errorCode: clean(error?.code) || `http_${error?.status || 'request_failed'}` });
     }
   }
-  return { connected: true, processed, ignored, failures, rejected: prepared.rejected, skipped: prepared.skipped };
+  return { connected: true, processed, failed, ignored, failures, rejected: prepared.rejected, skipped: prepared.skipped };
 }

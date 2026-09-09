@@ -101,6 +101,19 @@ assert.equal(requests[1].options.method, 'POST');
 assert.deepEqual(Object.keys(JSON.parse(requests[1].options.body)).sort(), ['idempotencyKey', 'projection', 'status']);
 assert.equal(requests.some((item) => item.options.method === 'PATCH'), false, 'intake consumer must never PATCH candidates');
 
+const rejectedRequests = [];
+const rejected = await consumeAttentionDailyReviewIntakes({
+  request: async (path, options = {}) => {
+    rejectedRequests.push({ path, options });
+    return options.method ? { accepted: true } : { intakes: [{ ...intake, data: { ...intake.data, reviewDate: '2026-09-02' } }] };
+  },
+});
+assert.equal(rejected.failed.length, 1, 'rejected intake must receive a terminal failed receipt');
+assert.equal(rejected.failures.length, 0);
+const failedReceipt = JSON.parse(rejectedRequests[1].options.body);
+assert.equal(failedReceipt.status, 'failed');
+assert.equal(failedReceipt.errorCode, 'data_review_date_mismatch');
+
 const disconnected = await consumeAttentionDailyReviewIntakes({ reviewDate: intake.reviewDate, request: async () => null });
 assert.equal(disconnected.connected, false, 'offline API must not affect independent attention operation');
 

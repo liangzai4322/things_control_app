@@ -105,12 +105,12 @@ export async function runAttentionIntakeCycle(options = {}) {
     for (const status of config.statuses) {
       for (let batch = 0; batch < config.maxBatches; batch += 1) {
         const result = await consumeAttentionDailyReviewIntakes({ request, status, limit: config.limit });
-        processed += result.processed.length;
+        processed += result.processed.length + (result.failed || []).length;
         ignored += result.ignored.length;
-        failures.push(...result.failures, ...result.rejected);
+        failures.push(...result.failures);
         const handled = [...result.processed, ...result.ignored];
         handled.forEach((item) => { if (item.result?.receipt?.reviewDate) lastReviewDate = item.result.receipt.reviewDate; });
-        if (result.failures.length || result.rejected.length || result.processed.length + result.ignored.length < config.limit) break;
+        if (result.failures.length || result.processed.length + (result.failed || []).length + result.ignored.length < config.limit) break;
       }
     }
     const succeeded = failures.length === 0;
