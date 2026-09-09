@@ -66,6 +66,14 @@ child.stderr.on('data', (chunk) => { serverError += chunk.toString('utf8'); });
 (async () => {
   try {
     await waitForServer();
+    const rule = await request('/v1/hq/review-rules', 'POST', {
+      ruleId: 'reject-ambiguous-action', version: 1, source: 'explicit_user', enabled: true, revocable: true,
+      reasonCode: 'cannot_enter_box', scopeKey: 'daily_action_proposal', fingerprint: 'ambiguous-action-v1',
+      match: { anyPhrase: ['具体操作名称仍需确认'] },
+    }, 201);
+    if (!rule.enabled || rule.reasonCode !== 'cannot_enter_box') throw new Error('review rule create failed');
+    const rules = await request('/v1/hq/review-rules?status=active');
+    if (rules.items.length !== 1 || rules.items[0].ruleId !== rule.ruleId) throw new Error('review rule list failed');
     await request('/v1/boxes', 'POST', { id: 'proposal-box', name: '重要盒', color: 'important' }, 201);
     await request('/v1/tasks', 'POST', { content: '失效盒引用', boxId: 'missing-box' }, 409);
     await request('/v1/hq/daily-briefs/2026-08-10', 'POST', { primaryTaskId: 'missing-task' }, 409);
@@ -171,9 +179,13 @@ child.stderr.on('data', (chunk) => { serverError += chunk.toString('utf8'); });
     }
 
     const rejected = await request(`/v1/hq/proposals/${monthly.decisionId}/reject`, 'POST', {
-      actor: 'user', note: '证据不足',
+      actor: 'user', note: '证据不足', reasonCode: 'insufficient_evidence', scopeKey: 'monthly_bet', fingerprint: 'monthly-bet-v1',
     });
     if (rejected.status !== 'rejected') throw new Error('proposal rejection failed');
+    if (rejected.rejectionFeedback?.reasonCode !== 'insufficient_evidence'
+      || rejected.rejectionFeedback?.scopeKey !== 'monthly_bet') {
+      throw new Error('structured rejection feedback was not persisted');
+    }
     const restored = await request(`/v1/hq/proposals/${monthly.decisionId}/restore`, 'POST', { actor: 'user' });
     if (restored.status !== 'proposed') throw new Error('rejected proposal did not restore its previous status');
     const rejectedAgain = await request(`/v1/hq/proposals/${monthly.decisionId}/reject`, 'POST', { actor: 'user' });

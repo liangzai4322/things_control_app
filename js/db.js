@@ -391,10 +391,14 @@ function duplicateTaskFingerprint(task) {
   ].join('::');
 }
 
-function areLikelyDuplicateTasks(left, right) {
+function areLinkedDuplicateTasks(left, right) {
   if (!left?.id || !right?.id || left.id === right.id) return false;
-  const linked = (left.duplicateIds || []).includes(right.id) || (right.duplicateIds || []).includes(left.id);
-  if (linked) return true;
+  return (left.duplicateIds || []).includes(right.id) || (right.duplicateIds || []).includes(left.id);
+}
+
+function areLikelyDuplicateTasks(left, right) {
+  if (areLinkedDuplicateTasks(left, right)) return true;
+  if (!left?.id || !right?.id || left.id === right.id) return false;
   const leftCreated = taskTime(left.createdAt);
   const rightCreated = taskTime(right.createdAt);
   if (!leftCreated && !rightCreated) return true;
@@ -406,9 +410,12 @@ function collapseLikelyDuplicateTasks(tasks = []) {
   const collapsed = [];
   tasks.forEach((task) => {
     const fingerprint = duplicateTaskFingerprint(task);
-    const duplicateIndex = fingerprint
-      ? collapsed.findIndex((candidate) => duplicateTaskFingerprint(candidate) === fingerprint && areLikelyDuplicateTasks(candidate, task))
-      : -1;
+    const duplicateIndex = collapsed.findIndex((candidate) => (
+      areLinkedDuplicateTasks(candidate, task)
+      || (fingerprint
+        && duplicateTaskFingerprint(candidate) === fingerprint
+        && areLikelyDuplicateTasks(candidate, task))
+    ));
     if (duplicateIndex < 0) {
       collapsed.push({ ...task, duplicateIds: [...new Set(task.duplicateIds || [])] });
       return;
@@ -1694,6 +1701,7 @@ async function apiRequest(path, options = {}) {
   const {
     timeoutMs = Number(globalThis.__TASKBOX_API_REQUEST_TIMEOUT_MS__) || API_REQUEST_TIMEOUT_MS,
     signal: upstreamSignal,
+    affectsSyncState = true,
     ...requestOptions
   } = options;
   const config = getApiConfig();
@@ -1723,17 +1731,17 @@ async function apiRequest(path, options = {}) {
       }
       throw error;
     }
-    markApiSyncSuccess();
+    if (affectsSyncState) markApiSyncSuccess();
     if (response.status === 204) return null;
     return response.json();
   } catch (error) {
     if (controller.signal.aborted && !upstreamSignal?.aborted) {
       const timeoutError = new Error('api_timeout');
       timeoutError.cause = error;
-      markApiSyncFailure();
+      if (affectsSyncState) markApiSyncFailure();
       throw timeoutError;
     }
-    markApiSyncFailure();
+    if (affectsSyncState) markApiSyncFailure();
     throw error;
   } finally {
     clearTimeout(timeout);

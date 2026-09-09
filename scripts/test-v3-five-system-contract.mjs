@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
+  MISSION_HQ_STANDING_RULE_ID,
   decideMissionCandidate,
   importMissionCandidates,
   publishMissionVersion,
@@ -61,6 +62,17 @@ for (const sourceAuthority of [undefined, 'ai_derived', 'ai_summary', 'admin']) 
   assert.match(denied.error, /用户明确/);
   assert.deepEqual(denied.store, mission);
 }
+const standingMissionDecision = decideMissionCandidate(mission, missionCandidateId, 'included_in_draft', {
+  sourceAuthority: 'standing_rule', authorization: {
+    standingRuleId: MISSION_HQ_STANDING_RULE_ID,
+    action: 'decide_mission_candidate:included_in_draft',
+    objectId: missionCandidateId,
+    expectedResult: '将指定候选纳入使命草稿，不发布版本',
+  },
+});
+assert.equal(standingMissionDecision.error, null);
+assert.equal(standingMissionDecision.store.candidateInbox.find((item) => item.candidateId === missionCandidateId).decision.decidedBy, 'standing_rule');
+assert.equal(standingMissionDecision.store.activeVersion, null, 'standing mission candidate decision must not publish');
 const invalidMissionDraft = { ...mission, draft: {} };
 for (const sourceAuthority of [undefined, 'ai_derived', 'ai_summary']) {
   const denied = publishMissionVersion(invalidMissionDraft, [], { sourceAuthority });

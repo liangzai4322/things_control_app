@@ -81,6 +81,7 @@ CREATE INDEX IF NOT EXISTS idx_milestones_mainline_order ON milestones(mainline_
 
 CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY,
+  revision INTEGER NOT NULL DEFAULT 1,
   box_id TEXT,
   content TEXT NOT NULL,
   is_completed INTEGER DEFAULT 0,
@@ -121,6 +122,45 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE INDEX IF NOT EXISTS idx_tasks_box_id ON tasks(box_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_updated_at ON tasks(updated_at);
 CREATE INDEX IF NOT EXISTS idx_tasks_deleted ON tasks(deleted);
+
+CREATE TABLE IF NOT EXISTS execution_task_operations (
+  idempotency_key TEXT PRIMARY KEY,
+  request_id TEXT NOT NULL,
+  operation_type TEXT NOT NULL,
+  task_id TEXT,
+  authorization_source TEXT NOT NULL,
+  authorization_ref TEXT NOT NULL,
+  request_hash TEXT NOT NULL,
+  expected_revision INTEGER,
+  result_revision INTEGER,
+  http_status INTEGER NOT NULL,
+  result_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  CHECK (authorization_source IN ('explicit_user','standing_rule','approved_hq_proposal'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_execution_task_operations_request
+  ON execution_task_operations(request_id);
+
+CREATE TABLE IF NOT EXISTS execution_task_audit (
+  audit_id TEXT PRIMARY KEY,
+  request_id TEXT NOT NULL,
+  idempotency_key TEXT,
+  operation_type TEXT,
+  task_id TEXT,
+  authorization_source TEXT,
+  authorization_ref TEXT,
+  expected_revision INTEGER,
+  result_revision INTEGER,
+  outcome TEXT NOT NULL,
+  error_code TEXT,
+  request_hash TEXT,
+  changes_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_execution_task_audit_task_created
+  ON execution_task_audit(task_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS usage_logs (
   id TEXT PRIMARY KEY,
@@ -308,8 +348,69 @@ CREATE TABLE IF NOT EXISTS hq_proposal_events (
   FOREIGN KEY (proposal_id) REFERENCES hq_proposals(decision_id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS hq_review_rules (
+  rule_id TEXT PRIMARY KEY,
+  version INTEGER NOT NULL DEFAULT 1,
+  source TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  revocable INTEGER NOT NULL DEFAULT 1,
+  reason_code TEXT NOT NULL,
+  scope_key TEXT NOT NULL,
+  fingerprint TEXT,
+  match_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  raw_json TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_hq_review_rules_enabled_scope ON hq_review_rules(enabled, scope_key);
+
 CREATE INDEX IF NOT EXISTS idx_hq_proposal_events_proposal_created
   ON hq_proposal_events(proposal_id, created_at ASC);
+
+CREATE TABLE IF NOT EXISTS hq_proposal_replies (
+  reply_id TEXT PRIMARY KEY,
+  inbound_message_id TEXT NOT NULL UNIQUE,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  request_hash TEXT NOT NULL,
+  proposal_id TEXT NOT NULL,
+  expected_revision INTEGER NOT NULL,
+  decision TEXT NOT NULL,
+  text_hash TEXT NOT NULL,
+  source TEXT NOT NULL,
+  reply_ref TEXT NOT NULL,
+  verified_user_ref TEXT NOT NULL,
+  signature_ref TEXT NOT NULL,
+  received_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'received',
+  http_status INTEGER,
+  response_json TEXT,
+  error_code TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK (decision IN ('approve', 'reject', 'defer', 'expand')),
+  CHECK (status IN ('received', 'applied', 'clarification_recorded', 'rejected')),
+  FOREIGN KEY (proposal_id) REFERENCES hq_proposals(decision_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_hq_proposal_replies_proposal_created
+  ON hq_proposal_replies(proposal_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS hq_proposal_reply_audit (
+  id TEXT PRIMARY KEY,
+  reply_id TEXT NOT NULL,
+  proposal_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  detail_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  UNIQUE(reply_id, event_type),
+  FOREIGN KEY (reply_id) REFERENCES hq_proposal_replies(reply_id) ON DELETE CASCADE,
+  FOREIGN KEY (proposal_id) REFERENCES hq_proposals(decision_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_hq_proposal_reply_audit_proposal_created
+  ON hq_proposal_reply_audit(proposal_id, created_at ASC);
 
 CREATE TABLE IF NOT EXISTS hq_period_reviews (
   period_type TEXT NOT NULL,
@@ -349,6 +450,56 @@ CREATE TABLE IF NOT EXISTS system_candidates (
 CREATE INDEX IF NOT EXISTS idx_system_candidates_system_status_date
   ON system_candidates(system_id, status, review_date DESC);
 
+CREATE TABLE IF NOT EXISTS system_intakes (
+  id TEXT PRIMARY KEY,
+  system_id TEXT NOT NULL,
+  schema_version INTEGER NOT NULL,
+  contract_version TEXT NOT NULL,
+  review_date TEXT NOT NULL,
+  observation_period_json TEXT NOT NULL,
+  source_ref_json TEXT NOT NULL,
+  evidence_refs_json TEXT NOT NULL,
+  freshness_json TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  payload_hash TEXT NOT NULL,
+  data_json TEXT NOT NULL,
+  status TEXT NOT NULL,
+  received_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  raw_json TEXT NOT NULL,
+  UNIQUE(system_id, review_date, revision)
+);
+CREATE INDEX IF NOT EXISTS idx_system_intakes_system_date
+  ON system_intakes(system_id, review_date DESC, revision DESC);
+
+CREATE TABLE IF NOT EXISTS system_intake_receipts (
+  id TEXT PRIMARY KEY,
+  intake_id TEXT NOT NULL UNIQUE,
+  system_id TEXT NOT NULL,
+  review_date TEXT NOT NULL,
+  status TEXT NOT NULL,
+  projection_json TEXT NOT NULL,
+  error_code TEXT,
+  error_message TEXT,
+  retry_at TEXT,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  processed_at TEXT,
+  updated_at TEXT NOT NULL,
+  raw_json TEXT NOT NULL,
+  FOREIGN KEY (intake_id) REFERENCES system_intakes(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_system_intake_receipts_date
+  ON system_intake_receipts(system_id, review_date DESC, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS system_intake_receipt_requests (
+  idempotency_key TEXT PRIMARY KEY,
+  receipt_id TEXT NOT NULL,
+  request_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (receipt_id) REFERENCES system_intake_receipts(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS health_observations (
   observation_id TEXT PRIMARY KEY,
   observation_date TEXT NOT NULL,
@@ -376,3 +527,56 @@ CREATE TABLE IF NOT EXISTS health_snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_health_snapshots_effective_date
   ON health_snapshots(effective_date DESC, published_at DESC);
+
+CREATE TABLE IF NOT EXISTS mission_records (
+  record_id TEXT PRIMARY KEY,
+  record_type TEXT NOT NULL,
+  mission_id TEXT NOT NULL,
+  version INTEGER,
+  status TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  content_hash TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK (record_type IN ('draft','version')),
+  CHECK (status IN ('draft','published'))
+);
+CREATE INDEX IF NOT EXISTS idx_mission_records_type_updated
+  ON mission_records(record_type, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS mission_record_versions (
+  record_id TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  content_hash TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (record_id, revision),
+  FOREIGN KEY (record_id) REFERENCES mission_records(record_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS mission_candidates (
+  candidate_id TEXT PRIMARY KEY,
+  status TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  content_hash TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK (status IN ('unreviewed','ignored','observing','included_in_draft'))
+);
+CREATE INDEX IF NOT EXISTS idx_mission_candidates_status_updated
+  ON mission_candidates(status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS mission_events (
+  event_id TEXT PRIMARY KEY,
+  operation_id TEXT NOT NULL UNIQUE,
+  record_id TEXT,
+  event_type TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mission_events_record_created
+  ON mission_events(record_id, created_at ASC);

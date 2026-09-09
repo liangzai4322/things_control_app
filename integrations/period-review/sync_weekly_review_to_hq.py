@@ -50,6 +50,46 @@ def first_section_prefix(markdown: str, *prefixes: str, level: int = 3) -> tuple
     return "", ""
 
 
+def optional_number(value):
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value
+    text = str(value or "").strip()
+    if not re.fullmatch(r"-?\d+(?:\.\d+)?", text):
+        return None
+    return float(text) if "." in text else int(text)
+
+
+def governance_metrics(markdown: str) -> dict:
+    fields = bullet_map(first_section(markdown, "系统效率观测", "十三、系统效率观测"))
+    mapping = {
+        "observationDays": "观测天数",
+        "systemMaintenanceMinutes": "系统维护分钟",
+        "effectiveDecisionCount": "有效决策数",
+        "externalResultCount": "外部结果数",
+        "duplicateEntryCount": "重复录入次数",
+        "medianSignalToActionMinutes": "信号到行动中位分钟",
+    }
+    return {key: optional_number(fields.get(label)) for key, label in mapping.items()}
+
+
+def normalize_governance_metrics(parsed: dict, summary: dict | None = None) -> None:
+    metrics = parsed.get("metrics") if isinstance(parsed.get("metrics"), dict) else {}
+    coverage = (summary or {}).get("inputCoverage") or {}
+    days = coverage.get("days") if isinstance(coverage.get("days"), list) else []
+    observation_days = optional_number(coverage.get("coverageCount"))
+    if observation_days is None and days:
+        observation_days = len(set(str(day) for day in days if day))
+    metrics["observationDays"] = optional_number(metrics.get("observationDays"))
+    if metrics["observationDays"] is None:
+        metrics["observationDays"] = observation_days
+    for key in (
+        "systemMaintenanceMinutes", "effectiveDecisionCount", "externalResultCount",
+        "duplicateEntryCount", "medianSignalToActionMinutes",
+    ):
+        metrics[key] = optional_number(metrics.get(key))
+    parsed["metrics"] = metrics
+
+
 def parse_weekly_review(markdown: str) -> dict:
     bottleneck_heading, bottleneck_block = first_section_prefix(
         markdown, "主瓶颈：", "主瓶颈:", level=3
@@ -75,7 +115,7 @@ def parse_weekly_review(markdown: str) -> dict:
             first_section(markdown, "1. 本周判决", "一、本周经营裁决")
         ),
         "previousCommitments": table_rows(previous_commitments),
-        "metrics": {"rows": table_rows(metrics)},
+        "metrics": {"rows": table_rows(metrics), **governance_metrics(markdown)},
         "bottleneck": {
             "title": re.sub(r"^主瓶颈[：:]\s*", "", bottleneck_heading),
             "rootCause": bottleneck_fields.get("根因", ""),
@@ -128,6 +168,8 @@ def build_sync_payload(
         }
     else:
         parsed = parse_weekly_review(markdown_path.read_text(encoding="utf-8-sig"))
+        summary = None
+    normalize_governance_metrics(parsed, summary)
     key = period_key("week", start, end)
     explicit = dict(parsed.get("feedbackContinuity") or {})
     if not explicit.get("experiments"):

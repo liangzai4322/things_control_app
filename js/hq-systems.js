@@ -179,7 +179,7 @@ function missionView(context) {
     : '尚未发布使命版本';
   let highestSignal = readable ? `复查 ${summary.reviewAt || '日期待确认'}` : '只有明确批准的 activeVersion 才能进入 HQ';
   if (summary.portfolioDriftCount) highestSignal = `${summary.portfolioDriftCount} 项组合映射需要复核`;
-  else if (summary.hasPendingDraft) highestSignal = '有待审批草稿；当前事实仍保持已发布版本';
+  else if (summary.hasPendingDraft) highestSignal = `有待审批草稿${summary.pendingDiffFields?.length ? `（${summary.pendingDiffFields.length}项变化）` : ''}；当前事实仍保持已发布版本`;
   return {
     health: snapshot.status || 'unknown',
     lastSyncAt: snapshot.generatedAt || null,

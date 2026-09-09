@@ -57,7 +57,7 @@ async function autoPullServerData(app, { force = false } = {}) {
     pullDataFromCloud({ force: true }),
     pullPointsFromCloud(),
   ]).then(([boxResult, pointsResult]) => {
-    const boxOk = boxResult.status === 'fulfilled' && boxResult.value === 'merged';
+    const boxOk = boxResult.status === 'fulfilled' && ['merged', 'unchanged'].includes(boxResult.value);
     const pointsOk = pointsResult.status === 'fulfilled' && pointsResult.value?.status === 'remote';
 
     if (boxOk && pointsOk) showToast('已拉取盒子和积分数据');
@@ -237,6 +237,7 @@ export function renderSettings(app) {
     try {
       const result = await pullDataFromCloud({ force: true });
       if (result === 'merged') showToast('已从服务器拉取盒子数据');
+      else if (result === 'unchanged') showToast('盒子数据已是最新');
       else showToast('缺少服务器 API Token，已保留本地缓存');
       navigate('#home');
     } catch {

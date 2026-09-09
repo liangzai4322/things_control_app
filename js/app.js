@@ -281,15 +281,18 @@ async function syncCloudInBackground() {
   try {
     const pointsModule = await import('./points-store.js');
     const healthModule = await import('./health-store.js');
-    const [taskResult] = await Promise.allSettled([
+    const missionModule = await import('./mission-store.js');
+    const [taskResult, , , missionResult] = await Promise.allSettled([
       pullDataFromCloud(),
       pointsModule.prewarmPointsData?.({ forceSource: true }),
       (async () => {
         try { await healthModule.syncHealthFromServer?.(); }
         finally { await healthModule.deliverHealthProtocolOutbox?.(); }
       })(),
+      missionModule.syncMissionFromServer?.(),
     ]);
-    if (taskResult.status === 'fulfilled' && taskResult.value === 'merged') {
+    if ((taskResult.status === 'fulfilled' && taskResult.value === 'merged')
+      || (missionResult.status === 'fulfilled' && missionResult.value === 'merged')) {
       route({ preserveScroll: true });
       showToast('云端数据已更新');
     }

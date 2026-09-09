@@ -10,7 +10,7 @@ const timestamp = (value) => value && !Number.isNaN(new Date(value).getTime()) ?
 const numberOrNull = (value, min, max) => (
   value === '' || value == null || !Number.isFinite(Number(value))
     ? null
-    : Math.min(max, Math.max(min, Number(value)))
+    : (Number(value) >= min && Number(value) <= max ? Number(value) : null)
 );
 const average = (values) => values.length
   ? Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 10) / 10
@@ -28,6 +28,13 @@ const ENERGY_TEXT_SCORES = Object.freeze([
 export function inferEnergyScore(value = '') {
   const text = clean(value);
   return ENERGY_TEXT_SCORES.find(([, pattern]) => pattern.test(text))?.[0] ?? null;
+}
+
+export function isValidDateKey(value = '') {
+  const text = clean(value);
+  if (!datePattern.test(text)) return false;
+  const parsed = new Date(`${text}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === text;
 }
 
 function stableStringify(value) {
@@ -55,28 +62,47 @@ function nextDayAtNoon(date) {
 }
 
 export function normalizeHealthObservation(value = {}) {
-  const date = datePattern.test(value.observationDate || value.date || '') ? (value.observationDate || value.date) : '';
+  const dateCandidate = clean(value.observationDate || value.date);
+  const date = isValidDateKey(dateCandidate) ? dateCandidate : '';
+  const errors = [];
+  if (dateCandidate && !date) errors.push('observation_date_invalid');
   const source = VALID_SOURCES.has(value.source) ? value.source : 'manual';
+  if (value.source != null && value.source !== '' && !VALID_SOURCES.has(value.source)) errors.push('observation_source_invalid');
   const energyText = clean(value.energyText);
   const reportedEnergy = numberOrNull(value.energy, 1, 5);
+  if (value.energy !== '' && value.energy != null && reportedEnergy == null && !energyText) errors.push('energy_invalid');
   const inferredEnergy = reportedEnergy == null ? inferEnergyScore(energyText) : null;
+  const sleepHours = numberOrNull(value.sleepHours, 0, 24);
+  if (value.sleepHours !== '' && value.sleepHours != null && sleepHours == null) errors.push('sleep_hours_invalid');
+  const confidence = numberOrNull(value.confidence, 0, 1);
+  if (value.confidence !== '' && value.confidence != null && confidence == null) errors.push('confidence_invalid');
+  const effectiveCandidate = clean(value.effectiveDate);
+  const reviewCandidate = clean(value.reviewDate);
+  if (effectiveCandidate && !isValidDateKey(effectiveCandidate)) errors.push('effective_date_invalid');
+  if (reviewCandidate && !isValidDateKey(reviewCandidate)) errors.push('review_date_invalid');
+  const riskLevel = ['unknown', 'none', 'attention', 'professional'].includes(value.riskLevel)
+    ? value.riskLevel : (source === 'daily_review' ? 'unknown' : 'none');
+  if (value.riskLevel != null && value.riskLevel !== '' && !['unknown', 'none', 'attention', 'professional'].includes(value.riskLevel)) errors.push('risk_level_invalid');
+  const preservedEnergySource = ['reported', 'qualitative_mapping', 'unknown'].includes(value.energyScoreSource)
+    ? value.energyScoreSource
+    : null;
   return {
     observationId: clean(value.observationId) || `health-observation-${date || 'undated'}-${source}`,
     date,
     observationDate: date,
-    effectiveDate: datePattern.test(value.effectiveDate || '') ? value.effectiveDate : date,
-    reviewDate: datePattern.test(value.reviewDate || '') ? value.reviewDate : null,
-    sleepHours: numberOrNull(value.sleepHours, 0, 24),
+    effectiveDate: isValidDateKey(effectiveCandidate) ? effectiveCandidate : date,
+    reviewDate: isValidDateKey(reviewCandidate) ? reviewCandidate : null,
+    sleepHours,
     energy: reportedEnergy ?? inferredEnergy,
     energyText,
-    energyScoreSource: reportedEnergy != null ? 'reported' : inferredEnergy != null ? 'qualitative_mapping' : 'unknown',
+    energyScoreSource: preservedEnergySource || (reportedEnergy != null ? 'reported' : inferredEnergy != null ? 'qualitative_mapping' : 'unknown'),
     training: clean(value.training),
     nutrition: clean(value.nutrition),
     symptoms: clean(value.symptoms),
-    riskLevel: ['unknown', 'none', 'attention', 'professional'].includes(value.riskLevel) ? value.riskLevel : (source === 'daily_review' ? 'unknown' : 'none'),
+    riskLevel,
     notes: clean(value.notes),
     source,
-    confidence: numberOrNull(value.confidence, 0, 1) ?? SOURCE_CONFIDENCE[source],
+    confidence: confidence ?? (value.confidence == null || value.confidence === '' ? SOURCE_CONFIDENCE[source] : null),
     observedAt: clean(value.observedAt) || null,
     candidateId: clean(value.candidateId) || null,
     sourceRef: clean(value.sourceRef) || null,
@@ -88,6 +114,7 @@ export function normalizeHealthObservation(value = {}) {
     tomorrowCapacity: ['normal', 'reduced', 'recovery', 'unknown'].includes(value.tomorrowCapacity) ? value.tomorrowCapacity : 'unknown',
     constraint: clean(value.constraint),
     evidenceRefs: unique(Array.isArray(value.evidenceRefs) ? value.evidenceRefs.map(clean) : []),
+    validationErrors: unique(errors),
     updatedAt: value.updatedAt || null,
   };
 }
@@ -231,6 +258,8 @@ export function buildDailyHealthReading(records = [], date = '') {
   const missing = [sleepHours == null ? 'sleep' : '', energy == null ? 'energy' : ''].filter(Boolean);
   const confidenceValues = observations.map((item) => item.confidence).filter((item) => item != null);
   const completeness = (2 - missing.length) / 2;
+  const validationErrors = unique(observations.flatMap((item) => item.validationErrors || []));
+  const unconfirmedSymptoms = observations.some((item) => item.symptoms && ['none', 'unknown'].includes(item.riskLevel));
   return {
     date,
     observations,
@@ -239,6 +268,8 @@ export function buildDailyHealthReading(records = [], date = '') {
     riskLevel,
     conflicts,
     missing,
+    validationErrors,
+    unconfirmedSymptoms,
     evidenceRefs: unique(observations.map((item) => item.observationId)),
     sources: unique(observations.map((item) => item.source)),
     confidence: conflicts.length ? 0 : Math.round((average(confidenceValues) ?? 0) * completeness * 100) / 100,
@@ -317,6 +348,8 @@ export function deriveHealthAssessment(records = [], date = '') {
   } else if (reading.riskLevel === 'attention') {
     state = 'yellow';
     reasons.push('你明确标记了需要关注');
+  } else if (reading.validationErrors.length) {
+    reasons.push(...reading.validationErrors.map((item) => `数据校验失败：${item}`));
   } else if (reading.conflicts.length) {
     reasons.push(...reading.conflicts.map((item) => `来源冲突：${item}`));
   } else if (reading.missing.length) {
@@ -325,6 +358,8 @@ export function deriveHealthAssessment(records = [], date = '') {
     state = 'yellow';
     if (reading.sleepHours < 6) reasons.push(`睡眠 ${reading.sleepHours} 小时，触发保守降载线`);
     if (reading.energy <= 2) reasons.push(`主观精力 ${reading.energy}/5，触发保守降载线`);
+  } else if (reading.unconfirmedSymptoms) {
+    reasons.push('存在未确认的症状记录，暂不按正常或满容量处理');
   } else if (hasConsecutiveDeviation(records, date, baseline)) {
     state = 'yellow';
     reasons.push('连续两次偏离个人基线，建议降低负载并补充恢复');
@@ -555,7 +590,35 @@ export function normalizeHealthProtocolStore(value = {}) {
   };
 }
 
+export function adaptHealthReceiptToHq(receipt = {}, { now = new Date(), staleAfterHours = 36 } = {}) {
+  const projection = receipt.projection && typeof receipt.projection === 'object' ? receipt.projection : receipt;
+  const generatedAt = receipt.generatedAt || receipt.updatedAt || projection.generatedAt || null;
+  const publishedAt = timestamp(generatedAt);
+  const expiresAt = timestamp(receipt.expiresAt || projection.expiresAt);
+  const ageMs = publishedAt ? new Date(now).getTime() - new Date(publishedAt).getTime() : Infinity;
+  const missingFields = unique([...(Array.isArray(projection.missingFields) ? projection.missingFields : []), ...(Array.isArray(projection.inputGaps) ? projection.inputGaps.map((item) => typeof item === 'object' ? (item.field || item.code || item.message) : item) : [])].map(clean));
+  const constraints = unique(Array.isArray(projection.constraints) ? projection.constraints.map(clean) : []);
+  const conflictCount = Math.max(0, Number(projection.conflictCount) || 0);
+  const confidence = numberOrNull(projection.confidence, 0, 1) ?? 0;
+  const availableCapacity = numberOrNull(projection.availableCapacity, 0, 1);
+  const sourceRefs = unique([...(Array.isArray(projection.sourceRefs) ? projection.sourceRefs : []), ...(Array.isArray(projection.evidenceRefs) ? projection.evidenceRefs : [])].map(clean));
+  const sourceStatus = ['green', 'yellow', 'red', 'unknown'].includes(projection.status) ? projection.status : 'unknown';
+  const stale = !publishedAt || ageMs > staleAfterHours * 60 * 60 * 1000 || Boolean(expiresAt && new Date(now).getTime() > new Date(expiresAt).getTime());
+  const unknown = sourceStatus === 'unknown' || availableCapacity == null || confidence < 0.5 || conflictCount > 0 || missingFields.length > 0;
+  const state = unknown ? 'unknown' : sourceStatus;
+  return {
+    snapshotId: `health-hq:receipt:${clean(receipt.receiptId || receipt.id || 'unknown')}`,
+    systemId: 'health', schemaVersion: 1, generatedAt: publishedAt, effectiveDate: receipt.effectiveDate || receipt.reviewDate || null,
+    sourceRefs, confidence, status: stale ? 'stale' : (state === 'green' ? 'healthy' : state === 'yellow' ? 'attention' : state === 'red' ? 'alert' : 'unknown'),
+    summary: { healthSnapshotId: receipt.snapshotId || null, effectiveDate: receipt.effectiveDate || receipt.reviewDate || null, state,
+      availableCapacity: state === 'unknown' ? null : availableCapacity, confidence, constraints, conflictCount, missingFields,
+      sourceTypeCount: 0, nextEvaluationAt: expiresAt },
+    constraints,
+  };
+}
+
 export function buildHealthHqSnapshot(input = {}, { now = new Date(), staleAfterHours = 36 } = {}) {
+  if (input?.receipt || input?.projection) return adaptHealthReceiptToHq(input.receipt || input, { now, staleAfterHours });
   const protocol = normalizeHealthProtocolStore(input);
   const published = protocol.latest;
   const empty = {

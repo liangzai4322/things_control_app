@@ -128,6 +128,14 @@ const collapsedDuplicates = dedupeTasksByIdentity([
 assert.equal(collapsedDuplicates.length, 1);
 assert.deepEqual(collapsedDuplicates[0].duplicateIds, ['copy-a']);
 
+const collapsedEditedDuplicates = dedupeTasksByIdentity([
+  { id: 'edited-original', boxId: taskBox.id, content: '修改前的资源', duplicateIds: ['edited-copy'], createdAt: duplicateCreatedAt, updatedAt: duplicateCreatedAt },
+  { id: 'edited-copy', boxId: taskBox.id, content: '修改后的资源', duplicateIds: ['edited-original'], createdAt: duplicateCreatedAt, updatedAt: new Date(Date.now() + 2000).toISOString() },
+]);
+assert.equal(collapsedEditedDuplicates.length, 1, 'linked copies must stay collapsed after an edit changes their content');
+assert.equal(collapsedEditedDuplicates[0].content, '修改后的资源');
+assert.deepEqual(collapsedEditedDuplicates[0].duplicateIds, ['edited-original']);
+
 const intentionalDuplicates = dedupeTasksByIdentity([
   { id: 'later-a', boxId: taskBox.id, content: '允许再次创建', createdAt: '2026-01-01T00:00:00.000Z' },
   { id: 'later-b', boxId: taskBox.id, content: '允许再次创建', createdAt: '2026-01-01T01:00:00.000Z' },

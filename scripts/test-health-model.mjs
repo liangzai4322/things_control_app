@@ -7,12 +7,14 @@ import {
   calculateHealthBaseline,
   calculatePersonalBaseline,
   addSingleVariableIntervention,
+  adaptHealthReceiptToHq,
   deriveHealthAssessment,
   deriveHealthDrivingPlan,
   deriveHealthState,
   importHealthCandidates,
   inferEnergyScore,
   normalizeHealthStore,
+  normalizeHealthObservation,
   resolveHealthCandidate,
 } from '../js/health-model.js';
 import { decideHealthCandidate, publishHealthSnapshot, readHealthProtocolStore } from '../js/health-store.js';
@@ -24,6 +26,15 @@ assert.equal(deriveHealthState({ sleepHours: 8, energy: 5, riskLevel: 'professio
 assert.equal(inferEnergyScore('中等偏好'), 4);
 assert.equal(inferEnergyScore('中等偏低'), 2);
 assert.equal(inferEnergyScore('可出门工作，但作息仍在调整'), null);
+const invalidObservation = normalizeHealthObservation({ observationDate: '2026-99-99', sleepHours: 30, energy: 9 });
+assert.equal(invalidObservation.date, '');
+assert.equal(invalidObservation.sleepHours, null);
+assert.equal(invalidObservation.energy, null);
+assert.deepEqual(invalidObservation.validationErrors.sort(), ['energy_invalid', 'observation_date_invalid', 'sleep_hours_invalid']);
+const symptomAssessment = deriveHealthAssessment([{
+  observationDate: '2026-08-22', source: 'manual', sleepHours: 8, energy: 5, symptoms: '头痛', riskLevel: 'none',
+}], '2026-08-22');
+assert.equal(symptomAssessment.state, 'unknown', 'unconfirmed symptoms must not imply full capacity');
 
 const inferredEnergy = normalizeHealthStore({ observations: [{
   observationDate: '2026-08-22', effectiveDate: '2026-08-23', source: 'daily_review',
@@ -33,6 +44,10 @@ assert.equal(inferredEnergy.energy, 4);
 assert.equal(inferredEnergy.energyText, '中等偏好');
 assert.equal(inferredEnergy.energyScoreSource, 'qualitative_mapping');
 assert.equal(deriveHealthDrivingPlan([inferredEnergy], '2026-08-23').state, 'green');
+assert.equal(normalizeHealthStore({ observations: [{
+  observationDate: '2026-08-22', source: 'daily_review', energy: 4,
+  energyText: '中等偏好', energyScoreSource: 'qualitative_mapping',
+}] }).observations[0].energyScoreSource, 'qualitative_mapping', 'server-side qualitative scoring provenance must survive client normalization');
 
 const baseline = calculateHealthBaseline([
   { date: '2026-08-08', sleepHours: 6, energy: 3 },
@@ -232,6 +247,13 @@ assert.equal(freshHq.status, 'attention');
 assert.equal(freshHq.summary.availableCapacity, 0.6);
 assert.equal(JSON.stringify(freshHq).includes('private symptom text'), false);
 assert.equal(JSON.stringify(freshHq).includes('private note text'), false);
+const receiptHq = adaptHealthReceiptToHq({ receiptId: 'receipt-1', snapshotId: 'snapshot-1', generatedAt: '2026-08-09T10:00:00.000Z', expiresAt: '2026-08-10T10:00:00.000Z', projection: {
+  status: 'green', availableCapacity: 1, confidence: 0.8, constraints: ['保持恢复时段'], missingFields: [], conflictCount: 0, sourceRefs: ['observation-1'],
+} }, { now: new Date('2026-08-09T12:00:00.000Z') });
+assert.equal(receiptHq.status, 'healthy');
+assert.equal(receiptHq.summary.availableCapacity, 1);
+assert.deepEqual(receiptHq.sourceRefs, ['observation-1']);
+assert.equal(JSON.stringify(receiptHq).includes('[object Object]'), false);
 const staleHq = buildHealthHqSnapshot({ latest: snapshot }, { now: new Date('2026-08-11T00:00:01.000Z') });
 assert.equal(staleHq.status, 'stale');
 const conflictPublished = buildHealthProtocolSnapshot(normalizeHealthStore({ observations: conflicting }), '2026-08-09', '2026-08-09T10:00:00.000Z');

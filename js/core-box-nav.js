@@ -7,6 +7,16 @@ const CORE_BOX_ROLES = [
   { key: 'ideas', label: '思路', match: (box) => /(?:思路|灵感|想法)(?:盒)?/.test(box.name) },
 ];
 
+const BOX_NAV_COLORS = {
+  important: '#e85d45',
+  misc: '#2f6df6',
+  relax: '#0f9b87',
+  reward: '#d99716',
+  punish: '#64748b',
+  study: '#2f9d62',
+  health: '#2580c3',
+};
+
 function escapeHtml(value = '') {
   return String(value)
     .replaceAll('&', '&amp;')
@@ -35,6 +45,25 @@ export function renderCoreBoxNav({ currentBoxId = null } = {}) {
           ${entry.label}
         </a>
       `).join('')}
+    </nav>
+  `;
+}
+
+export function renderAllBoxNav({ currentBoxId = null } = {}) {
+  const boxes = getBoxes().filter((box) => box.id !== currentBoxId);
+  if (!boxes.length) return '';
+
+  return `
+    <nav class="core-box-nav all-box-nav" aria-label="全部盒子快速入口">
+      ${boxes.map((box) => {
+        const color = BOX_NAV_COLORS[box.color] || '#6b7280';
+        const label = String(box.name || '未命名').replace(/盒$/, '') || String(box.name || '盒子');
+        return `
+        <a class="core-box-link" href="#box/${encodeURIComponent(box.id)}" title="进入${escapeHtml(box.name)}" style="--core-color:${color}">
+          <span aria-hidden="true">${escapeHtml(box.icon || '□')}</span>${escapeHtml(label)}
+        </a>
+      `;
+      }).join('')}
     </nav>
   `;
 }

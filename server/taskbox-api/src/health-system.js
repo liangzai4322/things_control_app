@@ -7,16 +7,24 @@ const ENERGY_TEXT_SCORES = [
   [4, /(?:中等偏好|中等偏上|偏好|较好|良好|有精神)/],
   [3, /(?:中等|一般|尚可|正常)/],
 ];
-
 function inferEnergyScore(value) {
   const text = String(value || '').trim();
   return ENERGY_TEXT_SCORES.find(([, pattern]) => pattern.test(text))?.[0] ?? null;
 }
 
-function installHealthSystemRoutes({ app, db, now, json, parseJson }) {
+function installHealthSystemRoutes({ app, db, now, json, parseJson, authorizeDailyIntake }) {
+  function authorize(req, res, scope) {
+    if (!req.dailyIntakeIdentity) return true;
+    const result = authorizeDailyIntake(req, scope, 'health');
+    if (result.ok) return true;
+    res.status(result.status).json({ error: result.error });
+    return false;
+  }
   function date(value) {
     const text = String(value || '').trim();
-    return DATE_PATTERN.test(text) ? text : '';
+    if (!DATE_PATTERN.test(text)) return '';
+    const parsed = new Date(`${text}T00:00:00Z`);
+    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === text ? text : '';
   }
 
   function normalize(value = {}) {
@@ -124,6 +132,7 @@ function installHealthSystemRoutes({ app, db, now, json, parseJson }) {
   });
 
   app.get('/v1/health/observations', (req, res) => {
+    if (!authorize(req, res, 'health:observations:read')) return;
     const limit = Math.max(1, Math.min(365, Number(req.query.limit) || 90));
     const rows = db.prepare(`
       SELECT * FROM health_observations
@@ -134,6 +143,7 @@ function installHealthSystemRoutes({ app, db, now, json, parseJson }) {
   });
 
   app.post('/v1/health/observations/batch', (req, res) => {
+    if (!authorize(req, res, 'health:observations:write')) return;
     const values = Array.isArray(req.body?.observations) ? req.body.observations : [];
     if (!values.length || values.length > 100) return res.status(400).json({ error: 'health_observations_invalid' });
     try {
@@ -156,14 +166,39 @@ function installHealthSystemRoutes({ app, db, now, json, parseJson }) {
       || value.boundaries?.medicalDiagnosis !== false) {
       throw Object.assign(new Error('health_snapshot_boundary_invalid'), { status: 400 });
     }
-    const serialized = json(value);
-    if (/symptoms|private symptom|private note/i.test(serialized)) {
-      throw Object.assign(new Error('health_snapshot_privacy_invalid'), { status: 400 });
-    }
+    const allowed = {
+      snapshotId: 'string', schemaVersion: 'number', date: 'date', basisDate: 'date', basisSource: 'string', publishedAt: 'timestamp',
+      healthState: { state: 'state', availableCapacity: 'capacity', reasons: 'string[]', validUntil: 'timestamp', evidenceRefs: 'string[]', confidence: 'confidence' },
+      timeSystem: { eventTypes: 'string[]', availableCapacity: 'capacity', validUntil: 'timestamp', constraints: 'string[]', evidenceRefs: 'string[]', privacy: 'string' },
+      dailyReview: { eventType: 'string', state: 'state', availableCapacity: 'capacity', confidence: 'confidence', basisDate: 'date', basisSource: 'string', freshness: 'string', missing: 'string[]', conflicts: 'string[]', sourceSummary: 'summary', activeInterventions: 'interventions', privacy: 'string' },
+      boundaries: { createsTasks: 'boolean', writesCalendar: 'boolean', medicalDiagnosis: 'boolean', requiresUserApprovalForDownstreamAction: 'boolean' },
+    };
+    const fail = (code) => { throw Object.assign(new Error(code), { status: 400 }); };
+    const validate = (object, shape) => {
+      if (!object || typeof object !== 'object' || Array.isArray(object)) fail('health_snapshot_field_invalid');
+      for (const [key, entry] of Object.entries(object)) {
+        if (!(key in shape)) fail('health_snapshot_unknown_field');
+        const rule = shape[key];
+        if (rule && typeof rule === 'object') validate(entry, rule);
+        else if (rule === 'date' && entry != null && !date(entry)) fail('health_snapshot_date_invalid');
+        else if (rule === 'timestamp' && entry != null && Number.isNaN(new Date(entry).getTime())) fail('health_snapshot_timestamp_invalid');
+        else if (rule === 'string' && typeof entry !== 'string') fail('health_snapshot_field_invalid');
+        else if (rule === 'number' && typeof entry !== 'number') fail('health_snapshot_field_invalid');
+        else if (rule === 'boolean' && typeof entry !== 'boolean') fail('health_snapshot_field_invalid');
+        else if (rule === 'capacity' && entry != null && (typeof entry !== 'number' || entry < 0 || entry > 1)) fail('health_snapshot_capacity_invalid');
+        else if (rule === 'confidence' && (typeof entry !== 'number' || entry < 0 || entry > 1)) fail('health_snapshot_confidence_invalid');
+        else if (rule === 'state' && !['green', 'yellow', 'red', 'unknown'].includes(entry)) fail('health_snapshot_state_invalid');
+        else if (rule === 'string[]' && (!Array.isArray(entry) || entry.some((item) => typeof item !== 'string'))) fail('health_snapshot_field_invalid');
+        else if (rule === 'summary' && (!entry || typeof entry !== 'object' || Array.isArray(entry) || Object.values(entry).some((item) => !Number.isFinite(Number(item))))) fail('health_snapshot_field_invalid');
+        else if (rule === 'interventions' && (!Array.isArray(entry) || entry.some((item) => !item || typeof item !== 'object' || Array.isArray(item) || Object.keys(item).some((itemKey) => !['id', 'evaluationAt'].includes(itemKey))))) fail('health_snapshot_field_invalid');
+      }
+    };
+    validate(value, allowed);
     return { ...value, snapshotId, date: effectiveDate, publishedAt };
   }
 
   app.post('/v1/health/snapshots', (req, res) => {
+    if (!authorize(req, res, 'health:observations:write')) return;
     try {
       const snapshot = normalizeSnapshot(req.body || {});
       const existing = db.prepare('SELECT created_at FROM health_snapshots WHERE snapshot_id=?').get(snapshot.snapshotId);
@@ -187,6 +222,7 @@ function installHealthSystemRoutes({ app, db, now, json, parseJson }) {
   });
 
   app.get('/v1/health/snapshots/latest', (req, res) => {
+    if (!authorize(req, res, 'health:observations:read')) return;
     const effectiveDate = date(req.query.date);
     const row = effectiveDate
       ? db.prepare('SELECT * FROM health_snapshots WHERE effective_date<=? ORDER BY effective_date DESC, published_at DESC LIMIT 1').get(effectiveDate)

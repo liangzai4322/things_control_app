@@ -29,14 +29,14 @@ try {
   const db = new Database(dbPath);
   const columns = db.prepare('PRAGMA table_info(tasks)').all().map((item) => item.name);
   const indexes = db.prepare('PRAGMA index_list(tasks)').all().map((item) => item.name);
-  ['branch_id', 'device_context', 'execution_mode', 'visible_after', 'deferred_at', 'defer_note', 'progress_logs_json'].forEach((name) => {
+  ['revision', 'branch_id', 'device_context', 'execution_mode', 'visible_after', 'deferred_at', 'defer_note', 'progress_logs_json'].forEach((name) => {
     if (!columns.includes(name)) throw new Error(`missing column ${name}`);
   });
   ['idx_tasks_branch_id', 'idx_tasks_visible_after', 'idx_tasks_device_context', 'idx_tasks_execution_mode', 'idx_tasks_recurrence_key'].forEach((name) => {
     if (!indexes.includes(name)) throw new Error(`missing index ${name}`);
   });
   const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((item) => item.name);
-  ['branches', 'hq_daily_briefs', 'hq_decisions', 'hq_proposals', 'hq_proposal_events', 'hq_period_reviews', 'system_candidates', 'health_observations', 'health_snapshots'].forEach((name) => {
+  ['branches', 'hq_daily_briefs', 'hq_decisions', 'hq_proposals', 'hq_proposal_events', 'hq_proposal_replies', 'hq_proposal_reply_audit', 'hq_period_reviews', 'system_candidates', 'health_observations', 'health_snapshots', 'mission_records', 'mission_record_versions', 'mission_candidates', 'mission_events', 'execution_task_operations', 'execution_task_audit'].forEach((name) => {
     if (!tables.includes(name)) throw new Error(`missing table ${name}`);
   });
   const candidateIndexes = db.prepare('PRAGMA index_list(system_candidates)').all().map((item) => item.name);
@@ -45,6 +45,8 @@ try {
   ['idx_hq_proposals_status_updated', 'idx_hq_proposals_type_updated'].forEach((name) => {
     if (!proposalIndexes.includes(name)) throw new Error(`missing proposal index ${name}`);
   });
+  const replyIndexes = db.prepare('PRAGMA index_list(hq_proposal_replies)').all().map((item) => item.name);
+  if (!replyIndexes.includes('idx_hq_proposal_replies_proposal_created')) throw new Error('missing proposal reply index');
   db.close();
   console.log('server schema migration tests passed');
 } finally {

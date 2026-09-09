@@ -26,12 +26,21 @@ import {
   resolveHqOutcomeTask,
 } from './hq-model.js';
 import { openCompletionReceiptSheet } from './completion-card.js';
-import { bindHqDimensionNav, renderHqDimensionNav, renderHqPeriodPage } from './hq-period-page.js';
+import {
+  bindHqDimensionNav,
+  readHqPeriodCache,
+  refreshHqPeriodCache,
+  renderHqDimensionNav,
+  renderHqPeriodPage,
+} from './hq-period-page.js';
 import { isTaskReleased } from './task-visibility.js';
 import { isTaskBox } from './box-types.js';
 import { buildHqActionCandidates, dismissHqCandidate } from './hq-candidates.js';
 import { buildHqSystemViews, summarizeHqSystemViews } from './hq-systems.js';
 import { readFiveSystemHqPorts } from './five-system-hq-ports.js';
+import { buildHqResourceGovernance } from './hq-resource-governance.js';
+import { buildCollaborationInbox, systemCollaborationState } from './hq-collaboration.js';
+import { buildSystemReceiptProjection } from './hq-system-receipts.js';
 import {
   parseFiveSystemBootstrapFile,
   publishFiveSystemBaseline,
@@ -40,8 +49,10 @@ import {
   rollbackFiveSystemBaseline,
 } from './five-system-bootstrap.js';
 import {
+  findProposalDuplicates,
   proposalActionModel,
   proposalPeriodLabel,
+  proposalRoutingMeta,
   proposalStatusMeta,
   proposalTypeMeta,
   summarizeProposalCalibration,
@@ -63,6 +74,12 @@ const HEALTH_LABELS = {
   blocked: '阻塞',
   needs_action: '缺下一步',
 };
+
+function shiftReviewDate(dateKey, days = 1) {
+  const date = new Date(`${dateKey}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
 function escapeHtml(value) {
   return String(value ?? '')
     .replaceAll('&', '&amp;')
@@ -309,7 +326,21 @@ function renderReviewLoop(reviewInput, reviewDate) {
   `;
 }
 
-function renderProject(project) {
+function renderWeeklyBet(bet = {}) {
+  const approved = bet.status === 'approved';
+  return `<article class="hq-weekly-bet ${approved ? 'approved' : 'unknown'}">
+    <header><span>WEEKLY BET · 本周唯一赌注</span><i>${approved ? '正式批准' : '尚无正式押注'}</i></header>
+    <h2>${escapeHtml(bet.title)}</h2>
+    <dl>
+      <div><dt>成功标准</dt><dd>${escapeHtml(bet.successCriteria || '未知')}</dd></div>
+      <div><dt>当前瓶颈</dt><dd>${escapeHtml(bet.bottleneck || '未知')}</dd></div>
+      <div><dt>杀死条件</dt><dd>${escapeHtml(bet.killCondition || '未知')}</dd></div>
+      <div><dt>下次验证</dt><dd>${escapeHtml(bet.nextReviewAt || '未知')}</dd></div>
+    </dl>
+  </article>`;
+}
+
+function renderProject(project, bias = {}) {
   const total = Number(project.openTaskCount || 0) + Number(project.completedTaskCount || 0);
   const percent = total ? Math.round((Number(project.completedTaskCount || 0) / total) * 100) : 0;
   return `
@@ -329,8 +360,33 @@ function renderProject(project) {
         <i><b style="width:${percent}%"></b></i>
         <span>${project.openTaskCount || 0} 项待推进</span>
       </div>
+      <dl class="hq-project-resource-bias">
+        <div><dt>计划</dt><dd>${escapeHtml(bias.planned || '未知')}</dd></div>
+        <div><dt>实际</dt><dd>${escapeHtml(bias.actual || '未知')}</dd></div>
+        <div><dt>外部结果</dt><dd>${escapeHtml(bias.outcome || '未知')}</dd></div>
+        <div><dt>资源判断</dt><dd>${escapeHtml(bias.decision || '继续观测')}</dd></div>
+      </dl>
     </button>
   `;
+}
+
+function renderSystemEfficiency(metric = {}) {
+  const value = (input, suffix = '') => input === null || input === undefined ? '未知' : `${input}${suffix}`;
+  return `<section class="hq-section hq-system-efficiency">
+    <div class="hq-section-head">
+      <div><span>06 / SYSTEM EFFICIENCY</span><h2>系统白痴指数</h2></div>
+      <p>${metric.ready ? `两周治理结论：${escapeHtml(metric.recommendation)}` : `继续观测 · ${metric.observationDays || 0}/14 天`}</p>
+    </div>
+    <div class="hq-efficiency-grid">
+      <article><strong>${value(metric.maintenanceMinutes, 'm')}</strong><span>系统维护耗时</span></article>
+      <article><strong>${value(metric.effectiveDecisions)}</strong><span>有效决策</span></article>
+      <article><strong>${value(metric.externalResults)}</strong><span>外部结果</span></article>
+      <article><strong>${value(metric.duplicateEntries)}</strong><span>重复录入</span></article>
+      <article><strong>${value(metric.medianLatency, 'm')}</strong><span>信号→行动中位时间</span></article>
+      <article class="index"><strong>${value(metric.idiotIndex, 'm/结果')}</strong><span>白痴指数</span></article>
+    </div>
+    <small>只读诊断，不评价个人绩效，不自动删除功能或派发任务。五项数据齐全且连续观测满 14 天后，才形成保留、简化或停止建议。</small>
+  </section>`;
 }
 
 function renderDecision(decision) {
@@ -346,7 +402,8 @@ function renderDecision(decision) {
   `;
 }
 
-function renderSystem(system) {
+function renderSystem(system, candidateCounts = {}) {
+  const collaboration = systemCollaborationState(system, candidateCounts[system.systemId]);
   return `
     <button class="hq-system-card access-${escapeHtml(system.accessLevel.toLowerCase())} health-${escapeHtml(system.health)}" data-system-id="${escapeHtml(system.systemId)}" aria-label="查看${escapeHtml(system.name)}接入详情">
       <span class="hq-system-code">${escapeHtml(system.code)}</span>
@@ -355,9 +412,37 @@ function renderSystem(system) {
         <small>${escapeHtml(system.responsibility)}</small>
         <p>${escapeHtml(system.factSummary)}</p>
       </div>
-      <i><b></b>${escapeHtml(system.healthLabel)}${system.candidateSignalCount ? ` · ${system.candidateSignalCount} 个行动信号` : ''}</i>
+      <i class="collaboration-${escapeHtml(collaboration.tone)}"><b></b>${escapeHtml(collaboration.label)}</i>
     </button>
   `;
+}
+
+function renderCollaborationInbox(items = []) {
+  return `<section class="hq-section hq-collaboration-inbox" id="hqCollaborationInbox">
+    <div class="hq-section-head"><div><span>00 / COORDINATION INBOX</span><h2>协作收件箱</h2></div><p>${items.length ? `${items.length} 项需要你处理` : '各系统当前无需补充输入'}</p></div>
+    ${items.length ? `<div class="hq-collaboration-list">${items.map((item) => `<article class="severity-${escapeHtml(item.severity)}"><span>${escapeHtml(item.systemId.toUpperCase())}</span><div><strong>${escapeHtml(item.title)}</strong><p>${escapeHtml(item.reason || '')}</p><small>需要你提供：${escapeHtml(item.need)}</small></div></article>`).join('')}</div>` : '<div class="hq-empty-panel compact"><strong>没有需要你补充的内容</strong><span>候选、未知可选字段和短暂同步波动不会打扰你。</span></div>'}
+  </section>`;
+}
+
+function renderSystemReceiptProjection(projection) {
+  const labels = { know: '需要知道', decide: '需要决定', do: '需要做', doneOrWaiting: '已完成或等待' };
+  const names = { mission: '使命', health: '健康', attention: '注意力', execution: '执行', feedback: '反馈' };
+  return `<section class="hq-section hq-collaboration-inbox" id="hqSystemReceipts">
+    <div class="hq-section-head"><div><span>00B / SYSTEM RECEIPTS</span><h2>系统处理回执</h2></div><p>${escapeHtml(projection.intakeRef)} · v${escapeHtml(projection.contractVersion)}</p></div>
+    <div class="hq-collaboration-list">${Object.entries(projection.groups).map(([group, items]) => `<article class="severity-${group === 'do' ? 'input' : group === 'decide' ? 'review' : 'warning'}"><span>${escapeHtml(labels[group])}</span><div>${items.length ? items.map((item) => `<strong>${escapeHtml(names[item.systemId] || item.systemId)} · ${escapeHtml(item.status)}</strong><p>${escapeHtml(item.freshness)} / ${escapeHtml(item.syncState)}${item.inputGaps.length ? ` · 缺 ${escapeHtml(item.inputGaps.join('、'))}` : ''}</p>`).join('') : '<strong>无</strong><p>本类暂无回执。</p>'}</div></article>`).join('')}</div>
+    <small>回执只表示系统已处理或当前等待；候选不等于批准，outbox 不等于成功，也不会据此创建盒子任务。</small>
+  </section>`;
+}
+
+function renderTomorrowBehaviorPreview(nextBrief, reviewDate) {
+  if (!nextBrief) return '';
+  const stop = nextBrief.stopDoing || [];
+  const keep = nextBrief.continueDoing || [];
+  if (!stop.length && !keep.length) return '';
+  return `<section class="hq-tomorrow-preview">
+    <header><div><span>NEXT BRIEF · ${escapeHtml(nextBrief.reviewDate || '')}</span><h2>今晚复盘生成的明日规则</h2></div><p>来源：${escapeHtml(nextBrief.plannedFromReviewDate || reviewDate)} 日省；不改写今日事实</p></header>
+    <div><article class="stop"><strong>明日停止做</strong><ul>${renderBehaviorList(stop, 'stop')}</ul></article><article class="continue"><strong>明日继续保持</strong><ul>${renderBehaviorList(keep, 'continue')}</ul></article></div>
+  </section>`;
 }
 
 function renderHqSystemEntryBand(systems = []) {
@@ -410,10 +495,13 @@ function renderProposal(proposal) {
   const evidenceLabel = actions.provisionalMonthly
     ? '证据暂定，批准已锁定'
     : proposal.evidenceStatus === 'sufficient' ? '证据充分' : '证据待复核';
+  const routing = proposalRoutingMeta(proposal, getBoxes());
+  const duplicates = proposal.proposalType === 'daily_action_proposal'
+    ? findProposalDuplicates(proposal, getTasks()) : [];
   return `
     <article class="hq-proposal-card status-${escapeHtml(status.tone)}">
       <header>
-        <div><span>${escapeHtml(type.cadence)} · ${escapeHtml(type.label)}</span><strong>${escapeHtml(proposal.title)}</strong></div>
+        <div><span><input type="checkbox" data-proposal-select="${escapeHtml(proposal.decisionId)}" aria-label="选择 ${escapeHtml(proposal.title)}"> ${escapeHtml(type.cadence)} · ${escapeHtml(type.label)}</span><strong>${escapeHtml(proposal.title)}</strong></div>
         <em>${escapeHtml(status.label)}</em>
       </header>
       <div class="hq-proposal-meta">
@@ -422,6 +510,11 @@ function renderProposal(proposal) {
         <span>${escapeHtml(evidenceLabel)}</span>
       </div>
       <p>${escapeHtml(actions.writebackLabel)} · 来源 ${escapeHtml(proposal.sourceAuthority || 'unknown')}</p>
+      ${proposal.proposalType === 'daily_action_proposal' ? `<div class="hq-proposal-route">
+        <span><b>目标盒子</b>${escapeHtml(routing.boxName)}</span>
+        <span><b>入盒原因</b>${escapeHtml(routing.boxReason)}</span>
+        ${duplicates.length ? `<span class="duplicate"><b>疑似重复</b>${escapeHtml(duplicates.slice(0, 2).map(({ task, score }) => `${task.content} (${Math.round(score * 100)}%)`).join('；'))}</span>` : '<span><b>查重</b>未发现相同或高度相似任务</span>'}
+      </div>` : ''}
       <div class="hq-proposal-actions">
         ${actions.canApprove ? `<button class="primary" data-proposal-action="approve" data-proposal-id="${escapeHtml(proposal.decisionId)}">${proposal.proposalType === 'daily_action_proposal' ? '同意并入盒' : '同意'}</button>` : ''}
         ${actions.canPromote ? `<button class="primary" data-proposal-action="promote" data-proposal-id="${escapeHtml(proposal.decisionId)}">选择盒子并写入</button>` : ''}
@@ -470,6 +563,27 @@ function chooseProposalBox(proposal) {
       finish(button.dataset.proposalBox);
       close();
     }));
+  });
+}
+
+function resolveProposalDuplicate(proposal) {
+  const duplicates = findProposalDuplicates(proposal, getTasks());
+  if (!duplicates.length) return Promise.resolve({ existingTaskId: null, confirmedDistinct: true });
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value = null) => { if (!settled) { settled = true; resolve(value); } };
+    const { root, close } = openSheet(`
+      <div class="hq-proposal-picker-sheet">
+        <div class="sheet-header"><div><p class="eyebrow">DEDUPLICATION GATE</p><h2>这些可能是同一个任务</h2></div><button class="icon-btn" data-close-duplicate>×</button></div>
+        <p class="sheet-lead">${escapeHtml(proposal.title)}</p>
+        <div class="hq-proposal-box-picker">
+          ${duplicates.slice(0, 5).map(({ task, score }) => `<button data-reuse-task="${escapeHtml(task.id)}"><strong>${escapeHtml(task.content)}</strong><small>${Math.round(score * 100)}% 相似 · 复用现有任务</small></button>`).join('')}
+          <button data-confirm-distinct><strong>都不是同一任务</strong><small>确认不同后才新建</small></button>
+        </div>
+      </div>`, { height: '70vh', onClose: () => finish(null) });
+    root.querySelector('[data-close-duplicate]').addEventListener('click', close);
+    root.querySelectorAll('[data-reuse-task]').forEach((button) => button.addEventListener('click', () => { finish({ existingTaskId: button.dataset.reuseTask, confirmedDistinct: false }); close(); }));
+    root.querySelector('[data-confirm-distinct]').addEventListener('click', () => { finish({ existingTaskId: null, confirmedDistinct: true }); close(); });
   });
 }
 
@@ -615,7 +729,16 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
     reviewDate: snapshot.reviewDate, syncState,
   });
   const systems = buildHqSystemViews({ snapshot, syncState, tasks, systemSnapshots, remote });
+  const candidateCounts = snapshot.systemCandidateCounts || {};
+  const collaborationItems = buildCollaborationInbox({ systems, candidateCounts, syncState, brief, tasks });
+  const receiptProjection = buildSystemReceiptProjection({
+    systemSnapshots, receipts: snapshot.systemReceipts || [], brief,
+    reviewDate: snapshot.reviewDate, syncState,
+  });
   const systemSummary = summarizeHqSystemViews(systems);
+  const periods = readHqPeriodCache();
+  const governance = buildHqResourceGovernance({ proposals: snapshot.proposals, projects, periods });
+  const resourceByProject = new Map(governance.projects.map((item) => [item.projectId, item]));
 
   app.innerHTML = `
     <main class="page hq-page">
@@ -645,10 +768,13 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
 
       ${renderHqDimensionNav('day')}
       ${renderReviewLoop(snapshot.review, snapshot.reviewDate)}
+      ${renderCollaborationInbox(collaborationItems)}
+      ${renderSystemReceiptProjection(receiptProjection)}
 
       <section class="hq-grid hq-action-zone">
         <div class="hq-zone-label"><span>01</span><p>今日行动驾驶舱</p><small>只承诺 1 个主动作 + 2 个维护动作</small></div>
         <div class="hq-action-stack">
+          ${renderWeeklyBet(governance.bet)}
           ${renderActionSeat(actionState)}
           ${renderActionCandidates(candidates, actionState)}
           <div class="hq-maintenance-grid">${renderMaintenance(maintenance)}</div>
@@ -690,9 +816,12 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
           <p>${riskCount ? `${riskCount} 个项目需要注意` : '所有活跃项目均有下一步'}</p>
         </div>
         <div class="hq-project-grid">
-          ${projects.length ? projects.map(renderProject).join('') : '<div class="hq-empty-panel"><strong>还没有活跃项目</strong><span>在盒子中建立主线后，这里会自动形成项目健康视图。</span></div>'}
+          ${projects.length ? projects.map((project) => renderProject(project, resourceByProject.get(project.id))).join('') : '<div class="hq-empty-panel"><strong>还没有活跃项目</strong><span>在盒子中建立主线后，这里会自动形成项目健康视图。</span></div>'}
         </div>
       </section>
+      ${renderTomorrowBehaviorPreview(snapshot.nextBrief, snapshot.reviewDate)}
+
+      ${renderSystemEfficiency(governance.efficiency)}
 
       <section class="hq-section hq-proposal-zone" id="hqProposals">
         <div class="hq-section-head">
@@ -707,6 +836,12 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
           <article class="${proposalCalibration.evidenceBlocked ? 'blocked' : ''}"><strong>${proposalCalibration.evidenceBlocked}</strong><span>证据护栏</span></article>
         </div>
         <p class="hq-proposal-rule">日省动作：批准后才进入盒子；周省实验与月省押注：批准后仍是战略对象。相同周期只增加 revision，不制造重复提案。</p>
+        <div class="hq-proposal-batch" role="toolbar" aria-label="批量审批">
+          <button type="button" data-proposal-select-all>全选待处理</button>
+          <span data-proposal-selected-count>已选 0 项</span>
+          <button type="button" class="primary" data-proposal-batch-action="approve">批量同意</button>
+          <button type="button" data-proposal-batch-action="reject">批量拒绝</button>
+        </div>
         <div class="hq-proposal-grid">
           ${proposals.length ? proposals.map(renderProposal).join('') : '<div class="hq-empty-panel"><strong>没有待处理提案</strong><span>完成日省、周省或月省后，提案会按授权来源进入这里。</span></div>'}
         </div>
@@ -733,7 +868,7 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
             <p>${systemSummary.l1} 个 L1 只读 · ${systemSummary.l2} 个 L2 受控${systemSummary.unknown ? ` · ${systemSummary.unknown} 个状态未知` : ''}</p>
           </div>
           <div class="hq-system-legend" aria-label="接入等级说明"><span>L0 入口</span><span>L1 只读</span><span>L2 受控写回</span></div>
-          <div class="hq-system-grid">${systems.map(renderSystem).join('')}</div>
+          <div class="hq-system-grid">${systems.map((system) => renderSystem(system, candidateCounts)).join('')}</div>
         </div>
       </section>
     </main>
@@ -1148,6 +1283,54 @@ function bindPageEvents(app, snapshot, candidates = [], systems = []) {
       if (proposal) openProposalInspector(proposal);
     });
   });
+  const selectedProposalIds = () => [...app.querySelectorAll('[data-proposal-select]:checked')]
+    .map((input) => input.dataset.proposalSelect).filter(Boolean);
+  const updateSelectedCount = () => {
+    const target = app.querySelector('[data-proposal-selected-count]');
+    if (target) target.textContent = `已选 ${selectedProposalIds().length} 项`;
+  };
+  app.querySelectorAll('[data-proposal-select]').forEach((input) => input.addEventListener('change', updateSelectedCount));
+  app.querySelector('[data-proposal-select-all]')?.addEventListener('click', () => {
+    const inputs = [...app.querySelectorAll('[data-proposal-select]')];
+    const shouldSelect = inputs.some((input) => !input.checked);
+    inputs.forEach((input) => { input.checked = shouldSelect; });
+    updateSelectedCount();
+  });
+  app.querySelectorAll('[data-proposal-batch-action]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const action = button.dataset.proposalBatchAction;
+      const proposals = selectedProposalIds().map((id) => (snapshot.proposals || []).find((item) => item.decisionId === id)).filter(Boolean);
+      if (!proposals.length) return showToast('请先选择要处理的提案');
+      button.disabled = true;
+      const results = [];
+      for (const proposal of proposals) {
+        try {
+          if (action === 'approve' && proposal.proposalType === 'daily_action_proposal') {
+            const routing = proposalRoutingMeta(proposal, getBoxes());
+            const duplicates = findProposalDuplicates(proposal, getTasks());
+            if (!routing.routable) throw new Error('目标盒子或入盒原因缺失');
+            if (duplicates.length && !proposal.existingTaskId) throw new Error('存在疑似重复任务，需单独裁决');
+            await requestTaskboxApi(`/hq/proposals/${encodeURIComponent(proposal.decisionId)}/approve`, {
+              method: 'POST', body: JSON.stringify({ actor: 'hq_user_batch', boxId: routing.boxId, note: `批量审批：${routing.boxReason}` }),
+            });
+            await requestTaskboxApi(`/hq/proposals/${encodeURIComponent(proposal.decisionId)}/promote`, {
+              method: 'POST', body: JSON.stringify({ actor: 'hq_user_batch', shadowMode: false }),
+            });
+          } else {
+            await requestTaskboxApi(`/hq/proposals/${encodeURIComponent(proposal.decisionId)}/${action}`, {
+              method: 'POST', body: JSON.stringify({ actor: 'hq_user_batch', reasonCode: action === 'reject' ? 'batch_user_rejected' : undefined, note: action === 'reject' ? '用户批量拒绝' : '用户批量批准' }),
+            });
+          }
+          results.push({ ok: true, title: proposal.title });
+        } catch (error) {
+          results.push({ ok: false, title: proposal.title, error: String(error?.message || error) });
+        }
+      }
+      const failed = results.filter((item) => !item.ok);
+      showToast(failed.length ? `已处理 ${results.length - failed.length} 项，${failed.length} 项需单独确认` : `已批量处理 ${results.length} 项`);
+      await renderHqPage(app, { refreshRemote: true });
+    });
+  });
   app.querySelectorAll('[data-proposal-action]').forEach((button) => {
     button.addEventListener('click', async () => {
       const action = button.dataset.proposalAction;
@@ -1156,7 +1339,10 @@ function bindPageEvents(app, snapshot, candidates = [], systems = []) {
       const proposal = (snapshot.proposals || []).find((item) => item.decisionId === proposalId);
       if (!proposal) return;
       let boxId = null;
+      let duplicateDecision = { existingTaskId: null, confirmedDistinct: true };
       if ((action === 'approve' && proposal.proposalType === 'daily_action_proposal') || action === 'promote') {
+        duplicateDecision = await resolveProposalDuplicate(proposal);
+        if (!duplicateDecision) return;
         boxId = await chooseProposalBox(proposal);
         if (!boxId) return;
       }
@@ -1168,9 +1354,15 @@ function bindPageEvents(app, snapshot, candidates = [], systems = []) {
         payload.note = '人生参谋部延期 7 天';
       }
       if (boxId) payload.boxId = boxId;
+      if (duplicateDecision.existingTaskId) payload.existingTaskId = duplicateDecision.existingTaskId;
       if (action === 'promote') payload.shadowMode = false;
       button.disabled = true;
       try {
+        if (action === 'promote' && duplicateDecision.existingTaskId) {
+          await requestTaskboxApi(`/hq/proposals/${encodeURIComponent(proposalId)}/approve`, {
+            method: 'POST', body: JSON.stringify({ ...payload, actor: 'hq_user_dedupe' }),
+          });
+        }
         await requestTaskboxApi(`/hq/proposals/${encodeURIComponent(proposalId)}/${action}`, {
           method: 'POST', body: JSON.stringify(payload),
         });
@@ -1270,11 +1462,19 @@ export async function renderHqPage(app, { refreshRemote = true, dimension = 'day
     await replayPendingApiMutations();
     if (renderVersion !== hqRenderVersion) return;
     if (getPendingApiMutationCount()) return;
-    const remote = await requestTaskboxApi(`/hq/today?date=${encodeURIComponent(reviewDate)}`);
+    const nextDate = shiftReviewDate(reviewDate, 1);
+    const systemIds = ['mission', 'health', 'time', 'execution', 'feedback'];
+    const [remote, nextBrief, ...candidateResults] = await Promise.all([
+      requestTaskboxApi(`/hq/today?date=${encodeURIComponent(reviewDate)}`),
+      requestTaskboxApi(`/hq/daily-briefs/${encodeURIComponent(nextDate)}`).catch(() => null),
+      ...systemIds.map((systemId) => requestTaskboxApi(`/system-candidates?systemId=${encodeURIComponent(systemId)}&status=pending&limit=100`).catch(() => null)),
+    ]);
+    refreshHqPeriodCache(reviewDate).catch(() => null);
     const currentHash = window.location.hash || '#hq';
     const isHqRoute = currentHash === '#hq' || currentHash.startsWith('#hq/');
     if (!remote || renderVersion !== hqRenderVersion || !isHqRoute) return;
-    const reconciled = reconcileHqSnapshotCommitments(remote, getTasks());
+    const systemCandidateCounts = Object.fromEntries(systemIds.map((systemId, index) => [systemId, Number(candidateResults[index]?.count) || 0]));
+    const reconciled = { ...reconcileHqSnapshotCommitments(remote, getTasks()), nextBrief, systemCandidateCounts };
     writeCache({ brief: reconciled.brief, decisions: reconciled.decisions || [] });
     renderSnapshot(app, reconciled, { remote: true });
   } catch {

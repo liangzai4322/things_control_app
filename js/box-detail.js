@@ -6,7 +6,7 @@ import { formatDueLabel as formatDueDateLabel, formatScheduledLabel, fromDateTim
 import { getRecurrenceLabel } from './recurrence.js';
 import { bindRecurrenceEditor, renderRecurrenceEditor } from './recurrence-ui.js';
 import { openBoxTypeChangeSheet } from './box-type-sheet.js';
-import { isIdeaBox, renderCoreBoxNav } from './core-box-nav.js';
+import { isIdeaBox, renderAllBoxNav } from './core-box-nav.js';
 import { bindMainlineTaskFields, renderMainlineTaskFields } from './mainline-fields.js';
 import { bindDeviceContextField, formatVisibleAfter, getDefaultDeferredUntil, getDeviceContextLabel, isTaskContextMismatch, isTaskReleased, renderDeviceContextField } from './task-visibility.js';
 import { bindExecutionModeField, getExecutionModeLabel, renderExecutionModeField } from './task-execution.js';
@@ -730,11 +730,11 @@ export function renderBoxDetail(app, boxId, { focusTaskId = null, commandOrigin 
       <header class="topbar safe-top detail-topbar">
         <button class="icon-btn icon-btn-ghost" id="backBtn">←</button>
         <div class="row gap8 detail-actions">
-          ${renderCoreBoxNav({ currentBoxId: box.id })}
           <button class="icon-btn icon-btn-ghost" id="detailPullBtn" aria-label="拉取最新盒子数据">↻</button>
           ${boxType === BOX_TYPE_POOL ? '<button class="icon-btn icon-btn-ghost" id="wheelBtn" aria-label="随机抽取">🎡</button>' : ''}
           <button class="icon-btn icon-btn-ghost" id="settingsBtn" aria-label="设置">⚙</button>
         </div>
+        <div class="detail-box-switcher">${renderAllBoxNav({ currentBoxId: box.id })}</div>
       </header>
 
       <section class="detail-hero panel ${box.color}">
@@ -1161,6 +1161,7 @@ function openBoxItemEditor({ taskId, boxId }, onDone) {
 function openPoolItemEditor({ taskId, boxId }, onDone) {
   const boxes = getBoxes().filter((box) => inferBoxType(box) === BOX_TYPE_POOL);
   const task = taskId ? getTaskById(taskId) : null;
+  let savingItem = false;
   const { root, close } = openSheet(`
     <div class="sheet-handle"></div>
     <div class="sheet-content typed-editor pool-editor">
@@ -1193,8 +1194,11 @@ function openPoolItemEditor({ taskId, boxId }, onDone) {
   });
   root.querySelector('#cancelPoolBtn').addEventListener('click', close);
   const save = () => {
+    if (savingItem) return;
     const content = root.querySelector('#poolContent').value.trim();
     if (!content) return showToast('先填写选项名称');
+    savingItem = true;
+    root.querySelector('#savePoolBtn').disabled = true;
     const payload = {
       content,
       boxId: root.querySelector('#poolBox').value,
@@ -1230,6 +1234,7 @@ function normalizeExternalUrl(value) {
 function openCollectionItemEditor({ taskId, boxId }, onDone) {
   const boxes = getBoxes().filter((box) => inferBoxType(box) === BOX_TYPE_COLLECTION);
   const task = taskId ? getTaskById(taskId) : null;
+  let savingItem = false;
   const { root, close } = openSheet(`
     <div class="sheet-handle"></div>
     <div class="sheet-content typed-editor collection-editor">
@@ -1247,8 +1252,11 @@ function openCollectionItemEditor({ taskId, boxId }, onDone) {
   `, { height: '78vh' });
   root.querySelector('#cancelCollectionBtn').addEventListener('click', close);
   const save = () => {
+    if (savingItem) return;
     const content = root.querySelector('#collectionContent').value.trim();
     if (!content) return showToast('先填写条目标题');
+    savingItem = true;
+    root.querySelector('#saveCollectionBtn').disabled = true;
     const payload = {
       content,
       boxId: root.querySelector('#collectionBox').value,

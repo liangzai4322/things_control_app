@@ -3,12 +3,36 @@ const fs = require('fs');
 const path = require('path');
 const express = require('express');
 const Database = require('better-sqlite3');
+const { createTransport } = require('./daily-intake-transport');
 const { installHealthSystemRoutes } = require('./health-system');
+const { installMissionSystemRoutes } = require('./mission-system');
+const { installExecutionSystemRoutes } = require('./execution-system');
+const { installAssistantAuditSummary } = require('./assistant-audit-summary');
 
 const root = path.resolve(__dirname, '..');
 const dbPath = process.env.TASKBOX_DB_PATH || path.join(root, 'data', 'taskbox.sqlite');
 const port = Number(process.env.TASKBOX_API_PORT || 3107);
 const apiToken = String(process.env.TASKBOX_API_TOKEN || '').trim();
+const executionApiEnabled = String(process.env.EXECUTION_SYSTEM_API_ENABLED || '') === '1';
+const executionTokenFile = String(process.env.EXECUTION_SYSTEM_API_TOKEN_FILE || '').trim();
+const executionDisableFile = String(process.env.EXECUTION_SYSTEM_API_DISABLE_FILE || '/etc/taskbox-execution-system.disabled').trim();
+const executionAuditSummaryTokenFile = String(process.env.EXECUTION_AUDIT_SUMMARY_TOKEN_FILE || '').trim();
+const executionAuditSummaryDisableFile = String(process.env.EXECUTION_AUDIT_SUMMARY_DISABLE_FILE || executionDisableFile).trim();
+const executionAuditSummaryScopes = new Set(String(process.env.EXECUTION_AUDIT_SUMMARY_SCOPES || '').split(',').map(s => s.trim()).filter(Boolean));
+const assistantGatewayApiEnabled = String(process.env.ASSISTANT_GATEWAY_API_ENABLED || '') === '1';
+const assistantGatewayTokenFile = String(process.env.ASSISTANT_GATEWAY_API_TOKEN_FILE || '').trim();
+const assistantGatewayReadTokenFile = String(process.env.ASSISTANT_GATEWAY_READ_TOKEN_FILE || '').trim();
+const assistantConversationProducerTokenFile = String(process.env.ASSISTANT_CONVERSATION_PRODUCER_TOKEN_FILE || '').trim();
+const assistantConversationRunnerTokenFile = String(process.env.ASSISTANT_CONVERSATION_RUNNER_TOKEN_FILE || '').trim();
+const assistantGatewayDisableFile = String(process.env.ASSISTANT_GATEWAY_API_DISABLE_FILE || '/etc/taskbox-assistant-gateway.disabled').trim();
+const assistantGatewayScopes = new Set(String(process.env.ASSISTANT_GATEWAY_API_SCOPES || '')
+  .split(',').map((item) => item.trim()).filter(Boolean));
+const assistantGatewayReadScopes = new Set(String(process.env.ASSISTANT_GATEWAY_READ_SCOPES || '')
+  .split(',').map((item) => item.trim()).filter(Boolean));
+const dailyIntakeApiEnabled = String(process.env.DAILY_INTAKE_API_ENABLED || '') === '1';
+const dailyIntakeDisableFile = String(process.env.DAILY_INTAKE_DISABLE_FILE || '/etc/taskbox-daily-intake.disabled').trim();
+const dailyIntakeSystems = ['execution', 'health', 'attention', 'feedback', 'mission', 'governance'];
+const hqDailyIntakeCacheFile = String(process.env.HQ_DAILY_INTAKE_CACHE_FILE || '/var/lib/taskbox-hq-daily-intake/receipts-summary.json').trim();
 const allowedOrigins = String(process.env.TASKBOX_ALLOWED_ORIGINS || 'https://liangzai4322.github.io,http://localhost:8000,http://127.0.0.1:8000')
   .split(',')
   .map((item) => item.trim())
@@ -19,6 +43,30 @@ const app = express();
 const db = new Database(dbPath);
 db.pragma('foreign_keys = ON');
 db.exec(fs.readFileSync(path.join(root, 'schema.sql'), 'utf8'));
+db.exec(`CREATE TABLE IF NOT EXISTS assistant_conversation_turns (
+  turn_id TEXT PRIMARY KEY, conversation_key_hash TEXT NOT NULL, dispatch_key TEXT NOT NULL UNIQUE,
+  inbound_message_id TEXT NOT NULL, text_hash TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+  result_text TEXT, error_code TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+)`);
+const conversationColumns = new Set(db.prepare("PRAGMA table_info('assistant_conversation_turns')").all().map((column) => column.name));
+const conversationSequenceNeedsBackfill = !conversationColumns.has('sequence_no');
+[
+  ['sequence_no', 'INTEGER NOT NULL DEFAULT 1'], ['prompt_payload', 'TEXT'], ['result_payload', 'TEXT'],
+  ['result_hash', 'TEXT'], ['lease_token_hash', 'TEXT'], ['lease_owner_hash', 'TEXT'],
+  ['lease_expires_at', 'TEXT'], ['attempt_count', 'INTEGER NOT NULL DEFAULT 0'],
+  ['replied_at', 'TEXT'], ['completed_at', 'TEXT'],
+  ['status_timestamps_json', "TEXT NOT NULL DEFAULT '{}'"],
+].forEach(([name, definition]) => {
+  if (!conversationColumns.has(name)) db.exec(`ALTER TABLE assistant_conversation_turns ADD COLUMN ${name} ${definition}`);
+});
+if (conversationSequenceNeedsBackfill) db.exec(`UPDATE assistant_conversation_turns AS current SET sequence_no=(
+    SELECT COUNT(*) FROM assistant_conversation_turns AS earlier
+    WHERE earlier.conversation_key_hash=current.conversation_key_hash
+      AND (earlier.created_at<current.created_at
+        OR (earlier.created_at=current.created_at AND earlier.turn_id<=current.turn_id))
+  )`);
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_assistant_conversation_sequence ON assistant_conversation_turns(conversation_key_hash, sequence_no)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_assistant_conversation_status ON assistant_conversation_turns(status, created_at)');
 const boxColumns = new Set(db.prepare("PRAGMA table_info('boxes')").all().map((column) => column.name));
 [
   ['box_type', "TEXT DEFAULT 'task'"],
@@ -28,6 +76,7 @@ const boxColumns = new Set(db.prepare("PRAGMA table_info('boxes')").all().map((c
 });
 const taskColumns = new Set(db.prepare("PRAGMA table_info('tasks')").all().map((column) => column.name));
 [
+  ['revision', 'INTEGER NOT NULL DEFAULT 1'],
   ['scheduled_at', 'TEXT'],
   ['is_recurring_template', 'INTEGER DEFAULT 0'],
   ['recurrence_template_id', 'TEXT'],
@@ -67,6 +116,46 @@ const parseJson = (value, fallback) => {
 const json = (value) => JSON.stringify(value ?? null);
 const bool = (value) => (value ? 1 : 0);
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
+const secretMatches = (left, right) => {
+  const a = Buffer.from(String(left || ''));
+  const b = Buffer.from(String(right || ''));
+  return a.length === b.length && a.length > 0 && crypto.timingSafeEqual(a, b);
+};
+const readSecretFile = (filePath) => {
+  try { return filePath ? fs.readFileSync(filePath, 'utf8').trim() : ''; } catch { return ''; }
+};
+const bearerToken = (req) => String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+const dailyIntakeIdentities = () => {
+  const identities = [
+    { name: 'daily-review-sender', token: readSecretFile(String(process.env.DAILY_INTAKE_SENDER_TOKEN_FILE || '').trim()), scopes: ['intakes:write'] },
+    { name: 'hq', token: readSecretFile(String(process.env.DAILY_INTAKE_HQ_TOKEN_FILE || '').trim()), scopes: ['receipts:read'] },
+    ...dailyIntakeSystems.map((systemId) => ({
+      name: systemId,
+      systemId,
+      token: readSecretFile(String(process.env[`DAILY_INTAKE_${systemId.toUpperCase()}_TOKEN_FILE`] || '').trim()),
+      scopes: systemId === 'health'
+        ? ['intakes:read', 'receipts:write', 'health:observations:read', 'health:observations:write']
+        : systemId === 'mission'
+          ? ['intakes:read', 'receipts:write', 'mission-state:read']
+        : ['intakes:read', 'receipts:write'],
+    })),
+  ];
+  return identities.filter((identity) => identity.token);
+};
+const resolveDailyIntakeIdentity = (req) => {
+  const token = bearerToken(req);
+  return dailyIntakeIdentities().find((identity) => secretMatches(token, identity.token)) || null;
+};
+const authorizeDailyIntake = (req, scope, systemId = null) => {
+  if (!dailyIntakeApiEnabled || (dailyIntakeDisableFile && fs.existsSync(dailyIntakeDisableFile))) {
+    return { ok: false, status: 503, error: 'daily_intake_api_disabled' };
+  }
+  const identity = req.dailyIntakeIdentity;
+  if (!identity) return { ok: false, status: 401, error: 'daily_intake_unauthorized' };
+  if (!identity.scopes.includes(scope)) return { ok: false, status: 403, error: 'daily_intake_scope_denied' };
+  if (systemId && identity.systemId !== systemId) return { ok: false, status: 403, error: 'daily_intake_system_denied' };
+  return { ok: true, identity };
+};
 const boxTypes = new Set(['task', 'pool', 'collection']);
 const inferBoxType = (box = {}) => {
   if (boxTypes.has(box.boxType)) return box.boxType;
@@ -86,21 +175,160 @@ db.transaction(() => {
 
 app.use(express.json({ limit: '2mb' }));
 app.use((req, res, next) => {
+  req.dailyIntakeIdentity = resolveDailyIntakeIdentity(req);
+  next();
+});
+app.use((req, res, next) => {
   const origin = req.headers.origin;
   if (origin && allowedOrigins.includes(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
   }
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Taskbox-Token');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Taskbox-Token,If-Match,X-Idempotency-Key,X-Assistant-Verified-User-Ref,X-Assistant-Conversation-Ref-Hash');
   if (req.method === 'OPTIONS') return res.status(204).end();
   return next();
 });
 app.use((req, res, next) => {
+  const intakeRoute = req.path === '/v1/mission/state'
+    || req.path === '/v1/hq/system-receipts'
+    || req.path === '/v1/health/observations'
+    || req.path === '/v1/health/observations/batch'
+    || req.path === '/v1/health/snapshots'
+    || req.path === '/v1/health/snapshots/latest'
+    || /^\/v1\/system-candidates\/[^/]+\/receipt$/.test(req.path)
+    || (req.path === '/v1/system-candidates' && String(req.query?.intake || '') === '1')
+    || (req.path === '/v1/system-candidates/batch' && dailyIntakeTransport.isIntakeBatch(req));
+  if (intakeRoute && dailyIntakeApiEnabled && !req.dailyIntakeIdentity) {
+    if (dailyIntakeDisableFile && fs.existsSync(dailyIntakeDisableFile)) {
+      return res.status(503).json({ error: 'daily_intake_api_disabled' });
+    }
+    return res.status(401).json({ error: 'daily_intake_unauthorized' });
+  }
+  if (req.dailyIntakeIdentity) {
+    if (req.path === '/v1/system-candidates' || req.path === '/v1/system-candidates/batch'
+      || /^\/v1\/system-candidates\/[^/]+\/receipt$/.test(req.path) || req.path === '/v1/hq/system-receipts'
+      || req.path === '/v1/health/observations' || req.path === '/v1/health/observations/batch'
+      || req.path === '/v1/health/snapshots' || req.path === '/v1/health/snapshots/latest'
+      || req.path === '/v1/mission/state') return next();
+    return res.status(403).json({ error: 'daily_intake_route_denied' });
+  }
+  if (req.path.startsWith('/v1/assistant-gateway/conversation/')) {
+    if (!assistantGatewayApiEnabled
+      || (assistantGatewayDisableFile && fs.existsSync(assistantGatewayDisableFile))) {
+      return res.status(503).json({ error: 'assistant_gateway_api_disabled' });
+    }
+    const auth = bearerToken(req);
+    const producerToken = readSecretFile(assistantConversationProducerTokenFile);
+    const runnerToken = readSecretFile(assistantConversationRunnerTokenFile);
+    if (producerToken && secretMatches(auth, producerToken)) {
+      req.assistantConversationIdentity = { system: 'assistant-conversation-producer' };
+      return next();
+    }
+    if (runnerToken && secretMatches(auth, runnerToken)) {
+      req.assistantConversationIdentity = { system: 'assistant-conversation-runner' };
+      return next();
+    }
+    if (!producerToken || !runnerToken) return res.status(503).json({ error: 'assistant_conversation_api_not_configured' });
+    return res.status(401).json({ error: 'assistant_conversation_unauthorized' });
+  }
+  if (req.path === '/v1/assistant-gateway/proposals/pending-user-decision'
+    || req.path === '/v1/assistant-gateway/proposals/automation-queue'
+  ) {
+    if (!assistantGatewayApiEnabled
+      || (assistantGatewayDisableFile && fs.existsSync(assistantGatewayDisableFile))) {
+      return res.status(503).json({ error: 'assistant_gateway_api_disabled' });
+    }
+    const readToken = readSecretFile(assistantGatewayReadTokenFile);
+    if (!readToken) return res.status(503).json({ error: 'assistant_gateway_read_api_not_configured' });
+    if (!secretMatches(bearerToken(req), readToken)) {
+      return res.status(401).json({ error: 'assistant_gateway_read_unauthorized' });
+    }
+    if (!assistantGatewayReadScopes.has('proposal-decisions:read')) {
+      return res.status(403).json({ error: 'assistant_gateway_read_scope_denied' });
+    }
+    req.assistantGatewayIdentity = { system: 'assistant-gateway-reader', scopes: assistantGatewayReadScopes };
+    return next();
+  }
+  if (/^\/v1\/hq\/proposals\/[^/]+\/promote$/.test(req.path)) {
+    const gatewayToken = readSecretFile(assistantGatewayTokenFile);
+    if (gatewayToken && secretMatches(bearerToken(req), gatewayToken)) {
+      if (!assistantGatewayApiEnabled
+        || (assistantGatewayDisableFile && fs.existsSync(assistantGatewayDisableFile))) {
+        return res.status(503).json({ error: 'assistant_gateway_api_disabled' });
+      }
+      if (!assistantGatewayScopes.has('proposal-promotions:write')) {
+        return res.status(403).json({ error: 'assistant_gateway_scope_denied' });
+      }
+      req.assistantGatewayIdentity = { system: 'assistant-gateway', scopes: assistantGatewayScopes };
+      return next();
+    }
+  }
+  if (/^\/v1\/hq\/proposals\/[^/]+\/approve$/.test(req.path)) {
+    const gatewayToken = readSecretFile(assistantGatewayTokenFile);
+    if (gatewayToken && secretMatches(bearerToken(req), gatewayToken)) {
+      if (!assistantGatewayApiEnabled
+        || (assistantGatewayDisableFile && fs.existsSync(assistantGatewayDisableFile))) {
+        return res.status(503).json({ error: 'assistant_gateway_api_disabled' });
+      }
+      if (!assistantGatewayScopes.has('proposal-auto-approve:write')) {
+        return res.status(403).json({ error: 'assistant_gateway_scope_denied' });
+      }
+      req.assistantGatewayIdentity = { system: 'assistant-gateway', scopes: assistantGatewayScopes };
+      return next();
+    }
+  }
+  if (/^\/v1\/hq\/proposals\/[^/]+\/replies$/.test(req.path)) {
+    if (!assistantGatewayApiEnabled
+      || (assistantGatewayDisableFile && fs.existsSync(assistantGatewayDisableFile))) {
+      return res.status(503).json({ error: 'assistant_gateway_api_disabled' });
+    }
+    const gatewayToken = readSecretFile(assistantGatewayTokenFile);
+    if (!gatewayToken) return res.status(503).json({ error: 'assistant_gateway_api_not_configured' });
+    if (!secretMatches(bearerToken(req), gatewayToken)) {
+      return res.status(401).json({ error: 'assistant_gateway_unauthorized' });
+    }
+    if (!assistantGatewayScopes.has('proposal-replies:write')) {
+      return res.status(403).json({ error: 'assistant_gateway_scope_denied' });
+    }
+    req.assistantGatewayIdentity = { system: 'assistant-gateway', scopes: assistantGatewayScopes };
+    return next();
+  }
+  if (req.path.startsWith('/v1/execution')) {
+    if (req.path === '/v1/execution/audit-summary') {
+      if (!executionApiEnabled || (executionAuditSummaryDisableFile && fs.existsSync(executionAuditSummaryDisableFile))) {
+        return res.status(503).json({ error: 'execution_audit_summary_disabled' });
+      }
+      const token = readSecretFile(executionAuditSummaryTokenFile);
+      if (!token) return res.status(503).json({ error: 'execution_audit_summary_not_configured' });
+      if (!secretMatches(bearerToken(req), token)) return res.status(401).json({ error: 'execution_audit_summary_unauthorized' });
+      req.executionIdentity = { system: 'execution-audit-reader', scopes: executionAuditSummaryScopes };
+      return next();
+    }
+    if (!executionApiEnabled || (executionDisableFile && fs.existsSync(executionDisableFile))) {
+      return res.status(503).json({ error: 'execution_api_disabled' });
+    }
+    let executionToken = String(process.env.EXECUTION_SYSTEM_API_TOKEN || '').trim();
+    if (!executionToken && executionTokenFile) {
+      try { executionToken = fs.readFileSync(executionTokenFile, 'utf8').trim(); } catch {}
+    }
+    if (!executionToken) return res.status(503).json({ error: 'execution_api_not_configured' });
+    const auth = bearerToken(req);
+    if (!secretMatches(auth, executionToken)) return res.status(401).json({ error: 'execution_unauthorized' });
+    req.executionIdentity = {
+      system: 'execution-system',
+      scopes: new Set(String(process.env.EXECUTION_SYSTEM_API_SCOPES || '').split(',').map((item) => item.trim()).filter(Boolean)),
+    };
+    return next();
+  }
+  if (dailyIntakeApiEnabled && (req.path === '/v1/health/observations' || req.path === '/v1/health/observations/batch'
+    || req.path === '/v1/health/snapshots' || req.path === '/v1/health/snapshots/latest')) {
+    return res.status(401).json({ error: 'daily_intake_unauthorized' });
+  }
   if (!apiToken) return next();
-  const auth = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+  const auth = bearerToken(req);
   const headerToken = String(req.headers['x-taskbox-token'] || '').trim();
-  if (auth === apiToken || headerToken === apiToken) return next();
+  if (secretMatches(auth, apiToken) || secretMatches(headerToken, apiToken)) return next();
   return res.status(401).json({ error: 'unauthorized' });
 });
 
@@ -171,6 +399,7 @@ function rowToTask(row) {
   return {
     ...parseJson(row.raw_json, {}),
     id: row.id,
+    revision: Number(row.revision || 1),
     boxId: row.box_id,
     content: row.content,
     isCompleted: Boolean(row.is_completed),
@@ -384,6 +613,7 @@ function rowToProposal(row) {
 function rowToProposalEvent(row) {
   return {
     id: row.id,
+    revision: Number(row.revision || 1),
     proposalId: row.proposal_id,
     revision: Number(row.revision) || 1,
     eventType: row.event_type,
@@ -411,6 +641,12 @@ const HQ_PROPOSAL_TYPES = new Set([
 const HQ_SOURCE_AUTHORITIES = new Set(['explicit_user', 'standing_rule', 'ai_derived']);
 const HQ_PROPOSAL_STATUSES = new Set(['proposed', 'approved', 'rejected', 'deferred', 'promoted']);
 const HQ_PROPOSAL_TERMINAL_SYNC_STATUSES = new Set(['rejected', 'deferred', 'promoted']);
+const ASSISTANT_GATEWAY_DECISIONS = new Set(['approve', 'reject', 'defer', 'expand']);
+const ASSISTANT_GATEWAY_AUTO_APPROVE_RULE_ID = 'execution.daily_action_proposal.auto_approve';
+const ASSISTANT_GATEWAY_PROMOTION_FIELDS = new Set([
+  'boxId', 'content', 'clearAction', 'boxReason', 'note', 'scheduledAt', 'dueDate',
+  'visibleAfter', 'deviceContext', 'executionMode',
+]);
 
 function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
@@ -419,6 +655,10 @@ function stableJson(value) {
   }
   return JSON.stringify(value ?? null);
 }
+
+const dailyIntakeTransport = createTransport({
+  app, db, now, uid, json, parseJson, stableJson, validDateKey, authorizeDailyIntake,
+});
 
 function proposalRevisionHash(input = {}) {
   if (String(input.revisionHash || '').trim()) return String(input.revisionHash).trim();
@@ -432,8 +672,47 @@ function proposalRevisionHash(input = {}) {
     sourceRef: input.sourceRef || {},
     taskSpec: input.taskSpec || {},
     existingTaskId: input.existingTaskId || null,
+    replyBinding: input.replyBinding || null,
   };
   return crypto.createHash('sha256').update(stableJson(revisionInput)).digest('hex');
+}
+
+function normalizeProposalReplyBinding(value, proposalRevision) {
+  if (value === undefined || value === null) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw proposalError('invalid_reply_binding');
+  }
+  const verifiedSource = String(value.verifiedSource || '').trim();
+  const verifiedUserRef = String(value.verifiedUserRef || '').trim();
+  const conversationRefHash = String(value.conversationRefHash || '').trim().toLowerCase();
+  const signatureRef = String(value.signatureRef || '').trim();
+  const bindingRef = String(value.bindingRef || '').trim();
+  const sessionRef = String(value.sessionRef || '').trim();
+  const expiresAt = String(value.expiresAt || '').trim();
+  const allowedDecisions = [...new Set(Array.isArray(value.allowedDecisions)
+    ? value.allowedDecisions.map((item) => String(item || '').trim()).filter(Boolean)
+    : [...ASSISTANT_GATEWAY_DECISIONS])];
+  if (verifiedSource !== 'notification_hub_weixin') throw proposalError('invalid_reply_binding_source');
+  if (!verifiedUserRef || verifiedUserRef.length > 500) throw proposalError('invalid_reply_binding_user');
+  if (!/^[a-f0-9]{64}$/.test(conversationRefHash)) throw proposalError('invalid_reply_binding_conversation');
+  if (!signatureRef || signatureRef.length > 500) throw proposalError('invalid_reply_binding_signature');
+  if (!bindingRef || bindingRef.length > 120) throw proposalError('invalid_reply_binding_ref');
+  if (!sessionRef || sessionRef.length > 200) throw proposalError('invalid_reply_binding_session');
+  if (!expiresAt || Number.isNaN(new Date(expiresAt).getTime())) throw proposalError('invalid_reply_binding_expiry');
+  if (!allowedDecisions.length || allowedDecisions.some((item) => !ASSISTANT_GATEWAY_DECISIONS.has(item))) {
+    throw proposalError('invalid_reply_binding_decisions');
+  }
+  return {
+    verifiedSource,
+    verifiedUserRef,
+    conversationRefHash,
+    signatureRef,
+    bindingRef,
+    sessionRef,
+    proposalRevision,
+    allowedDecisions,
+    expiresAt,
+  };
 }
 
 function proposalEvidenceStatus(input = {}) {
@@ -561,6 +840,7 @@ function upsertProposal(input = {}) {
       createdAt: timestamp,
       decidedAt: normalized.sourceAuthority === 'ai_derived' ? null : timestamp,
       promotedAt: null,
+      replyBinding: normalizeProposalReplyBinding(input.replyBinding, 1),
       updatedAt: timestamp,
     });
     recordProposalEvent(proposal, 'created', input.actor, '', {
@@ -587,6 +867,7 @@ function upsertProposal(input = {}) {
     createdAt: existing.createdAt,
     decidedAt: existing.decidedAt || null,
     promotedAt: existing.promotedAt || null,
+    replyBinding: normalizeProposalReplyBinding(input.replyBinding, existing.revision + 1),
     updatedAt: timestamp,
   });
   recordProposalEvent(proposal, 'revised', input.actor, '', { previousRevision: existing.revision });
@@ -607,6 +888,8 @@ function transitionProposal(decisionId, eventType, input = {}) {
   let nextStatus = eventType;
   let deferUntil = current.deferUntil || null;
   let taskSpec = current.taskSpec || {};
+  let existingTaskId = current.existingTaskId || null;
+  let rejectionFeedback = current.rejectionFeedback || null;
   if (eventType === 'approve') {
     nextStatus = 'approved';
     if (current.proposalType === 'monthly_bet_proposal' && current.evidenceStatus === 'provisional') {
@@ -614,9 +897,24 @@ function transitionProposal(decisionId, eventType, input = {}) {
     }
     deferUntil = null;
     if (input.boxId) taskSpec = { ...taskSpec, boxId: String(input.boxId) };
+    if (input.existingTaskId) {
+      const taskId = String(input.existingTaskId).trim();
+      if (!db.prepare('SELECT 1 FROM tasks WHERE id=? AND is_deleted=0').get(taskId)) {
+        throw proposalError('existing_task_not_found', 409, { taskId });
+      }
+      existingTaskId = taskId;
+    }
   } else if (eventType === 'reject') {
     nextStatus = 'rejected';
     deferUntil = null;
+    rejectionFeedback = {
+      reasonCode: String(input.reasonCode || 'unspecified').trim() || 'unspecified',
+      reason: note,
+      scopeKey: String(input.scopeKey || '').trim() || null,
+      fingerprint: String(input.fingerprint || '').trim() || null,
+      decidedBy: actor,
+      decidedAt: now(),
+    };
   } else if (eventType === 'defer') {
     deferUntil = validDateKey(input.deferUntil);
     if (!deferUntil) throw proposalError('valid_defer_until_required');
@@ -637,11 +935,13 @@ function transitionProposal(decisionId, eventType, input = {}) {
     status: nextStatus,
     deferUntil,
     taskSpec,
+    existingTaskId,
+    rejectionFeedback,
     decisionNote: note,
     decidedAt: now(),
     updatedAt: now(),
   });
-  recordProposalEvent(proposal, eventType, actor, note, { previousStatus: current.status, deferUntil });
+  recordProposalEvent(proposal, eventType, actor, note, { previousStatus: current.status, deferUntil, rejectionFeedback });
   return proposal;
 }
 
@@ -899,6 +1199,7 @@ function promoteProposal(decisionId, input = {}) {
       decisionNote: String(input.note || current.decisionNote || ''),
       decidedAt: current.decidedAt || timestamp,
       promotedAt: timestamp,
+      assistantGatewayPromotion: input.assistantGatewayPromotion || current.assistantGatewayPromotion || null,
       updatedAt: timestamp,
     });
     const taskSpec = proposal.taskSpec || {};
@@ -917,7 +1218,11 @@ function promoteProposal(decisionId, input = {}) {
         actionProposalIds: [...new Set([...(brief?.actionProposalIds || []), proposal.decisionId])],
       });
     }
-    recordProposalEvent(proposal, 'promote', actor, input.note, { taskId: task.id, linkedExisting: Boolean(current.existingTaskId) });
+    recordProposalEvent(proposal, 'promote', actor, input.note, {
+      taskId: task.id,
+      linkedExisting: Boolean(current.existingTaskId),
+      assistantGatewayPromotion: input.assistantGatewayPromotion || null,
+    });
     return proposal;
   })();
 }
@@ -1343,7 +1648,12 @@ app.get('/health', (req, res) => {
   res.json({ ok: true, db: path.basename(dbPath), time: now() });
 });
 
-installHealthSystemRoutes({ app, db, now, json, parseJson });
+installHealthSystemRoutes({ app, db, now, json, parseJson, authorizeDailyIntake });
+installMissionSystemRoutes({ app, db, now, json, parseJson, authorizeDailyIntake });
+installExecutionSystemRoutes({
+  app, db, now, json, parseJson, uid, rowToTask, taskParams, normalizeTaskCompletionTransition,
+});
+installAssistantAuditSummary({ app, db, now });
 
 app.get('/v1/taskbox', (req, res) => {
   const boxes = db.prepare('SELECT * FROM boxes ORDER BY sort_order, name').all().map(rowToBox);
@@ -1395,9 +1705,68 @@ app.patch('/v1/daily-quote', (req, res) => {
   res.json(next);
 });
 
+const HQ_RECEIPT_SYSTEMS = new Set(['mission', 'health', 'attention', 'execution', 'feedback']);
+const HQ_RECEIPT_FIELDS = ['systemId', 'receiptId', 'intakeRef', 'effectiveDate', 'generatedAt', 'freshness', 'status', 'riskLevel', 'needsUserInput', 'inputGaps', 'factRefs', 'evidenceRefs', 'syncState', 'revision', 'errorCode', 'errorMessage'];
+const safeReceiptText = (value, max = 240) => String(value || '').trim().slice(0, max);
+const safeReceiptList = (value, maxItems = 40) => (Array.isArray(value) ? value : [])
+  .map((item) => {
+    if (item && typeof item === 'object' && !Array.isArray(item)) {
+      const safe = {};
+      for (const key of ['code', 'field', 'severity', 'message', 'ref']) {
+        if (item[key] !== undefined) safe[key] = safeReceiptText(item[key], 240);
+      }
+      return Object.keys(safe).length ? safe : null;
+    }
+    const text = safeReceiptText(item, 500);
+    return text || null;
+  }).filter(Boolean).slice(0, maxItems);
+
+function readHqDailyIntakeReceipts(reviewDate) {
+  try {
+    if (!hqDailyIntakeCacheFile || fs.statSync(hqDailyIntakeCacheFile).size > 1024 * 1024) return [];
+    const cache = parseJson(fs.readFileSync(hqDailyIntakeCacheFile, 'utf8'), null);
+    if (!cache || !Array.isArray(cache.receipts)) return [];
+    const selected = new Map();
+    cache.receipts.forEach((item) => {
+      const projection = item?.projection && typeof item.projection === 'object' ? item.projection : {};
+      const effectiveDate = validDateKey(item?.effectiveDate || item?.reviewDate);
+      if (!HQ_RECEIPT_SYSTEMS.has(safeReceiptText(item?.systemId, 80)) || effectiveDate !== reviewDate) return;
+      const receipt = {
+        systemId: safeReceiptText(item.systemId, 80),
+        receiptId: safeReceiptText(item.receiptId || item.id, 240),
+        intakeRef: safeReceiptText(item.intakeRef || item.intakeId, 240),
+        effectiveDate,
+        generatedAt: safeReceiptText(item.generatedAt || item.updatedAt, 80),
+        freshness: typeof item.freshness === 'object' ? {
+          status: safeReceiptText(item.freshness?.status, 40) || 'unknown',
+          generatedAt: safeReceiptText(item.freshness?.generatedAt || item.freshness?.updatedAt, 80) || null,
+        } : safeReceiptText(item.freshness, 40) || 'unknown',
+        status: safeReceiptText(item.status, 80) || 'unknown',
+        riskLevel: safeReceiptText(item.riskLevel || projection.riskLevel, 80),
+        needsUserInput: item.needsUserInput === true || projection.needsUserInput === true,
+        inputGaps: safeReceiptList(item.inputGaps || projection.inputGaps),
+        factRefs: safeReceiptList(item.factRefs || projection.factRefs),
+        evidenceRefs: safeReceiptList(item.evidenceRefs || projection.evidenceRefs),
+        syncState: safeReceiptText(item.syncState || projection.syncState, 80),
+        revision: Math.max(1, Number(item.revision) || 1),
+        errorCode: safeReceiptText(item.errorCode || projection.errorCode, 160) || null,
+        errorMessage: safeReceiptText(item.errorMessage || projection.errorMessage, 1200) || null,
+      };
+      const key = `${receipt.systemId}:${effectiveDate}`;
+      const current = selected.get(key);
+      if (!current || receipt.revision > current.revision
+        || (receipt.revision === current.revision && String(receipt.generatedAt) > String(current.generatedAt))) selected.set(key, receipt);
+    });
+    return [...selected.values()].map((receipt) => Object.fromEntries(HQ_RECEIPT_FIELDS
+      .filter((key) => receipt[key] !== undefined).map((key) => [key, receipt[key]])));
+  } catch {
+    return [];
+  }
+}
+
 app.get('/v1/hq/today', (req, res) => {
   const reviewDate = validDateKey(req.query.date) || todayKey();
-  res.json(buildHqSnapshot(reviewDate));
+  res.json({ ...buildHqSnapshot(reviewDate), systemReceipts: readHqDailyIntakeReceipts(reviewDate) });
 });
 
 app.get('/v1/hq/review-status', (req, res) => {
@@ -1488,6 +1857,326 @@ function sendProposalError(res, error) {
   throw error;
 }
 
+const ASSISTANT_GATEWAY_REPLY_CONTRACT = '2026-09-03';
+const ASSISTANT_GATEWAY_REPLY_DECISIONS = new Set(['approve', 'reject', 'defer', 'expand']);
+const ASSISTANT_GATEWAY_REPLY_SOURCES = new Set(['personal_wechat', 'notification_hub_weixin']);
+
+function boundedReplyText(value, maxLength, field, required = false) {
+  const text = String(value || '').trim();
+  if (required && !text) throw proposalError(`${field}_required`);
+  if (text.length > maxLength) throw proposalError(`${field}_too_long`);
+  return text;
+}
+
+function parseProposalRevisionTag(value) {
+  const match = /^"?proposal-revision-(\d+)"?$/.exec(String(value || '').trim());
+  return match ? Number(match[1]) : null;
+}
+
+function normalizeGatewayReply(req) {
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const proposalId = boundedReplyText(req.params.proposalId, 200, 'proposal_id', true);
+  if (body.proposalId && String(body.proposalId).trim() !== proposalId) {
+    throw proposalError('proposal_id_binding_mismatch', 409);
+  }
+  const idempotencyKey = boundedReplyText(req.headers['x-idempotency-key'], 300, 'idempotency_key', true);
+  if (body.idempotencyKey && String(body.idempotencyKey).trim() !== idempotencyKey) {
+    throw proposalError('idempotency_key_binding_mismatch', 409);
+  }
+  const inboundMessageId = boundedReplyText(body.inboundMessageId, 200, 'inbound_message_id', true);
+  const decision = boundedReplyText(body.decision, 20, 'decision', true);
+  if (!ASSISTANT_GATEWAY_REPLY_DECISIONS.has(decision)) throw proposalError('invalid_reply_decision');
+  const expectedProposalRevision = Number(body.expectedProposalRevision);
+  if (!Number.isSafeInteger(expectedProposalRevision) || expectedProposalRevision < 1) {
+    throw proposalError('expected_proposal_revision_required');
+  }
+  const ifMatch = String(req.headers['if-match'] || '').trim();
+  if (ifMatch) {
+    const headerRevision = parseProposalRevisionTag(ifMatch);
+    if (!headerRevision) throw proposalError('invalid_proposal_if_match');
+    if (headerRevision !== expectedProposalRevision) {
+      throw proposalError('proposal_revision_binding_mismatch', 409);
+    }
+  }
+  const textHash = boundedReplyText(body.textHash, 64, 'text_hash', true).toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(textHash)) throw proposalError('invalid_text_hash');
+  const receivedAt = boundedReplyText(body.receivedAt, 40, 'received_at', true);
+  if (Number.isNaN(new Date(receivedAt).getTime())) throw proposalError('invalid_received_at');
+  const verification = body.verification && typeof body.verification === 'object' ? body.verification : {};
+  const source = boundedReplyText(verification.source || body.source, 80, 'verified_source', true);
+  if (!ASSISTANT_GATEWAY_REPLY_SOURCES.has(source) || verification.verified !== true) {
+    throw proposalError('verified_source_required');
+  }
+  const signatureRef = boundedReplyText(verification.signatureRef || body.signatureRef, 500, 'signature_ref', true);
+  const replyRef = boundedReplyText(body.replyRef, 500, 'reply_ref', true);
+  const verifiedUserRef = boundedReplyText(body.verifiedUserRef, 500, 'verified_user_ref', true);
+  const conversationRefHash = boundedReplyText(body.conversationRefHash, 64, 'conversation_ref_hash', true).toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(conversationRefHash)) throw proposalError('invalid_conversation_ref_hash');
+  const sessionRef = boundedReplyText(body.sessionRef, 200, 'session_ref', true);
+  const note = boundedReplyText(body.note, 2000, 'note');
+  const clarification = boundedReplyText(body.clarification || body.note, 2000, 'clarification', decision === 'expand');
+  const deferUntil = body.deferUntil ? boundedReplyText(body.deferUntil, 10, 'defer_until') : '';
+  return {
+    proposalId, idempotencyKey, inboundMessageId, decision, expectedProposalRevision,
+    textHash, receivedAt, source, signatureRef, replyRef, verifiedUserRef, conversationRefHash, sessionRef, note,
+    clarification, deferUntil,
+    reasonCode: boundedReplyText(body.reasonCode, 120, 'reason_code'),
+    scopeKey: boundedReplyText(body.scopeKey, 120, 'scope_key'),
+    fingerprint: boundedReplyText(body.fingerprint, 300, 'fingerprint'),
+  };
+}
+
+function proposalReplyBindingError(proposal, input) {
+  const binding = proposal.replyBinding;
+  if (!binding || typeof binding !== 'object') return 'proposal_reply_binding_missing';
+  if (Number(binding.proposalRevision) !== input.expectedProposalRevision) return 'proposal_reply_binding_revision_conflict';
+  if (binding.verifiedSource !== input.source) return 'proposal_reply_binding_source_conflict';
+  if (binding.verifiedUserRef !== input.verifiedUserRef) return 'proposal_reply_binding_user_conflict';
+  if (binding.conversationRefHash !== input.conversationRefHash) return 'proposal_reply_binding_conversation_conflict';
+  if (binding.sessionRef !== input.sessionRef) return 'proposal_reply_binding_session_conflict';
+  if (binding.signatureRef !== input.signatureRef) return 'proposal_reply_binding_signature_conflict';
+  if (binding.bindingRef !== input.scopeKey) return 'proposal_reply_binding_ref_conflict';
+  if (!Array.isArray(binding.allowedDecisions) || !binding.allowedDecisions.includes(input.decision)) {
+    return 'proposal_reply_decision_not_allowed';
+  }
+  const expiry = new Date(binding.expiresAt).getTime();
+  if (Number.isNaN(expiry) || expiry <= Date.now()) return 'proposal_reply_binding_expired';
+  return '';
+}
+
+function normalizedGatewayAction(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase('zh-CN');
+}
+
+function gatewayPromotionEligibilityError(proposal) {
+  if (proposal.proposalType !== 'daily_action_proposal') return 'gateway_promotion_non_daily';
+  if (proposal.evidenceStatus === 'provisional') return 'gateway_promotion_provisional';
+  if (proposal.existingTaskId) return 'gateway_promotion_existing_task_forbidden';
+  const taskSpec = proposal.taskSpec && typeof proposal.taskSpec === 'object' && !Array.isArray(proposal.taskSpec)
+    ? proposal.taskSpec : {};
+  const content = proposal.content && typeof proposal.content === 'object' && !Array.isArray(proposal.content)
+    ? proposal.content : {};
+  if (Object.keys(taskSpec).some((key) => !ASSISTANT_GATEWAY_PROMOTION_FIELDS.has(key))) {
+    return 'gateway_promotion_fields_denied';
+  }
+  const boxId = String(taskSpec.boxId || '').trim();
+  const clearAction = String(taskSpec.clearAction || content.clearAction || '').trim();
+  const boxReason = String(taskSpec.boxReason || content.boxReason || '').trim();
+  const taskContent = String(taskSpec.content || '').trim();
+  if (!boxId || !db.prepare("SELECT 1 FROM boxes WHERE id=? AND box_type='task'").get(boxId)) {
+    return 'gateway_promotion_target_box_invalid';
+  }
+  if (!clearAction || !boxReason || normalizedGatewayAction(taskContent) !== normalizedGatewayAction(clearAction)) {
+    return 'gateway_promotion_action_incomplete';
+  }
+  if (String(content.riskClass || '') !== 'low' || String(content.operationKind || '') !== 'create_task') {
+    return 'gateway_promotion_risk_not_allowlisted';
+  }
+  if (String(content.duplicateStatus || '') !== 'none') return 'gateway_promotion_duplicate_unresolved';
+  if (taskSpec.deviceContext && !['desktop', 'mobile', 'universal'].includes(taskSpec.deviceContext)) {
+    return 'gateway_promotion_device_context_invalid';
+  }
+  if (taskSpec.executionMode && !['self', 'ai', 'hybrid'].includes(taskSpec.executionMode)) {
+    return 'gateway_promotion_execution_mode_invalid';
+  }
+  for (const field of ['scheduledAt', 'dueDate', 'visibleAfter']) {
+    if (taskSpec[field] && (String(taskSpec[field]).length > 40 || Number.isNaN(Date.parse(String(taskSpec[field]))))) {
+      return 'gateway_promotion_date_invalid';
+    }
+  }
+  const duplicate = db.prepare('SELECT id, content FROM tasks WHERE box_id=? AND deleted=0').all(boxId)
+    .find((task) => normalizedGatewayAction(task.content) === normalizedGatewayAction(taskContent));
+  if (duplicate) return 'gateway_promotion_duplicate_found';
+  return '';
+}
+
+function readGatewayStandingRule(ruleId, version) {
+  if (ruleId !== ASSISTANT_GATEWAY_AUTO_APPROVE_RULE_ID) return null;
+  const row = db.prepare('SELECT * FROM hq_review_rules WHERE rule_id=?').get(ruleId);
+  const rule = rowToReviewRule(row);
+  if (!rule || !rule.enabled || !rule.revocable || rule.source !== 'standing_rule' || rule.version !== version) return null;
+  if (rule.revokedAt || (rule.expiresAt && Date.parse(rule.expiresAt) <= Date.now())) return null;
+  return rule;
+}
+
+function normalizeGatewayPromotion(req) {
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const proposalId = boundedReplyText(req.params.id, 200, 'proposal_id', true);
+  if (body.proposalId && String(body.proposalId).trim() !== proposalId) {
+    throw proposalError('proposal_id_binding_mismatch', 409);
+  }
+  const idempotencyKey = boundedReplyText(req.headers['x-idempotency-key'], 300, 'idempotency_key', true);
+  const expectedProposalRevision = Number(body.expectedProposalRevision);
+  if (!Number.isSafeInteger(expectedProposalRevision) || expectedProposalRevision < 1) {
+    throw proposalError('expected_proposal_revision_required');
+  }
+  const ifMatchRevision = parseProposalRevisionTag(req.headers['if-match']);
+  if (!ifMatchRevision || ifMatchRevision !== expectedProposalRevision) {
+    throw proposalError('proposal_revision_binding_mismatch', 409);
+  }
+  const authorizationSource = boundedReplyText(body.authorizationSource, 40, 'authorization_source', true);
+  if (!['explicit_user', 'standing_rule'].includes(authorizationSource)) {
+    throw proposalError('gateway_promotion_authorization_denied', 403);
+  }
+  return {
+    proposalId,
+    idempotencyKey,
+    expectedProposalRevision,
+    authorizationSource,
+    approvalReplyId: boundedReplyText(body.approvalReplyId, 200, 'approval_reply_id'),
+    inboundMessageId: boundedReplyText(body.inboundMessageId, 200, 'inbound_message_id'),
+    bindingRef: boundedReplyText(body.bindingRef, 120, 'binding_ref'),
+    sessionRef: boundedReplyText(body.sessionRef, 200, 'session_ref'),
+    standingRuleId: boundedReplyText(body.standingRuleId, 200, 'standing_rule_id'),
+    standingRuleVersion: Number(body.standingRuleVersion || 0),
+    reasonCode: boundedReplyText(body.reasonCode, 120, 'reason_code', true),
+  };
+}
+
+function validateGatewayStandingAuthorization(proposal, input) {
+  if (!Number.isSafeInteger(input.standingRuleVersion) || input.standingRuleVersion < 1) {
+    throw proposalError('gateway_standing_rule_version_required', 403);
+  }
+  const rule = readGatewayStandingRule(input.standingRuleId, input.standingRuleVersion);
+  const authorization = proposal.automationAuthorization || {};
+  if (!rule || proposal.standingRuleId !== input.standingRuleId
+    || authorization.source !== 'standing_rule' || authorization.ruleId !== input.standingRuleId
+    || Number(authorization.version) !== input.standingRuleVersion || authorization.exact !== true
+    || authorization.enabled !== true || authorization.revocable !== true) {
+    throw proposalError('gateway_standing_rule_not_active', 403);
+  }
+}
+
+function normalizeGatewayAutoApprove(req) {
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const proposalId = boundedReplyText(req.params.id, 200, 'proposal_id', true);
+  const idempotencyKey = boundedReplyText(req.headers['x-idempotency-key'], 300, 'idempotency_key', true);
+  const expectedProposalRevision = Number(body.expectedProposalRevision);
+  const ifMatchRevision = parseProposalRevisionTag(req.headers['if-match']);
+  if (!Number.isSafeInteger(expectedProposalRevision) || expectedProposalRevision < 1
+    || !ifMatchRevision || ifMatchRevision !== expectedProposalRevision) {
+    throw proposalError('proposal_revision_binding_mismatch', 409);
+  }
+  return {
+    proposalId,
+    idempotencyKey,
+    expectedProposalRevision,
+    standingRuleId: boundedReplyText(body.standingRuleId, 200, 'standing_rule_id', true),
+    standingRuleVersion: Number(body.standingRuleVersion || 0),
+    reasonCode: boundedReplyText(body.reasonCode, 120, 'reason_code', true),
+  };
+}
+
+function validateGatewayPromotionAuthorization(proposal, input) {
+  if (proposal.status !== 'approved') throw proposalError('proposal_not_approved', 409);
+  const eligibilityError = gatewayPromotionEligibilityError(proposal);
+  if (eligibilityError) throw proposalError(eligibilityError, 409);
+  if (proposal.revision !== input.expectedProposalRevision) {
+    throw proposalError('proposal_revision_conflict', 409, {
+      expectedRevision: input.expectedProposalRevision,
+      currentRevision: proposal.revision,
+    });
+  }
+  if (input.authorizationSource === 'standing_rule') {
+    validateGatewayStandingAuthorization(proposal, input);
+    return;
+  }
+  if (!input.approvalReplyId || !input.inboundMessageId || !input.bindingRef || !input.sessionRef) {
+    throw proposalError('gateway_user_approval_binding_required', 403);
+  }
+  const binding = proposal.replyBinding || {};
+  if (binding.bindingRef !== input.bindingRef || binding.sessionRef !== input.sessionRef
+    || Number(binding.proposalRevision) !== input.expectedProposalRevision) {
+    throw proposalError('gateway_user_approval_binding_conflict', 409);
+  }
+  const reply = db.prepare(`
+    SELECT * FROM hq_proposal_replies
+    WHERE reply_id=? AND proposal_id=? AND inbound_message_id=? AND decision='approve' AND status='applied'
+  `).get(input.approvalReplyId, proposal.decisionId, input.inboundMessageId);
+  if (!reply || Number(reply.expected_revision) !== input.expectedProposalRevision) {
+    throw proposalError('gateway_user_approval_receipt_invalid', 403);
+  }
+}
+
+function rowToGatewayReply(row) {
+  if (!row) return null;
+  return {
+    replyId: row.reply_id,
+    inboundMessageId: row.inbound_message_id,
+    idempotencyKey: row.idempotency_key,
+    requestHash: row.request_hash,
+    proposalId: row.proposal_id,
+    expectedProposalRevision: Number(row.expected_revision),
+    decision: row.decision,
+    status: row.status,
+    httpStatus: Number(row.http_status || 0),
+    response: parseJson(row.response_json, null),
+    error: row.error_code || null,
+  };
+}
+
+function recordGatewayReplyAudit(reply, eventType, detail = {}) {
+  db.prepare(`
+    INSERT OR IGNORE INTO hq_proposal_reply_audit (
+      id, reply_id, proposal_id, event_type, actor, detail_json, created_at
+    ) VALUES (?, ?, ?, ?, 'assistant-gateway', ?, ?)
+  `).run(uid(), reply.replyId, reply.proposalId, eventType, json(detail), now());
+}
+
+function finalizeGatewayReply(replyId, status, httpStatus, response, errorCode = null) {
+  db.prepare(`
+    UPDATE hq_proposal_replies
+    SET status=?, http_status=?, response_json=?, error_code=?, updated_at=?
+    WHERE reply_id=?
+  `).run(status, httpStatus, json(response), errorCode, now(), replyId);
+  return rowToGatewayReply(db.prepare('SELECT * FROM hq_proposal_replies WHERE reply_id=?').get(replyId));
+}
+
+function replyAgeError(receivedAt) {
+  const ageMs = Date.now() - new Date(receivedAt).getTime();
+  const maxAgeSeconds = Math.max(60, Number(process.env.ASSISTANT_GATEWAY_REPLY_MAX_AGE_SECONDS) || 86400);
+  if (ageMs > maxAgeSeconds * 1000) return 'reply_expired';
+  if (ageMs < -300000) return 'reply_timestamp_in_future';
+  return null;
+}
+
+function rowToReviewRule(row) {
+  if (!row) return null;
+  const raw = parseJson(row.raw_json, {});
+  return { ...raw, ruleId: row.rule_id, version: Number(row.version), source: row.source,
+    enabled: Boolean(row.enabled), revocable: Boolean(row.revocable), reasonCode: row.reason_code,
+    scopeKey: row.scope_key, fingerprint: row.fingerprint || null, match: parseJson(row.match_json, {}),
+    createdAt: row.created_at, updatedAt: row.updated_at };
+}
+
+app.get('/v1/hq/review-rules', (req, res) => {
+  const activeOnly = String(req.query.status || 'active') === 'active';
+  const rows = db.prepare(`SELECT * FROM hq_review_rules ${activeOnly ? 'WHERE enabled=1' : ''} ORDER BY updated_at DESC`).all();
+  return res.json({ items: rows.map(rowToReviewRule) });
+});
+
+app.post('/v1/hq/review-rules', (req, res) => {
+  const body = req.body || {};
+  const ruleId = String(body.ruleId || '').trim();
+  const source = String(body.source || '').trim();
+  const reasonCode = String(body.reasonCode || '').trim();
+  const scopeKey = String(body.scopeKey || '').trim();
+  if (!ruleId || !['explicit_user', 'standing_rule'].includes(source) || !reasonCode || !scopeKey) {
+    return res.status(400).json({ error: 'invalid_review_rule' });
+  }
+  const existing = db.prepare('SELECT * FROM hq_review_rules WHERE rule_id=?').get(ruleId);
+  const timestamp = now();
+  const rule = { ...body, ruleId, version: Number(body.version || (existing ? Number(existing.version) + 1 : 1)),
+    source, enabled: body.enabled !== false, revocable: body.revocable !== false, reasonCode, scopeKey,
+    fingerprint: String(body.fingerprint || '').trim() || null, match: body.match && typeof body.match === 'object' ? body.match : {},
+    createdAt: existing?.created_at || timestamp, updatedAt: timestamp };
+  db.prepare(`INSERT INTO hq_review_rules(rule_id,version,source,enabled,revocable,reason_code,scope_key,fingerprint,match_json,created_at,updated_at,raw_json)
+    VALUES(@ruleId,@version,@source,@enabled,@revocable,@reasonCode,@scopeKey,@fingerprint,@matchJson,@createdAt,@updatedAt,@rawJson)
+    ON CONFLICT(rule_id) DO UPDATE SET version=excluded.version,source=excluded.source,enabled=excluded.enabled,revocable=excluded.revocable,reason_code=excluded.reason_code,scope_key=excluded.scope_key,fingerprint=excluded.fingerprint,match_json=excluded.match_json,updated_at=excluded.updated_at,raw_json=excluded.raw_json`)
+    .run({ ...rule, enabled: rule.enabled ? 1 : 0, revocable: rule.revocable ? 1 : 0, matchJson: json(rule.match), rawJson: json(rule) });
+  return res.status(existing ? 200 : 201).json(rowToReviewRule(db.prepare('SELECT * FROM hq_review_rules WHERE rule_id=?').get(ruleId)));
+});
+
 app.get('/v1/hq/proposals', (req, res) => {
   const statuses = String(req.query.status || '')
     .split(',').map((item) => item.trim()).filter((item) => HQ_PROPOSAL_STATUSES.has(item));
@@ -1526,6 +2215,192 @@ app.get('/v1/hq/proposals', (req, res) => {
   });
 });
 
+app.get('/v1/assistant-gateway/proposals/pending-user-decision', (req, res) => {
+  const verifiedUserRef = String(req.headers['x-assistant-verified-user-ref'] || '').trim();
+  const conversationRefHash = String(req.headers['x-assistant-conversation-ref-hash'] || '').trim().toLowerCase();
+  if (!verifiedUserRef || verifiedUserRef.length > 500 || !/^[a-f0-9]{64}$/.test(conversationRefHash)) {
+    return res.status(400).json({ error: 'pending_binding_context_required' });
+  }
+  const limit = Math.max(1, Math.min(20, Number(req.query.limit) || 20));
+  const currentTime = Date.now();
+  const items = db.prepare(`
+    SELECT * FROM hq_proposals
+    WHERE status='proposed'
+    ORDER BY updated_at DESC
+    LIMIT 200
+  `).all().map(rowToProposal).filter((proposal) => {
+    const binding = proposal.replyBinding;
+    if (!binding || typeof binding !== 'object') return false;
+    if (proposal.proposalType === 'monthly_bet_proposal' && proposal.evidenceStatus === 'provisional') return false;
+    if (binding.verifiedSource !== 'notification_hub_weixin') return false;
+    if (binding.verifiedUserRef !== verifiedUserRef || binding.conversationRefHash !== conversationRefHash) return false;
+    if (Number(binding.proposalRevision) !== proposal.revision) return false;
+    if (Number.isNaN(new Date(binding.expiresAt).getTime()) || new Date(binding.expiresAt).getTime() <= currentTime) return false;
+    return Array.isArray(binding.allowedDecisions)
+      && binding.allowedDecisions.length > 0
+      && binding.allowedDecisions.every((decision) => ASSISTANT_GATEWAY_DECISIONS.has(decision));
+  }).slice(0, limit).map((proposal) => ({
+    proposalId: proposal.decisionId,
+    revision: proposal.revision,
+    proposalType: proposal.proposalType,
+    title: proposal.title,
+    evidenceStatus: proposal.evidenceStatus,
+    allowedDecisions: proposal.replyBinding.allowedDecisions,
+    replyBinding: {
+      bindingRef: proposal.replyBinding.bindingRef,
+      verifiedSource: proposal.replyBinding.verifiedSource,
+      signatureRef: proposal.replyBinding.signatureRef,
+      expiresAt: proposal.replyBinding.expiresAt,
+    },
+  }));
+  return res.json({ contractVersion: ASSISTANT_GATEWAY_REPLY_CONTRACT, items, count: items.length });
+});
+
+app.get('/v1/assistant-gateway/proposals/automation-queue', (req, res) => {
+  const limit = Math.max(1, Math.min(20, Number(req.query.limit) || 20));
+  const items = db.prepare("SELECT * FROM hq_proposals WHERE status='proposed' ORDER BY updated_at DESC LIMIT 200").all()
+    .map(rowToProposal).filter((proposal) => {
+      if (proposal.proposalType !== 'daily_action_proposal' || proposal.evidenceStatus === 'provisional') return false;
+      const raw = proposal;
+      const rule = readGatewayStandingRule(raw.standingRuleId, Number(raw.standingRuleVersion));
+      return Boolean(rule && raw.sourceAuthority === 'standing_rule' && gatewayPromotionEligibilityError(proposal) === '');
+    }).slice(0, limit).map((proposal) => ({
+      proposalId: proposal.decisionId,
+      revision: proposal.revision,
+      proposalType: proposal.proposalType,
+      disposition: 'auto_eligible',
+      promotionEligible: true,
+      standingRuleId: proposal.standingRuleId,
+      standingRuleVersion: Number(proposal.standingRuleVersion),
+      taskSpec: proposal.taskSpec,
+      replyBinding: proposal.replyBinding,
+    }));
+  return res.json({ contractVersion: ASSISTANT_GATEWAY_REPLY_CONTRACT, items, count: items.length });
+});
+
+const conversationRole = (req, res, role) => {
+  if (req.assistantConversationIdentity?.system !== `assistant-conversation-${role}`) {
+    res.status(403).json({ error: 'assistant_conversation_scope_denied' });
+    return false;
+  }
+  return true;
+};
+const conversationTurnView = (row, visibility = 'producer') => row ? {
+  turnId: row.turn_id, conversationKeyHash: row.conversation_key_hash,
+  dispatchKey: row.dispatch_key, inboundMessageId: row.inbound_message_id,
+  textHash: row.text_hash, sequence: row.sequence_no, status: row.status,
+  ...(visibility === 'runner' && row.prompt_payload ? { promptPayload: row.prompt_payload } : {}),
+  ...(visibility === 'producer' && row.result_payload ? { resultPayload: row.result_payload } : {}),
+  resultHash: row.result_hash || undefined, attemptCount: Number(row.attempt_count || 0),
+  errorCode: row.error_code || undefined, createdAt: row.created_at, updatedAt: row.updated_at,
+} : null;
+
+app.post('/v1/assistant-gateway/conversation/turns', (req, res) => {
+  if (!conversationRole(req, res, 'producer')) return;
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const required = ['conversationKeyHash', 'dispatchKey', 'inboundMessageId', 'textHash', 'promptPayload'];
+  if (required.some((key) => !String(body[key] || '').trim())) return res.status(400).json({ error: 'conversation_turn_fields_required' });
+  if (!/^[a-f0-9]{64}$/.test(String(body.conversationKeyHash)) || !/^[a-f0-9]{64}$/.test(String(body.textHash))
+    || String(body.promptPayload).length > 40000) return res.status(400).json({ error: 'conversation_turn_fields_invalid' });
+  const turnId = uid(); const timestamp = now();
+  try {
+    const row = db.transaction(() => {
+      const sequence = Number(db.prepare('SELECT COALESCE(MAX(sequence_no),0)+1 AS value FROM assistant_conversation_turns WHERE conversation_key_hash=?').get(body.conversationKeyHash).value);
+      db.prepare(`INSERT INTO assistant_conversation_turns
+        (turn_id,conversation_key_hash,dispatch_key,inbound_message_id,text_hash,prompt_payload,sequence_no,status,created_at,updated_at)
+        VALUES (?,?,?,?,?,?,?,'pending',?,?)`).run(turnId, body.conversationKeyHash, body.dispatchKey, body.inboundMessageId, body.textHash, body.promptPayload, sequence, timestamp, timestamp);
+      return db.prepare('SELECT * FROM assistant_conversation_turns WHERE turn_id=?').get(turnId);
+    })();
+    return res.status(201).json(conversationTurnView(row));
+  } catch (error) {
+    const existing = db.prepare('SELECT * FROM assistant_conversation_turns WHERE dispatch_key=?').get(body.dispatchKey);
+    if (existing && existing.text_hash === body.textHash) return res.json(conversationTurnView(existing));
+    if (existing) return res.status(409).json({ error: 'conversation_dispatch_conflict' });
+    return res.status(400).json({ error: 'conversation_turn_duplicate' });
+  }
+});
+
+app.get('/v1/assistant-gateway/conversation/turns/by-dispatch/:key', (req, res) => {
+  if (!conversationRole(req, res, 'producer')) return;
+  const row = db.prepare('SELECT * FROM assistant_conversation_turns WHERE dispatch_key=?').get(req.params.key);
+  if (!row) return res.status(404).json({ error: 'conversation_turn_not_found' });
+  return res.json(conversationTurnView(row));
+});
+
+app.post('/v1/assistant-gateway/conversation/turns/claim', (req, res) => {
+  if (!conversationRole(req, res, 'runner')) return;
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const runnerId = String(body.runnerId || '').trim();
+  const leaseSeconds = Math.max(60, Math.min(600, Number(body.leaseSeconds) || 360));
+  if (!runnerId || runnerId.length > 120) return res.status(400).json({ error: 'conversation_runner_invalid' });
+  const timestamp = now();
+  const expiresAt = new Date(Date.now() + leaseSeconds * 1000).toISOString();
+  const leaseToken = crypto.randomBytes(32).toString('hex');
+  const leaseHash = crypto.createHash('sha256').update(leaseToken).digest('hex');
+  const ownerHash = crypto.createHash('sha256').update(runnerId).digest('hex');
+  const row = db.transaction(() => {
+    db.prepare("UPDATE assistant_conversation_turns SET status='pending',lease_token_hash=NULL,lease_owner_hash=NULL,lease_expires_at=NULL,updated_at=? WHERE status='leased' AND lease_expires_at<=?").run(timestamp, timestamp);
+    const candidate = db.prepare(`SELECT t.* FROM assistant_conversation_turns t
+      WHERE t.status='pending' AND NOT EXISTS (
+        SELECT 1 FROM assistant_conversation_turns earlier
+        WHERE earlier.conversation_key_hash=t.conversation_key_hash AND earlier.sequence_no<t.sequence_no
+          AND earlier.status!='completed')
+      ORDER BY t.created_at,t.turn_id LIMIT 1`).get();
+    if (!candidate) return null;
+    const updated = db.prepare("UPDATE assistant_conversation_turns SET status='leased',lease_token_hash=?,lease_owner_hash=?,lease_expires_at=?,attempt_count=attempt_count+1,updated_at=?,status_timestamps_json=json_set(status_timestamps_json,'$.leased',?) WHERE turn_id=? AND status='pending'")
+      .run(leaseHash, ownerHash, expiresAt, timestamp, timestamp, candidate.turn_id);
+    return updated.changes ? db.prepare('SELECT * FROM assistant_conversation_turns WHERE turn_id=?').get(candidate.turn_id) : null;
+  }).immediate();
+  if (!row) return res.json({ item: null });
+  return res.json({ item: { ...conversationTurnView(row, 'runner'), leaseToken, leaseExpiresAt: expiresAt } });
+});
+
+app.post('/v1/assistant-gateway/conversation/turns/:id/result', (req, res) => {
+  if (!conversationRole(req, res, 'runner')) return;
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const payload = String(body.resultPayload || '').trim();
+  const resultHash = String(body.resultHash || '').trim().toLowerCase();
+  const leaseHash = crypto.createHash('sha256').update(String(body.leaseToken || '')).digest('hex');
+  const ownerHash = crypto.createHash('sha256').update(String(body.runnerId || '')).digest('hex');
+  if (!String(body.runnerId || '').trim() || !payload || payload.length > 40000 || !/^[a-f0-9]{64}$/.test(resultHash)) return res.status(400).json({ error: 'conversation_result_invalid' });
+  const existing = db.prepare('SELECT * FROM assistant_conversation_turns WHERE turn_id=?').get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'conversation_turn_not_found' });
+  if (existing.status === 'result_ready' && existing.result_hash === resultHash && existing.lease_owner_hash === ownerHash) return res.json(conversationTurnView(existing, 'runner'));
+  if (existing.status !== 'leased' || existing.lease_token_hash !== leaseHash || existing.lease_owner_hash !== ownerHash || existing.lease_expires_at <= now()) return res.status(409).json({ error: 'conversation_lease_conflict' });
+  const resultTimestamp = now();
+  db.prepare("UPDATE assistant_conversation_turns SET status='result_ready',result_payload=?,result_hash=?,lease_token_hash=NULL,lease_expires_at=NULL,updated_at=?,status_timestamps_json=json_set(status_timestamps_json,'$.result_ready',?) WHERE turn_id=?")
+    .run(payload, resultHash, resultTimestamp, resultTimestamp, req.params.id);
+  return res.json(conversationTurnView(db.prepare('SELECT * FROM assistant_conversation_turns WHERE turn_id=?').get(req.params.id), 'runner'));
+});
+
+app.post('/v1/assistant-gateway/conversation/turns/:id/fail', (req, res) => {
+  if (!conversationRole(req, res, 'runner')) return;
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const leaseHash = crypto.createHash('sha256').update(String(body.leaseToken || '')).digest('hex');
+  const ownerHash = crypto.createHash('sha256').update(String(body.runnerId || '')).digest('hex');
+  const row = db.prepare('SELECT * FROM assistant_conversation_turns WHERE turn_id=?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'conversation_turn_not_found' });
+  if (!String(body.runnerId || '').trim() || row.status !== 'leased' || row.lease_token_hash !== leaseHash
+    || row.lease_owner_hash !== ownerHash || row.lease_expires_at <= now()) return res.status(409).json({ error: 'conversation_lease_conflict' });
+  const terminal = Number(row.attempt_count || 0) >= 5;
+  db.prepare("UPDATE assistant_conversation_turns SET status=?,error_code=?,lease_token_hash=NULL,lease_owner_hash=NULL,lease_expires_at=NULL,updated_at=? WHERE turn_id=?")
+    .run(terminal ? 'dead_letter' : 'pending', String(body.errorCode || 'runner_failed').slice(0, 120), now(), req.params.id);
+  return res.json(conversationTurnView(db.prepare('SELECT * FROM assistant_conversation_turns WHERE turn_id=?').get(req.params.id)));
+});
+
+for (const [suffix, fromStatus, toStatus, timeColumn] of [
+  ['replied', 'result_ready', 'replied', 'replied_at'], ['completed', 'replied', 'completed', 'completed_at'],
+]) app.post(`/v1/assistant-gateway/conversation/turns/:id/${suffix}`, (req, res) => {
+  if (!conversationRole(req, res, 'producer')) return;
+  const row = db.prepare('SELECT * FROM assistant_conversation_turns WHERE turn_id=?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'conversation_turn_not_found' });
+  if (row.status === toStatus || (toStatus === 'completed' && row.status === 'completed')) return res.json(conversationTurnView(row));
+  if (row.status !== fromStatus) return res.status(409).json({ error: 'conversation_turn_state_conflict' });
+  const timestamp = now();
+  db.prepare(`UPDATE assistant_conversation_turns SET status=?,${timeColumn}=?,updated_at=? WHERE turn_id=?`).run(toStatus, timestamp, timestamp, req.params.id);
+  return res.json(conversationTurnView(db.prepare('SELECT * FROM assistant_conversation_turns WHERE turn_id=?').get(req.params.id)));
+});
+
 app.get('/v1/hq/proposals/:id', (req, res) => {
   try {
     const proposal = getProposalOrThrow(req.params.id);
@@ -1547,9 +2422,195 @@ app.post('/v1/hq/proposals', (req, res) => {
   }
 });
 
+app.post('/v1/hq/proposals/:proposalId/replies', (req, res) => {
+  let input;
+  try {
+    input = normalizeGatewayReply(req);
+  } catch (error) {
+    return sendProposalError(res, error);
+  }
+
+  let proposal;
+  try {
+    proposal = getProposalOrThrow(input.proposalId);
+  } catch (error) {
+    return sendProposalError(res, error);
+  }
+
+  const requestHash = crypto.createHash('sha256').update(stableJson(input)).digest('hex');
+  const byKey = db.prepare('SELECT * FROM hq_proposal_replies WHERE idempotency_key=?').get(input.idempotencyKey);
+  const byMessage = db.prepare('SELECT * FROM hq_proposal_replies WHERE inbound_message_id=?').get(input.inboundMessageId);
+  if (byKey && byMessage && byKey.reply_id !== byMessage.reply_id) {
+    return res.status(409).json({ error: 'reply_idempotency_conflict' });
+  }
+  let reply = rowToGatewayReply(byKey || byMessage);
+  if (reply && (reply.requestHash !== requestHash
+    || reply.idempotencyKey !== input.idempotencyKey
+    || reply.inboundMessageId !== input.inboundMessageId)) {
+    return res.status(409).json({ error: 'reply_idempotency_conflict', replyId: reply.replyId });
+  }
+  if (reply && reply.status !== 'received') {
+    res.setHeader('ETag', `"proposal-revision-${reply.expectedProposalRevision}"`);
+    return res.status(reply.httpStatus || 200).json(reply.response);
+  }
+
+  if (!reply) {
+    reply = db.transaction(() => {
+      const timestamp = now();
+      const replyId = uid();
+      db.prepare(`
+        INSERT INTO hq_proposal_replies (
+          reply_id, inbound_message_id, idempotency_key, request_hash, proposal_id,
+          expected_revision, decision, text_hash, source, reply_ref, verified_user_ref,
+          signature_ref, received_at, status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'received', ?, ?)
+      `).run(
+        replyId, input.inboundMessageId, input.idempotencyKey, requestHash, input.proposalId,
+        input.expectedProposalRevision, input.decision, input.textHash, input.source,
+        input.replyRef, input.verifiedUserRef, input.signatureRef, input.receivedAt,
+        timestamp, timestamp,
+      );
+      const created = rowToGatewayReply(db.prepare('SELECT * FROM hq_proposal_replies WHERE reply_id=?').get(replyId));
+      const detail = {
+        inboundMessageId: input.inboundMessageId,
+        replyRef: input.replyRef,
+        verifiedUserRef: input.verifiedUserRef,
+        sessionRef: input.sessionRef,
+        source: input.source,
+        signatureRef: input.signatureRef,
+        textHash: input.textHash,
+        decision: input.decision,
+        expectedProposalRevision: input.expectedProposalRevision,
+      };
+      recordGatewayReplyAudit(created, 'received', detail);
+      recordProposalEvent(proposal, 'gateway_reply_received', 'assistant-gateway', '', detail);
+      return created;
+    })();
+  }
+
+  const rejectReply = (code, detail = {}) => {
+    const payload = {
+      contractVersion: ASSISTANT_GATEWAY_REPLY_CONTRACT,
+      error: code,
+      replyId: reply.replyId,
+      proposalId: input.proposalId,
+      ...detail,
+    };
+    db.transaction(() => {
+      finalizeGatewayReply(reply.replyId, 'rejected', 409, payload, code);
+      recordGatewayReplyAudit(reply, 'rejected', { error: code, ...detail });
+    })();
+    return res.status(409).json(payload);
+  };
+
+  const ageError = replyAgeError(input.receivedAt);
+  if (ageError) return rejectReply(ageError);
+  proposal = getProposalOrThrow(input.proposalId);
+  if (proposal.revision !== input.expectedProposalRevision) {
+    return rejectReply('proposal_revision_conflict', {
+      expectedRevision: input.expectedProposalRevision,
+      currentRevision: proposal.revision,
+      updatedAt: proposal.updatedAt,
+    });
+  }
+  const bindingError = proposalReplyBindingError(proposal, input);
+  if (bindingError) return rejectReply(bindingError);
+
+  try {
+    const result = db.transaction(() => {
+      let nextProposal = proposal;
+      let status = 'applied';
+      if (input.decision === 'expand') {
+        status = 'clarification_recorded';
+        recordProposalEvent(proposal, 'clarification_requested', 'assistant-gateway', input.clarification, {
+          replyId: reply.replyId,
+          replyRef: input.replyRef,
+          textHash: input.textHash,
+        });
+      } else {
+        nextProposal = transitionProposal(input.proposalId, input.decision, {
+          actor: 'assistant-gateway',
+          note: input.note,
+          deferUntil: input.deferUntil,
+          reasonCode: input.reasonCode,
+          scopeKey: input.scopeKey,
+          fingerprint: input.fingerprint,
+        });
+      }
+      const payload = {
+        contractVersion: ASSISTANT_GATEWAY_REPLY_CONTRACT,
+        replyId: reply.replyId,
+        inboundMessageId: input.inboundMessageId,
+        proposalId: input.proposalId,
+        proposalRevision: nextProposal.revision,
+        decision: input.decision,
+        status,
+        proposal: nextProposal,
+        taskboxMutation: false,
+      };
+      finalizeGatewayReply(reply.replyId, status, 200, payload);
+      recordGatewayReplyAudit(reply, status, {
+        decision: input.decision,
+        proposalStatus: nextProposal.status,
+        proposalRevision: nextProposal.revision,
+      });
+      return payload;
+    })();
+    res.setHeader('ETag', `"proposal-revision-${result.proposalRevision}"`);
+    return res.json(result);
+  } catch (error) {
+    const status = error?.status || 500;
+    const code = error?.code || 'internal_error';
+    const payload = {
+      contractVersion: ASSISTANT_GATEWAY_REPLY_CONTRACT,
+      error: code,
+      replyId: reply.replyId,
+      proposalId: input.proposalId,
+      ...(error?.detail || {}),
+    };
+    db.transaction(() => {
+      finalizeGatewayReply(reply.replyId, 'rejected', status, payload, code);
+      recordGatewayReplyAudit(reply, 'rejected', { error: code, ...(error?.detail || {}) });
+    })();
+    return res.status(status).json(payload);
+  }
+});
+
 ['approve', 'reject', 'defer', 'restore'].forEach((action) => {
   app.post(`/v1/hq/proposals/:id/${action}`, (req, res) => {
     try {
+      if (action === 'approve' && req.assistantGatewayIdentity) {
+        const input = normalizeGatewayAutoApprove(req);
+        const current = getProposalOrThrow(input.proposalId);
+        if (current.status === 'approved' && current.assistantGatewayApproval) {
+          if (current.assistantGatewayApproval.idempotencyKey !== input.idempotencyKey) {
+            throw proposalError('gateway_approval_idempotency_conflict', 409);
+          }
+          return res.json(current);
+        }
+        if (current.status !== 'proposed') throw proposalError('proposal_not_proposed', 409);
+        if (current.revision !== input.expectedProposalRevision) throw proposalError('proposal_revision_conflict', 409);
+        const eligibilityError = gatewayPromotionEligibilityError(current);
+        if (eligibilityError) throw proposalError(eligibilityError, 409);
+        validateGatewayStandingAuthorization(current, {
+          standingRuleId: input.standingRuleId,
+          standingRuleVersion: input.standingRuleVersion,
+        });
+        const approved = transitionProposal(input.proposalId, 'approve', {
+          actor: 'assistant-gateway',
+          note: `assistant_gateway:${input.reasonCode}`,
+        });
+        return res.json(saveProposal({
+          ...approved,
+          assistantGatewayApproval: {
+            idempotencyKey: input.idempotencyKey,
+            standingRuleId: input.standingRuleId,
+            standingRuleVersion: input.standingRuleVersion,
+            reasonCode: input.reasonCode,
+            approvedAt: now(),
+          },
+        }));
+      }
       return res.json(db.transaction(() => transitionProposal(req.params.id, action, req.body || {}))());
     } catch (error) {
       return sendProposalError(res, error);
@@ -1559,6 +2620,59 @@ app.post('/v1/hq/proposals', (req, res) => {
 
 app.post('/v1/hq/proposals/:id/promote', (req, res) => {
   try {
+    if (req.assistantGatewayIdentity) {
+      const input = normalizeGatewayPromotion(req);
+      const current = getProposalOrThrow(input.proposalId);
+      const requestHash = crypto.createHash('sha256').update(stableJson(input)).digest('hex');
+      const previous = current.assistantGatewayPromotion;
+      if (previous) {
+        if (previous.idempotencyKey !== input.idempotencyKey || previous.requestHash !== requestHash) {
+          throw proposalError('gateway_promotion_idempotency_conflict', 409);
+        }
+        if (current.status !== 'promoted' || !current.taskId) {
+          throw proposalError('gateway_promotion_receipt_incomplete', 409);
+        }
+        res.setHeader('ETag', `"proposal-revision-${current.revision}"`);
+        return res.json({
+          contractVersion: ASSISTANT_GATEWAY_REPLY_CONTRACT,
+          proposalId: current.decisionId,
+          proposalRevision: current.revision,
+          status: current.status,
+          taskId: current.taskId,
+          taskboxMutation: true,
+          replayed: true,
+        });
+      }
+      validateGatewayPromotionAuthorization(current, input);
+      const promotion = promoteProposal(req.params.id, {
+        actor: 'assistant-gateway',
+        note: `assistant_gateway:${input.reasonCode}`,
+        shadowMode: false,
+        assistantGatewayPromotion: {
+          idempotencyKey: input.idempotencyKey,
+          requestHash,
+          authorizationSource: input.authorizationSource,
+          approvalReplyId: input.approvalReplyId || null,
+          inboundMessageId: input.inboundMessageId || null,
+          bindingRef: input.bindingRef || null,
+          sessionRef: input.sessionRef || null,
+          standingRuleId: input.standingRuleId || null,
+          standingRuleVersion: input.standingRuleVersion || null,
+          reasonCode: input.reasonCode,
+          promotedAt: now(),
+        },
+      });
+      res.setHeader('ETag', `"proposal-revision-${promotion.revision}"`);
+      return res.json({
+        contractVersion: ASSISTANT_GATEWAY_REPLY_CONTRACT,
+        proposalId: promotion.decisionId,
+        proposalRevision: promotion.revision,
+        status: promotion.status,
+        taskId: promotion.taskId,
+        taskboxMutation: true,
+        replayed: false,
+      });
+    }
     return res.json(promoteProposal(req.params.id, req.body || {}));
   } catch (error) {
     return sendProposalError(res, error);
@@ -1577,6 +2691,7 @@ function rowToSystemCandidate(row) {
 }
 
 app.get('/v1/system-candidates', (req, res) => {
+  if (dailyIntakeTransport.isIntakeRead(req)) return dailyIntakeTransport.list(req, res);
   const systemId = String(req.query.systemId || '').trim();
   const status = String(req.query.status || '').trim();
   if (!SYSTEM_CANDIDATE_SYSTEMS.has(systemId)) return res.status(400).json({ error: 'invalid_system_id' });
@@ -1589,6 +2704,7 @@ app.get('/v1/system-candidates', (req, res) => {
 });
 
 app.post('/v1/system-candidates/batch', (req, res) => {
+  if (dailyIntakeTransport.isIntakeBatch(req)) return dailyIntakeTransport.receive(req, res);
   const candidates = Array.isArray(req.body?.candidates) ? req.body.candidates : [];
   if (candidates.length > 500) return res.status(400).json({ error: 'too_many_candidates' });
   try {
@@ -2032,7 +3148,7 @@ function normalizeTaskCompletionTransition(currentTask, patch, timestamp = now()
 
 app.post('/v1/tasks', (req, res) => {
   const timestamp = now();
-  const initial = { ...req.body, id: req.body.id || uid(), createdAt: req.body.createdAt || timestamp, updatedAt: timestamp };
+  const initial = { ...req.body, id: req.body.id || uid(), revision: 1, createdAt: req.body.createdAt || timestamp, updatedAt: timestamp };
   const task = normalizeTaskCompletionTransition(null, initial, timestamp);
   if (task.boxId && !db.prepare('SELECT 1 FROM boxes WHERE id=?').get(task.boxId)) {
     return res.status(409).json({ error: 'box_not_found', boxId: task.boxId });
@@ -2047,11 +3163,11 @@ app.post('/v1/tasks', (req, res) => {
       : db.prepare('SELECT * FROM tasks WHERE id=?').get(task.id));
   if (existing) return res.json(rowToTask(existing));
   db.prepare(`
-    INSERT INTO tasks (id, box_id, content, is_completed, sort_order, priority, weight, points_value, progress,
+    INSERT INTO tasks (id, revision, box_id, content, is_completed, sort_order, priority, weight, points_value, progress,
       is_recurring_template, recurrence_template_id, recurrence_key, recurrence_json, next_run_at, occurrence_status,
       mainline_id, branch_id, milestone_id, device_context, execution_mode, visible_after, deferred_at, defer_note, progress_logs_json,
       scheduled_at, due_date, deleted, deleted_at, note, sync_key, completed_at, created_at, updated_at, raw_json)
-    VALUES (@id, @box_id, @content, @is_completed, @sort_order, @priority, @weight, @points_value, @progress,
+    VALUES (@id, @revision, @box_id, @content, @is_completed, @sort_order, @priority, @weight, @points_value, @progress,
       @is_recurring_template, @recurrence_template_id, @recurrence_key, @recurrence_json, @next_run_at, @occurrence_status,
       @mainline_id, @branch_id, @milestone_id, @device_context, @execution_mode, @visible_after, @deferred_at, @defer_note, @progress_logs_json,
       @scheduled_at, @due_date, @deleted, @deleted_at, @note, @sync_key, @completed_at, @created_at, @updated_at, @raw_json)
@@ -2065,7 +3181,7 @@ app.patch('/v1/tasks/:id', (req, res) => {
   const timestamp = now();
   const currentTask = rowToTask(current);
   const taskPatch = normalizeTaskCompletionTransition(currentTask, { ...req.body, id: req.params.id }, timestamp);
-  const next = mergeRaw(current.raw_json, { ...taskPatch, updatedAt: timestamp });
+  const next = mergeRaw(current.raw_json, { ...taskPatch, revision: Number(current.revision || 1) + 1, updatedAt: timestamp });
   if (next.boxId && !db.prepare('SELECT 1 FROM boxes WHERE id=?').get(next.boxId)) {
     return res.status(409).json({ error: 'box_not_found', boxId: next.boxId });
   }
@@ -2073,7 +3189,7 @@ app.patch('/v1/tasks/:id', (req, res) => {
     return res.status(409).json({ error: 'branch_not_found', branchId: next.branchId });
   }
   db.prepare(`
-    UPDATE tasks SET box_id=@box_id, content=@content, is_completed=@is_completed, sort_order=@sort_order,
+    UPDATE tasks SET revision=@revision, box_id=@box_id, content=@content, is_completed=@is_completed, sort_order=@sort_order,
       priority=@priority, weight=@weight, points_value=@points_value, progress=@progress,
       is_recurring_template=@is_recurring_template, recurrence_template_id=@recurrence_template_id,
       recurrence_key=@recurrence_key, recurrence_json=@recurrence_json, next_run_at=@next_run_at,
@@ -2090,15 +3206,16 @@ app.patch('/v1/tasks/:id', (req, res) => {
 app.delete('/v1/tasks/:id', (req, res) => {
   const current = db.prepare('SELECT * FROM tasks WHERE id=?').get(req.params.id);
   if (!current) return res.status(404).json({ error: 'task_not_found' });
-  const next = mergeRaw(current.raw_json, { deleted: true, deletedAt: now(), updatedAt: now() });
-  db.prepare('UPDATE tasks SET deleted=1, deleted_at=?, updated_at=?, raw_json=? WHERE id=?')
-    .run(next.deletedAt, next.updatedAt, json(next), req.params.id);
+  const next = mergeRaw(current.raw_json, { deleted: true, deletedAt: now(), revision: Number(current.revision || 1) + 1, updatedAt: now() });
+  db.prepare('UPDATE tasks SET revision=?, deleted=1, deleted_at=?, updated_at=?, raw_json=? WHERE id=?')
+    .run(next.revision, next.deletedAt, next.updatedAt, json(next), req.params.id);
   res.json(next);
 });
 
 function taskParams(task) {
   return {
     id: task.id,
+    revision: Number(task.revision || 1),
     box_id: task.boxId || task.box_id || null,
     content: task.content || '',
     is_completed: bool(task.isCompleted),

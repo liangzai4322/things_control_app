@@ -1,5 +1,14 @@
 # AGENTS.md
 
+## Assistant Gateway / HQ 当前交接
+
+2026-09-05 生产回退：`3ae02e0` 不含 durable conversation；后续发布必须保留 `8254958` 聊天基线并合入最新 main，不得再单独发布旧审计分支。审计必须读 `sequence_no` 与真实状态时间；历史缺失保持 null。普通聊天不写 HQ/TaskBox。详情与恢复证据见下述交接，不得沿用早晚报“通路正常”的旧结论。
+
+涉及微信决策、HQ proposal 或 TaskBox 晋升时，先读
+`docs/assistant-gateway-hq-handoff.md`。已审批 proposal 只经 HQ `/promote` 创建
+TaskBox 任务，禁止再经 execution create 双写。三分流与 writer 尚未完成联合验收时，
+不得把 decision mode 描述为自动晋升闭环。
+
 ## Repo role
 
 This workspace has two jobs:
@@ -9,16 +18,56 @@ This workspace has two jobs:
 
 ## Working rules
 
+- A task's system authority follows the applicable headquarters section below. Before modifying or operating another system, follow the cross-system coordination directory and contact that system's existing Codex task when the dependency actually arises.
 - The web app has a `package.json`. Use `npm ci`, `npm run build`, and `npm run preview` for production-like verification; `python -m http.server 8000` is only the unbundled source fallback.
 - Production business data comes from `server/taskbox-api/` (SQLite + Express) through record-level API calls. Do not reintroduce Gist JSON as a fallback data source.
 - Frontend changes should preserve local-cache/offline behavior, record-level sync, and idempotent server writes.
 - Preserve the main/sub-panel contract: Life HQ owns decisions, project health, and daily/weekly/monthly direction; boxes own task execution and evidence. Cross-panel navigation uses the persistent workspace switch and task deep links, not duplicated records.
+- Execution-system production writes use only the dedicated `/v1/execution/*` contract in `docs/execution-system-taskbox-api.md`. TaskBox remains the sole task fact store. Never let execution-system fall back to generic `/v1/tasks`, reuse browser/HQ credentials, accept AI candidates as authority, hard-delete tasks, force revision conflicts, or mutate mission/mainline strategy.
 - HQ task deep links use `#box/:boxId/:taskId/hq-primary|hq-maintenance`; box-only task links may omit the fourth segment. Keep task focus, command context, and return navigation working on desktop and mobile.
 - Put disposable browser/auth/debug artifacts in `tmp/`.
 - Put durable batch outputs in `outputs/<batch-name>/`.
 - After ZSXQ Markdown conversion/backfill/final merge, put only title-named per-article Markdown files larger than 60 KB in `outputs/太大/`, with a per-month `oversized_files_moved.json` / `.md` audit left in the month directory. Before moving, filenames should look like `<rank>_<topic_id>_<title>.md`; keep aggregate Markdown files such as `topics_normalized.md`, `articles_normalized.md`, `merged_feishu.md`, and `final_merged_articles.md` in the source month directory. Do not move JSON, DOCX, raw payloads, or auth/debug artifacts just because they are large.
 - Put persistent crawler state in `data/`.
 - Never write cookies, tokens, signed curl payloads, Chrome storage dumps, or raw auth headers into tracked files.
+
+## Mission system headquarters authority
+
+- Standing user authorization recorded on 2026-08-23: Codex acting as Mission System HQ may independently inspect, change, test, commit, push, and deploy mission-system code and documentation without requesting per-change approval.
+- Mission-owned files are `js/mission-model.js`, `js/mission-store.js`, `js/mission-page.js`, `js/mission-hq-port.js`, `js/mission-v2-adapter.js`, `server/taskbox-api/src/mission-system.js`, mission-specific schema sections/tests, mission-only CSS selectors, and mission-specific documentation sections.
+- Shared integration files such as `js/app.js`, `js/app-storage.js`, `css/style.css`, `package.json`, build/deploy workflows, HQ ports, and cross-system contracts may receive only the smallest mission-required integration edit. Preserve other systems' behavior and run the relevant shared contract tests.
+- Mission HQ has the user's standing authorization (`mission-hq-specific-actions-2026-08-23`) to approve a mission candidate or publish a mission version without another click only when the action, target object, and expected result are all exact and recorded in the audit trail. Vague or ambiguous suggestions do not qualify, `ai_derived` content cannot authorize itself, Mission HQ cannot write directly to TaskBox, and ownership of the other systems remains unchanged.
+- Mission System HQ does not own TaskBox tasks, HQ decisions, health facts, time facts, or feedback rules. Do not add direct TaskBox writes or bypass the existing L1 read-only HQ projection.
+
+## Time and attention system headquarters authority
+
+- Standing user authorization recorded on 2026-08-23: Codex thread `019fe737-b6f8-7b31-862f-7f5dd707e3de`, acting as Time & Attention System HQ, may independently inspect, change, test, merge, commit, push, and deploy time-system code and documentation without requesting per-change approval. For this thread, this section overrides the generic execution-HQ thread label above.
+- Time-owned files are `js/time-attention-model.js`, `js/time-attention-store.js`, `js/time-attention-page.js`, `js/time-attention-hq-port.js`, time-specific tests, time-only CSS selectors, and time-specific documentation sections.
+- Shared integration files such as `js/app.js`, `js/app-storage.js`, `css/style.css`, `package.json`, build/deploy workflows, HQ ports, and cross-system contracts may receive only the smallest time-required integration edit. Preserve other systems' behavior and run the relevant shared contract tests.
+- Time HQ may resolve local/cloud conflicts and release the newest compatible time contract directly. Preserve the independent stores and standard HQ-port boundary; do not restore an older local file over a newer schema or bypass `js/five-system-hq-ports.js`.
+- Time HQ owns time plans, calendar facts, focus windows, actual-attention evidence, capacity calculations, and time candidates. It does not own TaskBox task/completion facts, mission priorities, health diagnoses, or feedback rules. A derived schedule is not a user commitment; external-calendar writes and TaskBox writes must continue through their existing explicit-user/controlled-write contracts.
+
+## Feedback system headquarters authority
+
+- Standing user authorization recorded on 2026-08-23: Codex thread `019fe737-b6f8-7b31-862f-7f7f704e9dc0`, acting as Feedback System HQ, may independently inspect, change, test, merge, commit, push, and deploy feedback-system code and documentation without requesting per-change approval. For this thread, this section overrides the generic execution-HQ thread label above.
+- Feedback-owned files are `js/feedback-model.js`, `js/feedback-store.js`, `js/feedback-import.js`, `js/feedback-page.js`, `js/feedback-hq-port.js`, `integrations/feedback_continuity.py`, feedback-specific tests, feedback-only CSS selectors, and feedback-specific documentation sections.
+- Shared integration files such as `js/app.js`, `css/style.css`, `package.json`, build/deploy workflows, `js/five-system-hq-ports.js`, HQ contracts, and cross-system tests may receive only the smallest feedback-required integration edit. Preserve other systems and run relevant shared contract tests.
+- Feedback HQ may resolve local/cloud conflicts and release the newest compatible feedback contract directly. Preserve the independent local store and L1 read-only HQ-port boundary; do not restore an older schema over the deployed schema v3.
+- Feedback HQ owns predictions, deviations, pattern candidates, experiments, rule versions, evidence continuity, and feedback-specific candidate/audit state. It does not own TaskBox task/completion facts, mission priorities, health facts, or time facts. Imported/AI-derived content cannot authorize itself; cross-system proposals may be accepted for consideration but cannot directly mutate a target system, become a standing rule, or create a TaskBox task.
+
+## Cross-system coordination directory
+
+- Standing user instruction recorded on 2026-08-23: before modifying or operating another system's owned code, data, rules, deployment, or task state, contact that system's existing Codex task, communicate the intended change, and ask the narrow question needed to proceed. Do not silently decide on behalf of another system, and do not treat silence as approval.
+- Contact only when a concrete cross-system need arises; do not send routine, speculative, or pre-emptive messages merely because this directory exists. Read-only inspection, changes wholly inside the current system, and mechanical preservation of an already-approved shared contract do not require contact.
+- If one action affects multiple systems, contact every affected owner before making the cross-system change. A reply may supply facts or coordination, but it does not replace the existing explicit-user approval and controlled-write boundaries. Reuse the tasks below rather than creating replacements.
+- Execution system: `codex://threads/019fe737-b6f7-7121-9a26-574b22fbffed`
+- Health system: `codex://threads/019fe737-b6f8-7b31-862f-7fb93f71d8d4`
+- Time & Attention system: `codex://threads/019fe737-b6f8-7b31-862f-7f5dd707e3de`
+- Feedback system: `codex://threads/019fe737-b6f8-7b31-862f-7f7f704e9dc0`
+- Mission system: `codex://threads/019fe737-b6f8-7b31-862f-7f951f209c86`
+- Box App: `codex://threads/019d8138-ece0-70b0-8c9d-90b4003aa46f`
+- Daily Review / knowledge-base management: `codex://threads/019dbec0-d3c2-7c53-93f5-7570c3f1dafc`
+- Life HQ: `codex://threads/019fb1e4-de37-74d0-8ea3-ebee097c18a5`
 
 ## Export entry points
 
@@ -61,13 +110,14 @@ This workspace has two jobs:
 - `docs/taskbox-core-features.md` is the current product and business-rule reference.
 - `docs/architecture.md` records the frontend, API, data model, and synchronization architecture.
 - `docs/runbook.md` records local verification, deployment, backup, rollback, and incident checks.
-- `docs/hq-primary-action-system-loop-v2.md` is the single source of truth for the primary-action seat, ROI candidate engine, subsystem fact-to-action loop, and review proposal control plane. P0-P4 are in production. P4 Build ID `1962464071d3` was published by Pages workflow `31324155726`; the API uses `hq_proposals` and `hq_proposal_events`, and only approved daily proposals can promote to TaskBox when both the request and `HQ_PROPOSAL_PROMOTION_ENABLED=1` allow it. Weekly experiments and monthly bets remain strategic objects, and provisional monthly evidence cannot be approved. P4 full tests, build, 390px/1440px, proposal state-machine, audit, CORS and production endpoint checks passed. The current server rollback point is `/opt/taskbox-api/backups/p4-review-proposals-20260809T170701Z`.
+- `docs/hq-primary-action-system-loop-v2.md` is the single source of truth for P0-P6. All phases are in production. P5-P6 add a read-only approved weekly bet, project resource bias, weekly system-efficiency metrics, and a 14-day governance gate; missing values remain unknown and recommendations never mutate systems or TaskBox. PR #12 merge `4237b97`, Pages workflow `32634346744`, and Build ID `8956dbc8f134` passed full tests plus 1440px/390px production checks. P4 API promotion boundaries remain unchanged: only approved daily proposals can promote when both the request and `HQ_PROPOSAL_PROMOTION_ENABLED=1` allow it; weekly experiments and monthly bets remain strategic objects.
 - The V3 Session A/G documents preserve pre-release evidence. Current production is Pages workflow `31556529819`, Build ID `6ee91e341ff7`: five independent systems expose `*-hq-port.js` snapshots; HQ consumes only `js/five-system-hq-ports.js`. Execution is a first-class L2 system backed by TaskBox as the sole task/completion fact engine; its shadow proposal outbox still has no automatic consumer.
 - PR #2 published the five-system daily-review inbox UI in Pages workflow `31558585173`, Build ID `e95fe81c2a02`. On 2026-08-13 the matching `system_candidates` batch/read/decision API passed production `200 / 401 / 204 / 200`, idempotent outbox replay (`created=3`, then `unchanged=3`), all five isolated reads, and systemd active. The rollback point is `/opt/taskbox-api/backups/system-candidates-20260812T163954Z`. Candidate decisions are only `kept/dismissed`; never reinterpret them as target-system publication, validated facts, TaskBox promotion, or experiment/rule activation.
 - Five-system historical baseline publication is coordinated only by `js/five-system-bootstrap.js` from a user-selected private local package. Never add the generated package or its daily-review contents to Git/Pages. Explicit user publication atomically versions all five local stores and keeps a rollback snapshot: mission 39 baseline items; health 12 non-proposal dated Observations + 72 contexts; time 22 non-proposal dated baseline facts + 113 contexts; execution 375 historical records with zero current TaskBox tasks; feedback 42 observed patterns + 5 still-proposed calibration experiments. Daily additions still enter candidates first.
 - The versioned baseline UI shipped in PR #7 on 2026-08-13: merge `47624b3`, Pages workflow `31660897657`, production Build ID `0edb9e215060`.
 - Cross-browser baseline bootstrapping uses authenticated `GET /v1/system-baseline/current`. The private package path comes from `TASKBOX_FIVE_SYSTEM_BASELINE_PATH`, stays outside Git/Pages, and HQ auto-publishes V1 only when the local browser has no published baseline. Keep the file picker as the no-token fallback.
 - Production auto-bootstrap shipped in PR #8 on 2026-08-13: merge `7a9c536`, Pages workflow `31712549246`, Build ID `56ce0c452a92`; API baseline returned authenticated 200 / unauthenticated 401, with rollback `/opt/taskbox-api/backups/system-candidates-20260813T145401Z`.
+- On 2026-08-23 Feedback System HQ reconciled the older local P1 worktree against `deploy/main` and kept the deployed schema v3 implementation as the compatible superset. The verified release candidate Build ID is `1bf08b491371`; full tests and 1440px/390px browser checks passed. This reconciliation changed no API runtime or production database, and the explicit-user/cross-system isolation gates remain mandatory.
 - The fixed five-system entry band and public L1 adapters are owned by the integration session. B–F worktrees must not edit `js/app.js`, `js/hq-page.js`, `js/hq-systems.js`, shared entry CSS, `scripts/test-v3-integration.mjs`, or `package.json`; propose interface changes for later integration instead.
 - P4 proposal types are `daily_action_proposal`, `weekly_experiment_proposal`, and `monthly_bet_proposal`. Only approved daily proposals may call `/v1/hq/proposals/:id/promote`; weekly/monthly approvals remain strategic objects, and provisional monthly evidence cannot be approved. Production promotion additionally requires `HQ_PROPOSAL_PROMOTION_ENABLED=1`.
 - The downstream Task Hub bridge lives in `D:\note_new\06-日常输入_输出\.agents\skills\任务中枢\scripts\task_hub_bridge.py`. It creates an HQ proposal first and may create/link one TaskBox task only through the promotion route; it must never call the task creation route as an approval bypass.
