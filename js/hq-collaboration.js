@@ -31,6 +31,21 @@ export function buildCollaborationInbox({ systems = [], candidateCounts = {}, sy
   return items;
 }
 
+const COLLABORATION_SEVERITY = Object.freeze({ error: 0, input: 1, review: 2, warning: 3 });
+
+export function prioritizeCollaborationItems(items = [], limit = 3) {
+  const ranked = [...items].sort((left, right) => {
+    const severityDelta = (COLLABORATION_SEVERITY[left?.severity] ?? 9)
+      - (COLLABORATION_SEVERITY[right?.severity] ?? 9);
+    return severityDelta || String(left?.id || '').localeCompare(String(right?.id || ''));
+  });
+  const visibleCount = Math.max(1, Number(limit) || 3);
+  return Object.freeze({
+    primary: Object.freeze(ranked.slice(0, visibleCount)),
+    remaining: Object.freeze(ranked.slice(visibleCount)),
+  });
+}
+
 export function summarizePeriodCollaboration({ systems = [], periodType = 'week' } = {}) {
   const unavailable = systems.filter((item) => ['unknown', 'stale'].includes(item.health));
   return {

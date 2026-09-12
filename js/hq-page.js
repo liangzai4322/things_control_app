@@ -39,8 +39,8 @@ import { buildHqActionCandidates, dismissHqCandidate } from './hq-candidates.js'
 import { buildHqSystemViews, summarizeHqSystemViews } from './hq-systems.js';
 import { readFiveSystemHqPorts } from './five-system-hq-ports.js';
 import { buildHqResourceGovernance } from './hq-resource-governance.js';
-import { buildCollaborationInbox, systemCollaborationState } from './hq-collaboration.js';
-import { buildSystemReceiptProjection } from './hq-system-receipts.js';
+import { buildCollaborationInbox, prioritizeCollaborationItems, systemCollaborationState } from './hq-collaboration.js';
+import { buildSystemReceiptProjection, describeSystemReceipt } from './hq-system-receipts.js';
 import {
   parseFiveSystemBootstrapFile,
   publishFiveSystemBaseline,
@@ -418,9 +418,11 @@ function renderSystem(system, candidateCounts = {}) {
 }
 
 function renderCollaborationInbox(items = []) {
+  const prioritized = prioritizeCollaborationItems(items, 3);
+  const renderItems = (entries) => entries.map((item) => `<article class="severity-${escapeHtml(item.severity)}"><span>${escapeHtml(item.systemId.toUpperCase())}</span><div><strong>${escapeHtml(item.title)}</strong><p>${escapeHtml(item.reason || '')}</p><small>需要你提供：${escapeHtml(item.need)}</small></div></article>`).join('');
   return `<section class="hq-section hq-collaboration-inbox" id="hqCollaborationInbox">
-    <div class="hq-section-head"><div><span>00 / COORDINATION INBOX</span><h2>协作收件箱</h2></div><p>${items.length ? `${items.length} 项需要你处理` : '各系统当前无需补充输入'}</p></div>
-    ${items.length ? `<div class="hq-collaboration-list">${items.map((item) => `<article class="severity-${escapeHtml(item.severity)}"><span>${escapeHtml(item.systemId.toUpperCase())}</span><div><strong>${escapeHtml(item.title)}</strong><p>${escapeHtml(item.reason || '')}</p><small>需要你提供：${escapeHtml(item.need)}</small></div></article>`).join('')}</div>` : '<div class="hq-empty-panel compact"><strong>没有需要你补充的内容</strong><span>候选、未知可选字段和短暂同步波动不会打扰你。</span></div>'}
+    <div class="hq-section-head"><div><span>INPUT & DECISIONS</span><h2>现在需要你处理</h2></div><p>${items.length ? `优先显示 ${prioritized.primary.length} 项 · 共 ${items.length} 项` : '各系统当前无需补充输入'}</p></div>
+    ${items.length ? `<div class="hq-collaboration-list">${renderItems(prioritized.primary)}</div>${prioritized.remaining.length ? `<details class="hq-collaboration-more"><summary>查看其余 ${prioritized.remaining.length} 项</summary><div class="hq-collaboration-list">${renderItems(prioritized.remaining)}</div></details>` : ''}` : '<div class="hq-empty-panel compact"><strong>没有需要你补充的内容</strong><span>候选、未知可选字段和短暂同步波动不会打扰你。</span></div>'}
   </section>`;
 }
 
@@ -430,10 +432,14 @@ function renderSystemReceiptProjection(projection) {
   const gapLabel = (gap) => typeof gap === 'string'
     ? gap
     : [gap?.message, gap?.field, gap?.code].find((value) => String(value || '').trim()) || '信息待补充';
-  return `<section class="hq-section hq-collaboration-inbox" id="hqSystemReceipts">
-    <div class="hq-section-head"><div><span>00B / SYSTEM RECEIPTS</span><h2>系统处理回执</h2></div><p>${escapeHtml(projection.intakeRef)} · v${escapeHtml(projection.contractVersion)}</p></div>
-    <div class="hq-collaboration-list">${Object.entries(projection.groups).map(([group, items]) => `<article class="severity-${group === 'do' ? 'input' : group === 'decide' ? 'review' : 'warning'}"><span>${escapeHtml(labels[group])}</span><div>${items.length ? items.map((item) => `<strong>${escapeHtml(names[item.systemId] || item.systemId)} · ${escapeHtml(item.status)}</strong><p>${escapeHtml(item.freshness)} / ${escapeHtml(item.syncState)}${item.errorCode ? ` · ${escapeHtml(item.errorCode)}` : ''}${item.inputGaps.length ? ` · 缺 ${escapeHtml(item.inputGaps.map(gapLabel).join('、'))}` : ''}</p>`).join('') : '<strong>无</strong><p>本类暂无回执。</p>'}</div></article>`).join('')}</div>
-    <small>回执只表示系统已处理或当前等待；候选不等于批准，outbox 不等于成功，也不会据此创建盒子任务。</small>
+  const renderReceipt = (item) => {
+    const presentation = describeSystemReceipt(item);
+    return `<div class="hq-receipt-row"><strong>${escapeHtml(names[item.systemId] || item.systemId)} · ${escapeHtml(presentation.label)}</strong><p>${escapeHtml(presentation.freshnessLabel)} · ${escapeHtml(presentation.syncLabel)}${item.inputGaps.length ? ` · 缺 ${escapeHtml(item.inputGaps.map(gapLabel).join('、'))}` : ''}</p><details><summary>技术详情</summary><small>status=${escapeHtml(item.status)} · freshness=${escapeHtml(item.freshness)} · sync=${escapeHtml(item.syncState)}${item.errorCode ? ` · error=${escapeHtml(item.errorCode)}` : ''} · revision=${escapeHtml(item.revision)}</small></details></div>`;
+  };
+  return `<section class="hq-section hq-system-receipts" id="hqSystemReceipts">
+    <div class="hq-section-head"><div><span>SYSTEM RECEIPTS</span><h2>系统处理进度</h2></div><p>需要时查看，不影响今日行动</p></div>
+    <details class="hq-receipt-details"><summary>查看五系统处理回执</summary><div class="hq-collaboration-list">${Object.entries(projection.groups).map(([group, items]) => `<article class="severity-${group === 'do' ? 'input' : group === 'decide' ? 'review' : 'warning'}"><span>${escapeHtml(labels[group])}</span><div>${items.length ? items.map(renderReceipt).join('') : '<strong>无</strong><p>本类暂无回执。</p>'}</div></article>`).join('')}</div><footer>${escapeHtml(projection.intakeRef)} · 合同 v${escapeHtml(projection.contractVersion)}</footer></details>
+    <small>回执只表示系统已处理或当前等待；候选不等于批准，待同步不等于成功，也不会据此创建盒子任务。</small>
   </section>`;
 }
 
@@ -766,14 +772,9 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
           <article><span>RISK SIGNALS</span><strong>${riskCount}</strong><small>项目预警</small></article>
           <article><span>AI QUEUE</span><strong>${snapshot.ai?.open || 0}</strong><small>AI执行中</small></article>
         </div>
-        ${renderHqSystemEntryBand(systems)}
       </section>
 
       ${renderHqDimensionNav('day')}
-      ${renderReviewLoop(snapshot.review, snapshot.reviewDate)}
-      ${renderCollaborationInbox(collaborationItems)}
-      ${renderSystemReceiptProjection(receiptProjection)}
-
       <section class="hq-grid hq-action-zone">
         <div class="hq-zone-label"><span>01</span><p>今日行动驾驶舱</p><small>只承诺 1 个主动作 + 2 个维护动作</small></div>
         <div class="hq-action-stack">
@@ -805,6 +806,8 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
         </article>
       </section>
 
+      ${renderCollaborationInbox(collaborationItems)}
+
       <section class="hq-section hq-outcome-ledger" id="hqTodayOutcomes" tabindex="-1" aria-labelledby="hqTodayOutcomesTitle">
         <div class="hq-section-head">
           <div><span>01B / TODAY OUTCOMES</span><h2 id="hqTodayOutcomesTitle">今日战果</h2></div>
@@ -812,6 +815,10 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
         </div>
         <div class="hq-outcome-list">${renderTodayOutcomes(actionState.outcomes)}</div>
       </section>
+
+      ${renderReviewLoop(snapshot.review, snapshot.reviewDate)}
+      ${renderSystemReceiptProjection(receiptProjection)}
+      ${renderHqSystemEntryBand(systems)}
 
       <section class="hq-section" id="hqProjects">
         <div class="hq-section-head">

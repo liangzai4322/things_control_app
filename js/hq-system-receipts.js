@@ -87,6 +87,45 @@ export function buildSystemReceiptProjection({ systemSnapshots = {}, receipts = 
   return Object.freeze({ contractVersion: '2026-09-03.1', intakeRef, items: Object.freeze(items), groups: Object.freeze(groups) });
 }
 
+const STATUS_LABELS = Object.freeze({
+  processed: '已处理',
+  applied: '已更新',
+  completed: '已完成',
+  proposed: '待你决定',
+  pending_approval: '待你决定',
+  pending: '处理中',
+  retrying: '处理中',
+  waiting: '等待条件',
+  stale: '需要更新',
+  blocked: '需处理异常',
+  failed: '需处理异常',
+  alert: '需处理异常',
+  unknown: '状态待确认',
+});
+
+const SYNC_LABELS = Object.freeze({
+  online: '已同步',
+  offline: '等待联网',
+  pending: '等待同步',
+  authBlocked: '需要重新连接',
+  deadLetter: '同步失败',
+  unknown: '同步状态待确认',
+});
+
+const FRESHNESS_LABELS = Object.freeze({ fresh: '数据最新', stale: '数据需要更新', unknown: '更新时间待确认' });
+
+export function describeSystemReceipt(receipt = {}) {
+  let label = STATUS_LABELS[receipt.status] || '已收到回执';
+  if (receipt.needsUserInput || list(receipt.inputGaps).length) label = '待补信息';
+  else if (['action', 'critical'].includes(receipt.riskLevel)) label = '需处理异常';
+  else if (Number(receipt.candidateCount) > 0) label = '待你决定';
+  return Object.freeze({
+    label,
+    freshnessLabel: FRESHNESS_LABELS[receipt.freshness] || FRESHNESS_LABELS.unknown,
+    syncLabel: SYNC_LABELS[receipt.syncState] || SYNC_LABELS.unknown,
+  });
+}
+
 function receiptList(payload) {
   if (Array.isArray(payload)) return payload;
   if (Array.isArray(payload?.receipts)) return payload.receipts;
