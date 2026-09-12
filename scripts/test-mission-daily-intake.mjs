@@ -58,6 +58,14 @@ assert.equal(classifyMissionDailyIntake(intake({ data: { baseline: { ...intake()
 assert.equal(classifyMissionDailyIntake(intake({ freshness: { status: 'stale', generatedAt: '2026-09-03T11:00:00.000Z' } }), published, { now }).result, MISSION_DAILY_INTAKE_RESULTS.INVALID);
 assert.equal(classifyMissionDailyIntake(intake({ contractVersion: 'future-version' }), published, { now }).result, MISSION_DAILY_INTAKE_RESULTS.INVALID);
 
+const readOnlyCandidateBatch = intake({
+  payloadKind: 'candidate_batch',
+  data: { candidates: [{ candidateId: 'mission-candidate-1', statement: '只读候选' }] },
+});
+const readOnlyCandidate = prepareMissionDailyIntakeReceipt(readOnlyCandidateBatch, published, { schemaVersion: 1, entries: {} }, { now });
+assert.equal(readOnlyCandidate.body.status, 'processed');
+assert.equal(readOnlyCandidate.classified.candidateReadOnly, true);
+
 const productionShape = intake({
   id: 'transport-generated-id',
   idempotencyKey: 'mission:2026-09-03:1:producerhash',

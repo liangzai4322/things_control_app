@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const SYSTEM_IDS = new Set(['mission', 'health', 'attention', 'execution', 'feedback']);
-const RECEIPT_FIELDS = ['id', 'intakeId', 'systemId', 'reviewDate', 'updatedAt', 'status', 'freshness', 'revision', 'projection'];
+const RECEIPT_FIELDS = ['id', 'intakeId', 'systemId', 'reviewDate', 'updatedAt', 'status', 'freshness', 'revision', 'projection', 'errorCode', 'errorMessage'];
 const PROJECTION_FIELDS = ['riskLevel', 'needsUserInput', 'inputGaps', 'factRefs', 'evidenceRefs', 'syncState'];
 const text = (value) => String(value || '').trim();
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

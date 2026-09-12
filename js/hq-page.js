@@ -427,9 +427,12 @@ function renderCollaborationInbox(items = []) {
 function renderSystemReceiptProjection(projection) {
   const labels = { know: '需要知道', decide: '需要决定', do: '需要做', doneOrWaiting: '已完成或等待' };
   const names = { mission: '使命', health: '健康', attention: '注意力', execution: '执行', feedback: '反馈' };
+  const gapLabel = (gap) => typeof gap === 'string'
+    ? gap
+    : [gap?.message, gap?.field, gap?.code].find((value) => String(value || '').trim()) || '信息待补充';
   return `<section class="hq-section hq-collaboration-inbox" id="hqSystemReceipts">
     <div class="hq-section-head"><div><span>00B / SYSTEM RECEIPTS</span><h2>系统处理回执</h2></div><p>${escapeHtml(projection.intakeRef)} · v${escapeHtml(projection.contractVersion)}</p></div>
-    <div class="hq-collaboration-list">${Object.entries(projection.groups).map(([group, items]) => `<article class="severity-${group === 'do' ? 'input' : group === 'decide' ? 'review' : 'warning'}"><span>${escapeHtml(labels[group])}</span><div>${items.length ? items.map((item) => `<strong>${escapeHtml(names[item.systemId] || item.systemId)} · ${escapeHtml(item.status)}</strong><p>${escapeHtml(item.freshness)} / ${escapeHtml(item.syncState)}${item.inputGaps.length ? ` · 缺 ${escapeHtml(item.inputGaps.join('、'))}` : ''}</p>`).join('') : '<strong>无</strong><p>本类暂无回执。</p>'}</div></article>`).join('')}</div>
+    <div class="hq-collaboration-list">${Object.entries(projection.groups).map(([group, items]) => `<article class="severity-${group === 'do' ? 'input' : group === 'decide' ? 'review' : 'warning'}"><span>${escapeHtml(labels[group])}</span><div>${items.length ? items.map((item) => `<strong>${escapeHtml(names[item.systemId] || item.systemId)} · ${escapeHtml(item.status)}</strong><p>${escapeHtml(item.freshness)} / ${escapeHtml(item.syncState)}${item.errorCode ? ` · ${escapeHtml(item.errorCode)}` : ''}${item.inputGaps.length ? ` · 缺 ${escapeHtml(item.inputGaps.map(gapLabel).join('、'))}` : ''}</p>`).join('') : '<strong>无</strong><p>本类暂无回执。</p>'}</div></article>`).join('')}</div>
     <small>回执只表示系统已处理或当前等待；候选不等于批准，outbox 不等于成功，也不会据此创建盒子任务。</small>
   </section>`;
 }

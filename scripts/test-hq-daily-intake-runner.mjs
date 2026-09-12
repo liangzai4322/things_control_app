@@ -16,7 +16,7 @@ let calls = 0;
 const fetchImpl = async (_url, options) => {
   calls += 1;
   assert.equal(options.headers.Authorization, 'Bearer fixture-token');
-  return { ok: true, json: async () => ({ receipts: [{ id: 'r1', intakeId: 'i1', systemId: 'health', reviewDate: '2026-09-03', status: 'processed', revision: 1, projection: { riskLevel: 'none', factRefs: ['f1'], candidateBody: 'secret' }, data: { secret: true } }] }) };
+  return { ok: true, json: async () => ({ receipts: [{ id: 'r1', intakeId: 'i1', systemId: 'health', reviewDate: '2026-09-03', status: 'ignored', revision: 1, errorCode: 'missing_health_fact', errorMessage: 'safe summary', projection: { riskLevel: 'none', factRefs: ['f1'], candidateBody: 'secret' }, data: { secret: true } }] }) };
 };
 const result = await syncHqReceipts({ endpoint: 'https://fixture.invalid', tokenFile, cacheFile, disableFile, lockFile, fetchImpl });
 assert.equal(result.receiptCount, 1);
@@ -25,6 +25,8 @@ const cache = JSON.parse(fs.readFileSync(cacheFile));
 assert.equal(cache.receipts.length, 1);
 assert.ok(!Object.hasOwn(cache.receipts[0], 'data'));
 assert.ok(!Object.hasOwn(cache.receipts[0].projection, 'candidateBody'));
+assert.equal(cache.receipts[0].errorCode, 'missing_health_fact');
+assert.equal(cache.receipts[0].errorMessage, 'safe summary');
 fs.writeFileSync(disableFile, 'disabled\n');
 const disabled = await syncHqReceipts({ tokenFile, cacheFile, disableFile, lockFile, fetchImpl });
 assert.equal(disabled.skipped, 'disabled');

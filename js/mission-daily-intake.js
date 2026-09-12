@@ -25,6 +25,8 @@ const clone = (value, fallback = null) => {
 const validDate = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value || '');
 const validTimestamp = (value) => Boolean(value) && !Number.isNaN(new Date(value).getTime());
 const isObject = (value) => Boolean(value && typeof value === 'object' && !Array.isArray(value));
+const isCandidateBatch = (intake) => intake?.payloadKind === 'candidate_batch'
+  || (Array.isArray(intake?.data?.candidates) && Object.keys(intake.data).every((key) => key === 'candidates'));
 const freshnessTimestamp = (value) => typeof value === 'string'
   ? value
   : clean(value?.generatedAt || value?.updatedAt || value?.observedAt);
@@ -67,6 +69,7 @@ export function validateMissionDailyIntake(intake, {
   if (Number(intake.schemaVersion) !== 1) errors.push('transport_schema_unsupported');
   if (!supportedContractVersions.includes(intake.contractVersion)) errors.push('contract_version_unsupported');
   if (intake.systemId !== 'mission' || (data.targetSystem && data.targetSystem !== 'mission')) errors.push('wrong_target_system');
+  if (errors.length || isCandidateBatch(intake)) return { valid: errors.length === 0, errors, data };
   if (data.sourceSystem && data.sourceSystem !== 'daily-review') errors.push('wrong_source_system');
   if (data.schemaVersion && data.schemaVersion !== MISSION_DAILY_INTAKE_SCHEMA) errors.push('domain_schema_unsupported');
   if ((data.intakeId && data.intakeId !== intake.id) || (data.idempotencyKey && data.idempotencyKey !== intake.idempotencyKey)) errors.push('identity_mismatch');
@@ -118,6 +121,9 @@ export function classifyMissionDailyIntake(intake, storeInput = {}, {
   const store = normalizeMissionStore(storeInput);
   const checked = validateMissionDailyIntake(intake, { now, supportedContractVersions });
   if (!checked.valid) return { result: MISSION_DAILY_INTAKE_RESULTS.INVALID, errors: checked.errors, decisionRequired: false };
+  if (isCandidateBatch(intake)) {
+    return { result: MISSION_DAILY_INTAKE_RESULTS.CANDIDATE_RECORDED, errors: [], decisionRequired: false, candidateReadOnly: true };
+  }
   const observedActive = checked.data.baseline?.activeVersionId ?? checked.data.activeVersion ?? null;
   const sourceActiveVersionId = isObject(observedActive) ? clean(observedActive.versionId || observedActive.id) || null : clean(observedActive) || null;
   const baselineKnown = checked.data.baseline ? checked.data.baseline.baselineState === 'known' : Object.hasOwn(checked.data, 'activeVersion');

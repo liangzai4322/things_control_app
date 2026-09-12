@@ -10,12 +10,23 @@ const CONFLICT_VALUES = new Set(['clear', 'conflict', 'unknown']);
 
 const plainObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 const clean = (value) => typeof value === 'string' ? value.trim() : '';
+const meaningful = (value) => {
+  if (value === null || value === undefined || value === '') return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (plainObject(value)) return Object.values(value).some(meaningful);
+  return true;
+};
 const finiteNumber = (value, min = -Infinity, max = Infinity) => (
   value === null || value === undefined || value === '' || !Number.isFinite(Number(value))
     ? null
     : Math.min(max, Math.max(min, Number(value)))
 );
 const validTimestamp = (value) => typeof value === 'string' && value && !Number.isNaN(new Date(value).getTime());
+const validFreshness = (value) => value === 'unknown'
+  || validTimestamp(value)
+  || (plainObject(value)
+    && ['fresh', 'stale', 'unknown'].includes(clean(value.status))
+    && (!value.generatedAt || validTimestamp(value.generatedAt)));
 const validDateKey = (value) => {
   if (!DATE_PATTERN.test(value || '')) return false;
   const [year, month, day] = value.split('-').map(Number);
@@ -75,11 +86,11 @@ export function validateAttentionIntake(intake, {
   if (!validTimestamp(activityStart) || !validTimestamp(activityEnd) || new Date(activityEnd) < new Date(activityStart)) {
     return validationError('invalid_activity_period');
   }
-  if (!clean(intake.sourceRef)) return validationError('invalid_source_ref');
-  if (!Array.isArray(intake.evidenceRefs) || intake.evidenceRefs.some((item) => typeof item !== 'string')) {
+  if (!meaningful(intake.sourceRef)) return validationError('invalid_source_ref');
+  if (!Array.isArray(intake.evidenceRefs)) {
     return validationError('invalid_evidence_refs');
   }
-  if (intake.freshness !== 'unknown' && !validTimestamp(intake.freshness)) return validationError('invalid_freshness');
+  if (!validFreshness(intake.freshness)) return validationError('invalid_freshness');
   if (!Number.isSafeInteger(intake.revision) || intake.revision < 1) return validationError('invalid_revision');
   if (!clean(intake.idempotencyKey)) return validationError('missing_idempotency_key');
   if (!plainObject(intake.data)) return validationError('invalid_data');
@@ -161,7 +172,7 @@ export function buildAttentionReceiptProjection(intake) {
   const capacity = plainObject(data.capacity) ? data.capacity : data;
   const dataQuality = plainObject(data.dataQuality) ? data.dataQuality : {};
   const protectedWindows = normalizeProtectedWindows(data.protectedFocusWindows || data.protectedWindows);
-  const freshnessUnknown = intake?.freshness === 'unknown' ? ['intake.freshness'] : [];
+  const freshnessUnknown = intake?.freshness === 'unknown' || intake?.freshness?.status === 'unknown' ? ['intake.freshness'] : [];
   const availableMinutes = finiteNumber(capacity.availableMinutes, 0, 1440);
   const remainingMinutes = finiteNumber(capacity.remainingMinutes, -1440, 1440);
   const healthCapacity = finiteNumber(capacity.healthCapacity, 0, 1);

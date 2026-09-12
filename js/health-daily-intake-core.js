@@ -11,6 +11,8 @@ const RECEIPT_PROJECTION_FIELDS = Object.freeze([
 ]);
 const clean = (value) => String(value || '').trim();
 const unique = (values) => [...new Set(values.filter(Boolean))];
+const isCandidateBatch = (intake) => intake?.payloadKind === 'candidate_batch'
+  || (Array.isArray(intake?.data?.candidates) && Object.keys(intake.data).every((key) => key === 'candidates'));
 
 export function healthIntakeData(intake = {}) {
   const data = intake.data && typeof intake.data === 'object' ? intake.data : {};
@@ -48,6 +50,9 @@ export function classifyHealthDailyIntake(intake = {}) {
     return { action: 'ignored', reason: 'contract version is unsupported', errorCode: 'unsupported_contract_version' };
   }
   if (intake.systemId !== 'health') return { action: 'ignored', reason: 'not addressed to health' };
+  if (isCandidateBatch(intake)) {
+    return { action: 'candidate_read_only', reason: 'candidate batch acknowledged without writing health facts' };
+  }
 
   const data = healthIntakeData(intake);
   const activityEnd = clean(intake.observationPeriod?.activity_end);
@@ -127,7 +132,7 @@ export function buildHealthReceiptProjection(store = {}, planningDate = '') {
 }
 
 export function buildHealthIntakeReceipt(intake, outcome, projection = {}, options = {}) {
-  const status = outcome.action === 'process_fact' || outcome.action === 'candidate_unknown'
+  const status = ['process_fact', 'candidate_unknown', 'candidate_read_only'].includes(outcome.action)
     ? 'processed' : outcome.action === 'ignored' ? 'ignored' : outcome.action === 'retrying' ? 'retrying' : 'failed';
   const defaults = {
     status: 'unknown', availableCapacity: null, confidence: 0, constraints: [],

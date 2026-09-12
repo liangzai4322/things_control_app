@@ -45,6 +45,12 @@ assert.deepEqual(validateAttentionIntake(intake, { reviewDate: intake.reviewDate
 assert.equal(validateAttentionIntake({ ...intake, contractVersion: 'future-v2' }).code, 'unsupported_contract_version');
 assert.equal(validateAttentionIntake({ ...intake, revision: 0 }).code, 'invalid_revision');
 assert.equal(validateAttentionIntake({ ...intake, freshness: 'assumed-fresh' }).code, 'invalid_freshness');
+assert.deepEqual(validateAttentionIntake({
+  ...intake,
+  sourceRef: { type: 'daily-review', ref: '2026-09-03' },
+  evidenceRefs: [{ type: 'review', ref: '2026-09-03#attention' }],
+  freshness: { status: 'fresh', generatedAt: '2026-09-03T19:55:00+08:00' },
+}, { reviewDate: intake.reviewDate }), { ok: true });
 assert.equal(validateAttentionIntake({ ...intake, reviewDate: '2026-02-30', data: { ...intake.data, reviewDate: '2026-02-30' } }).code, 'invalid_review_date');
 assert.equal(validateAttentionIntake({ ...intake, reviewDate: '2026-09-02' }, { reviewDate: '2026-09-03' }).code, 'review_date_mismatch');
 

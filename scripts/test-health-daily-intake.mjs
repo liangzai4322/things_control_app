@@ -58,6 +58,13 @@ assert.equal(classifyHealthDailyIntake(intake({ data: { authority: undefined } }
 assert.equal(classifyHealthDailyIntake(intake({ data: { authority: 'ai_summary' } })).action, 'ignored');
 assert.equal(classifyHealthDailyIntake(intake({ status: 'processed' })).action, 'already_terminal');
 
+const candidateBatch = intake({
+  payloadKind: 'candidate_batch',
+  data: { candidates: [{ candidateId: 'health-candidate-1', statement: '只读候选' }] },
+});
+assert.equal(classifyHealthDailyIntake(candidateBatch).action, 'candidate_read_only');
+assert.equal(buildHealthIntakeReceipt(candidateBatch, classifyHealthDailyIntake(candidateBatch)).status, 'processed');
+
 const conflict = classifyHealthDailyIntake(intake({ data: { conflicts: ['睡眠来源冲突'] } }));
 assert.equal(conflict.action, 'candidate_unknown');
 assert.equal(conflict.conflictCount, 1);
