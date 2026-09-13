@@ -13,6 +13,8 @@ const inbox=buildCollaborationInbox({systems,candidateCounts:{health:2},brief:{}
 assert.ok(inbox.some((x)=>x.id==='health-candidates'));
 assert.ok(inbox.some((x)=>x.id==='time-stale'));
 assert.ok(!inbox.some((x)=>x.id==='health-empty'));
+const actionGapInbox=buildCollaborationInbox({systems:[],brief:{currentActionTaskId:'action'},tasks:[{id:'action',note:'来源：日省',nextAction:''}]});
+assert.equal(actionGapInbox[0].id,'action-next-step');
 const prioritized=prioritizeCollaborationItems([
  {id:'warning',severity:'warning'},
  {id:'review',severity:'review'},
@@ -57,5 +59,5 @@ assert.ok(inboxIndex < reviewIndex && reviewIndex < receiptsIndex);
 assert.ok(receiptsIndex < systemEntryIndex);
 assert.match(hqPage, /class="hq-action-definition"/);
 assert.match(hqPage, /日期：\$\{escapeHtml\(task\.commitmentDate \|\| reviewDate/);
-assert.match(hqPage, /task\?\.completionCriteria \|\| task\?\.note/);
+assert.match(hqPage, /task\?\.completionCriteria \|\| task\?\.doneDefinition \|\| task\?\.note/);
 console.log('hq collaboration tests passed');

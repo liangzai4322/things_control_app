@@ -142,9 +142,9 @@ function taskMeta(task) {
 }
 
 function taskCompletionDefinition(task) {
-  const value = String(task?.completionCriteria || task?.note || '').trim()
+  const value = String(task?.completionCriteria || task?.doneDefinition || task?.note || '').trim()
     .replace(/^完成标准\s*[：:]\s*/u, '').trim();
-  return value || '尚未定义；进入任务补充完成标准';
+  return value && !/^来源[：:]/u.test(value) ? value : '尚未定义；进入任务补充完成标准';
 }
 
 function formatCompletionTime(value) {

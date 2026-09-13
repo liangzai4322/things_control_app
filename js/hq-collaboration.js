@@ -27,7 +27,9 @@ export function buildCollaborationInbox({ systems = [], candidateCounts = {}, sy
   });
 
   const currentTask = tasks.find((task) => task.id === (brief.currentActionTaskId || brief.primaryTaskId));
-  if (currentTask && !String(currentTask.nextAction || currentTask.note || '').trim()) items.push({ id: 'action-next-step', systemId: 'execution', severity: 'input', title: '当前行动缺少明确下一步', need: '补充下一步和完成标准', reason: '缺口会降低执行和日省结算质量。' });
+  const completionDefinition = String(currentTask?.completionCriteria || currentTask?.doneDefinition || currentTask?.note || '').trim();
+  const hasCompletionDefinition = completionDefinition && !/^来源[：:]/u.test(completionDefinition);
+  if (currentTask && (!String(currentTask.nextAction || '').trim() || !hasCompletionDefinition)) items.push({ id: 'action-next-step', systemId: 'execution', severity: 'input', title: '当前行动还缺执行定义', need: '补充下一步和完成标准', reason: '缺口会降低执行和日省结算质量。' });
   return items;
 }
 
