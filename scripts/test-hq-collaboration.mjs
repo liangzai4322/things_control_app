@@ -55,4 +55,7 @@ assert.ok(renderStart >= 0 && actionIndex > renderStart);
 assert.ok(actionIndex < behaviorIndex && behaviorIndex < inboxIndex);
 assert.ok(inboxIndex < reviewIndex && reviewIndex < receiptsIndex);
 assert.ok(receiptsIndex < systemEntryIndex);
+assert.match(hqPage, /class="hq-action-definition"/);
+assert.match(hqPage, /日期：\$\{escapeHtml\(task\.commitmentDate \|\| reviewDate/);
+assert.match(hqPage, /task\?\.completionCriteria \|\| task\?\.note/);
 console.log('hq collaboration tests passed');

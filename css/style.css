@@ -2445,6 +2445,19 @@ body.hq-mode .app-container {
   line-height: 1.5;
 }
 
+.hq-action-copy .hq-action-definition {
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--stroke-soft);
+  color: var(--text-primary);
+}
+
+.hq-action-definition b {
+  margin-right: 5px;
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
 .hq-action-progress {
   position: relative;
   z-index: 1;

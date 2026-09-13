@@ -141,6 +141,12 @@ function taskMeta(task) {
   return parts.join(' · ');
 }
 
+function taskCompletionDefinition(task) {
+  const value = String(task?.completionCriteria || task?.note || '').trim()
+    .replace(/^完成标准\s*[：:]\s*/u, '').trim();
+  return value || '尚未定义；进入任务补充完成标准';
+}
+
 function formatCompletionTime(value) {
   if (!value) return '完成时间未记录';
   const date = new Date(value);
@@ -160,7 +166,7 @@ function renderStrategicCommitment(task) {
   `;
 }
 
-function renderActionSeat(actionState) {
+function renderActionSeat(actionState, reviewDate = '') {
   const strategic = actionState?.strategicCommitment || null;
   const task = actionState?.currentAction || null;
   if (!task) {
@@ -189,7 +195,8 @@ function renderActionSeat(actionState) {
       <div class="hq-action-copy">
         <p>${isHandoff ? '当前行动席位 · 接棒动作' : '今日战略主动作 · 当前行动席位'}</p>
         <h2>${escapeHtml(task.content)}</h2>
-        <small>${escapeHtml(taskMeta(task) || (isHandoff ? '原始承诺保持不变，完成后进入今日战果' : '完成后留下明确证据'))}</small>
+        <small>日期：${escapeHtml(task.commitmentDate || reviewDate || '今日')} · ${escapeHtml(taskMeta(task) || (isHandoff ? '原始承诺保持不变，完成后进入今日战果' : '完成后留下明确证据'))}</small>
+        <small class="hq-action-definition"><b>完成定义</b> ${escapeHtml(taskCompletionDefinition(task))}</small>
       </div>
       <div class="hq-action-progress">
         <span>${Math.max(0, Math.min(100, Number(task.progress) || 0))}%</span>
@@ -779,7 +786,7 @@ function renderSnapshot(app, snapshot, { remote = false } = {}) {
         <div class="hq-zone-label"><span>01</span><p>今日行动驾驶舱</p><small>只承诺 1 个主动作 + 2 个维护动作</small></div>
         <div class="hq-action-stack">
           ${renderWeeklyBet(governance.bet)}
-          ${renderActionSeat(actionState)}
+          ${renderActionSeat(actionState, snapshot.reviewDate)}
           ${renderActionCandidates(candidates, actionState)}
           <div class="hq-maintenance-grid">${renderMaintenance(maintenance)}</div>
         </div>
