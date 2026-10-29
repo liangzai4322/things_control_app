@@ -58,6 +58,55 @@ assert.equal(classifyHealthDailyIntake(intake({ data: { authority: undefined } }
 assert.equal(classifyHealthDailyIntake(intake({ data: { authority: 'ai_summary' } })).action, 'ignored');
 assert.equal(classifyHealthDailyIntake(intake({ status: 'processed' })).action, 'already_terminal');
 
+// A merged review's activity window is not the date of each health fact.
+const mergedPeriod = { activity_start: '2026-10-27', activity_end: '2026-10-29' };
+for (const observationDate of ['2026-10-27', '2026-10-28', '2026-10-29']) {
+  const result = classifyHealthDailyIntake(intake({
+    reviewDate: '2026-10-29', observationPeriod: mergedPeriod,
+    data: { observationDate },
+  }));
+  assert.equal(result.action, 'process_fact', `inclusive range must accept ${observationDate}`);
+  assert.equal(result.observation.observationDate, observationDate, 'never substitute activity_end or reviewDate');
+  assert.equal(result.observation.effectiveDate, '2026-10-29', 'existing effective-date policy is unchanged');
+  assert.equal(result.observation.dateMapping, 'explicit_observation_date');
+}
+const nestedHealth = classifyHealthDailyIntake(intake({
+  reviewDate: '2026-10-29', observationPeriod: mergedPeriod,
+  data: { observationDate: '2026-10-29', healthObservation: {
+    authority: 'explicit_user', observationDate: '2026-10-28', effectiveDate: '2026-10-29',
+    energy: 3, confidence: 0.8,
+  } },
+}));
+assert.equal(nestedHealth.action, 'process_fact', 'nested envelope observation date has precedence');
+assert.equal(nestedHealth.observation.observationDate, '2026-10-28');
+for (const observationDate of ['2026-10-26', '2026-10-30']) {
+  assert.equal(classifyHealthDailyIntake(intake({ observationPeriod: mergedPeriod, data: { observationDate } })).errorCode,
+    'observation_period_mismatch');
+}
+for (const observationDate of [null, '', 'unknown', '2026-02-30', '2026-13-01']) {
+  assert.equal(classifyHealthDailyIntake(intake({ observationPeriod: mergedPeriod, data: { observationDate } })).errorCode,
+    'invalid_observation_date', 'missing/impossible dates cannot fall back to the batch end');
+}
+for (const observationPeriod of [
+  { activity_start: null }, { activity_end: 'unknown' },
+  { activity_start: '2026-02-30' }, { activity_end: '2026-13-01' },
+  { activity_start: '2026-09-03', activity_end: '2026-09-02' },
+]) {
+  assert.equal(classifyHealthDailyIntake(intake({ observationPeriod })).errorCode, 'invalid_observation_period');
+}
+assert.equal(classifyHealthDailyIntake(intake({
+  observationPeriod: mergedPeriod, data: { observationDate: '2026-10-28', authority: 'ai_summary' },
+})).action, 'ignored', 'in-range dates cannot authorize AI-derived facts');
+assert.equal(classifyHealthDailyIntake(intake({
+  observationPeriod: mergedPeriod, data: { observationDate: '2026-10-28', conflicts: ['synthetic conflict'] },
+})).action, 'candidate_unknown', 'range support retains conflict degradation');
+assert.equal(classifyHealthDailyIntake({ ...intake(), observationPeriod: null }).errorCode, 'invalid_observation_period');
+for (const status of ['processed', 'failed', 'ignored']) {
+  assert.equal(classifyHealthDailyIntake(intake({
+    status, observationPeriod: mergedPeriod, data: { observationDate: '2026-10-28' },
+  })).action, 'already_terminal', 'the fix must not silently reopen old terminal receipts');
+}
+
 const candidateBatch = intake({
   payloadKind: 'candidate_batch',
   data: { candidates: [{ candidateId: 'health-candidate-1', statement: '只读候选' }] },

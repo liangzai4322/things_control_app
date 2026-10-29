@@ -1,4 +1,4 @@
-import { buildHealthProtocolSnapshot, normalizeHealthObservation } from './health-model.js';
+import { buildHealthProtocolSnapshot, isValidDateKey, normalizeHealthObservation } from './health-model.js';
 
 export const HEALTH_DAILY_INTAKE_CONTRACT_VERSION = '2026-09-03.1';
 export const HEALTH_DAILY_INTAKE_TERMINAL_STATUSES = Object.freeze(['processed', 'failed', 'ignored']);
@@ -55,12 +55,17 @@ export function classifyHealthDailyIntake(intake = {}) {
   }
 
   const data = healthIntakeData(intake);
+  const observationDate = clean(data.observationDate);
+  const activityStart = clean(intake.observationPeriod?.activity_start);
   const activityEnd = clean(intake.observationPeriod?.activity_end);
-  if (!DATE_PATTERN.test(activityEnd) || !DATE_PATTERN.test(clean(data.observationDate))) {
+  if (!isValidDateKey(observationDate)) {
     return invalid('observation date is missing or invalid', 'invalid_observation_date');
   }
-  if (data.observationDate !== activityEnd) {
-    return invalid('observation date does not match activity end', 'observation_period_mismatch');
+  if (!isValidDateKey(activityStart) || !isValidDateKey(activityEnd) || activityStart > activityEnd) {
+    return invalid('observation period is missing or invalid', 'invalid_observation_period');
+  }
+  if (observationDate < activityStart || observationDate > activityEnd) {
+    return invalid('observation date is outside activity period', 'observation_period_mismatch');
   }
   if (data.authority !== 'explicit_user') {
     return { action: 'ignored', reason: 'health fact lacks explicit user authority' };
@@ -109,7 +114,7 @@ export function buildHealthIntakeObservation(intake = {}) {
     sourceRef: clean(intake.sourceRef),
     sourceHash: clean(intake.idempotencyKey),
     authority: 'explicit_user',
-    dateMapping: 'activity_end',
+    dateMapping: 'explicit_observation_date',
     evidenceRefs: unique([clean(intake.sourceRef), ...(Array.isArray(intake.evidenceRefs) ? intake.evidenceRefs.map(clean) : [])]),
   });
 }
