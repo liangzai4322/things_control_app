@@ -63,6 +63,42 @@ assert.deepEqual(Object.keys(savedReceipt.projection), [
   'status', 'availableCapacity', 'confidence', 'constraints', 'missingFields', 'conflictCount', 'sourceRefs',
 ]);
 
+// Exercise the real consumer write order for the two reported merged-date shapes.
+for (const [reviewDate, observationDate] of [['2026-10-29', '2026-10-28'], ['2026-10-28', '2026-10-27']]) {
+  const writes = [];
+  const bounded = new HealthDailyIntakeWorker({
+    endpoint: 'http://fixture.invalid', token: 'health-scope-token', globalDisableFile: '', healthDisableFile: '',
+    fetchImpl: async (url, options = {}) => {
+      const pathname = new URL(url).pathname;
+      const body = options.body ? JSON.parse(options.body) : null;
+      writes.push({ pathname, body });
+      return response(pathname.endsWith('/receipt') ? 201 : 200, {});
+    },
+  });
+  const item = intake({
+    id: `synthetic-merged-${reviewDate}`, reviewDate,
+    observationPeriod: { activity_start: observationDate, activity_end: reviewDate },
+    data: { healthObservation: { authority: 'explicit_user', observationDate, effectiveDate: reviewDate, energy: 3, confidence: 0.8 } },
+  });
+  const outcome = await bounded.consume(item, { observations: [] });
+  assert.equal(outcome.status, 'processed');
+  assert.deepEqual(writes.map((write) => write.pathname), [
+    '/v1/health/observations/batch', '/v1/health/snapshots', `/v1/system-candidates/${item.id}/receipt`,
+  ]);
+  const fact = writes[0].body.observations[0];
+  assert.equal(fact.observationDate, observationDate);
+  assert.equal(fact.effectiveDate, reviewDate);
+  assert.equal(fact.observationId, `health-daily-intake:${item.id}:r1`);
+  assert.equal(writes[1].body.basisDate, observationDate, 'snapshot refers to the real previous day');
+  assert.equal(writes[2].body.projection.status, 'unknown', 'missing sleep is not made healthy by successful transport');
+  assert.equal(writes[2].body.projection.availableCapacity, null);
+  const invalid = { ...item, id: `outside-${reviewDate}`, data: { ...item.data, healthObservation: { ...item.data.healthObservation, observationDate: '2026-10-30' } } };
+  writes.length = 0;
+  assert.equal((await bounded.consume(invalid, { observations: [] })).status, 'failed');
+  assert.deepEqual(writes.map((write) => write.pathname), [`/v1/system-candidates/${invalid.id}/receipt`], 'outside-range facts never write observations or snapshots');
+  assert.equal(writes[0].body.errorCode, 'observation_period_mismatch');
+}
+
 const futureRetry = intake({
   id: 'health-worker-retry', status: 'retrying',
   receipt: { attempts: 2, retryAt: '2026-09-03T09:00:00.000Z' },
